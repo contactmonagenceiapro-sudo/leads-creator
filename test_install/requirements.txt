@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+langchain
+langchain-community
+langchain-ollama
+crewai
+redis
+supabase
+psycopg2-binary
+python-dotenv
+requests
+schedule
+pydantic
+httpx

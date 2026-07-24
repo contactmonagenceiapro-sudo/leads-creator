@@ -1,0 +1,24 @@
+# Secrets
+.env
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+test_install/venv/
+.venv/
+
+# Logs
+*.log
+logs/
+
+# Données générées / runtime (générées par le pipeline, pas du code source)
+leads.json
+
+# OS / éditeurs
+.DS_Store
+.vscode/
+.idea/

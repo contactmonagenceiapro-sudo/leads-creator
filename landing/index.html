@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard CEO Agent</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #121214; color: #e1e1e6; margin: 0; display: flex; height: 100vh; }
+        .sidebar { width: 300px; background: #18181b; border-right: 1px solid #29292e; padding: 20px; overflow-y: auto; }
+        .sidebar h2 { font-size: 1.2em; color: #00b37e; margin-top: 0; border-bottom: 2px solid #29292e; padding-bottom: 10px; }
+        .report-item { background: #202024; padding: 12px; margin-bottom: 10px; border-radius: 6px; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
+        .report-item:hover { border-color: #00b37e; }
+        .report-item.active { background: #29292e; border-color: #00b37e; }
+        .report-item small { color: #8d8d99; display: block; margin-top: 5px; }
+        
+        .main-content { flex: 1; padding: 40px; overflow-y: auto; }
+        .container { max-width: 800px; margin: 0 auto; background: #202024; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        h1 { color: #00b37e; border-bottom: 2px solid #29292e; padding-bottom: 10px; }
+        .meta { color: #8d8d99; font-size: 0.9em; margin-bottom: 20px; }
+        .content { white-space: pre-wrap; line-height: 1.6; background: #18181b; color: #f4f4f5; padding: 20px; border-radius: 6px; border: 1px solid #3f3f46; }
+        .loading { text-align: center; color: #8d8d99; font-style: italic; }
+    </style>
+</head>
+<body>
+
+    <!-- Barre latérale pour l'historique -->
+    <div class="sidebar">
+        <h2>Historique</h2>
+        <div id="history-list" class="loading">Chargement...</div>
+    </div>
+
+    <!-- Contenu principal -->
+    <div class="main-content">
+        <div class="container">
+            <h1>Rapport Stratégique de l'Agent CEO</h1>
+            <div id="meta" class="meta">Sélectionnez un rapport</div>
+            <div id="report-content" class="content loading">Choisissez un rapport dans l'historique à gauche.</div>
+        </div>
+    </div>
+
+<script>
+    const SUPABASE_URL = "https://iijvonnzanbvhwvexvzm.supabase.co";
+    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlpanZvbm56YW5idmh3dmV4dnptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAwNzYyMTUsImV4cCI6MjA5NTY1MjIxNX0._xuT1HRHBipUB-TGtdi7AT3tTzZywZibhlpNjimeE88"
+
+    async function fetchReportsHistory() {
+        try {
+            // Récupère les 10 derniers rapports triés du plus récent au plus ancien
+            const url = SUPABASE_URL + "/rest/v1/ceo_reports?order=id.desc&limit=10";
+            
+            const response = await fetch(url, {
+                headers: {
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": "Bearer " + SUPABASE_KEY
+                }
+            });
+
+            if (!response.ok) throw new Error("Erreur HTTP : " + response.status);
+
+            const data = await response.json();
+            const historyList = document.getElementById('history-list');
+            historyList.innerHTML = "";
+
+            if (data && data.length > 0) {
+                data.forEach((report, index) => {
+                    const dateOptions = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+                    const dateFormatee = report.date ? new Date(report.date).toLocaleString('fr-FR', dateOptions) : "Récemment";
+
+                    const item = document.createElement('div');
+                    item.className = 'report-item';
+                    if (index === 0) item.classList.add('active'); // Sélectionne le premier par défaut
+                    
+                    item.innerHTML = `<strong>Rapport #${report.id}</strong><small>${dateFormatee}</small>`;
+                    
+                    // Au clic, on affiche ce rapport dans la zone principale
+                    item.addEventListener('click', () => {
+                        document.querySelectorAll('.report-item').forEach(el => el.classList.remove('active'));
+                        item.classList.add('active');
+                        displayReport(report);
+                    });
+
+                    historyList.appendChild(item);
+                });
+
+                // Afficher le tout premier rapport par défaut au chargement
+                displayReport(data[0]);
+
+            } else {
+                historyList.innerHTML = "Aucun rapport trouvé.";
+            }
+        } catch (error) {
+            document.getElementById('history-list').innerHTML = "Erreur de chargement.";
+            console.error(error);
+        }
+    }
+
+    function displayReport(report) {
+        const dateOptions = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+        const dateFormatee = report.date ? new Date(report.date).toLocaleString('fr-FR', dateOptions) : "Récemment";
+
+        document.getElementById('meta').innerText = "Généré le : " + dateFormatee;
+        const contentDiv = document.getElementById('report-content');
+        contentDiv.innerHTML = marked.parse(report.content);
+        contentDiv.classList.remove('loading');
+    }
+
+    fetchReportsHistory();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,17 @@
+# === Cœur du pipeline (scraper -> lead_worker -> ceo_agent) ===
+requests==2.32.3
+beautifulsoup4==4.14.3
+urllib3==2.2.3
+python-dotenv==1.0.0
+supabase==2.5.0
+
+# === API interne (api/main.py) ===
+fastapi==0.115.0
+uvicorn[standard]==0.30.0
+apscheduler==3.10.4
+python-multipart==0.0.9
+pydantic==2.8.2
+
+# === Dashboard (dashboard/app.py) ===
+streamlit==1.38.0
+pandas==2.2.2
