@@ -1,0 +1,7 @@
+# headless=true empêche Streamlit de tenter d'ouvrir automatiquement un
+# navigateur au démarrage (via webbrowser/gio) — sans display (Docker, WSL2
+# sans handler http:// enregistré), cette tentative échoue avec
+# "gio: http://localhost:XXXX: Operation not supported". Sans impact sur le
+# fonctionnement de l'app : on ouvre l'URL nous-mêmes dans le navigateur.
+[server]
+headless = true

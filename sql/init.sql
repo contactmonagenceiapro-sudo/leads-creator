@@ -62,15 +62,45 @@ ALTER TABLE leads ADD COLUMN IF NOT EXISTS weakness TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS pitch_commercial TEXT;
 ALTER TABLE leads ADD COLUMN IF NOT EXISTS contacted BOOLEAN DEFAULT FALSE;
 
--- Empêche les doublons de leads par email et permet l'upsert
--- (Prefer: resolution=merge-duplicates + on_conflict=email côté API).
--- Index partiel : n'impose l'unicité que sur les emails renseignés,
--- pour ne pas bloquer d'éventuelles lignes historiques sans email.
--- ATTENTION : si des doublons d'email existent déjà dans une base existante,
--- cette commande échouera : dédupliquer manuellement avant de la relancer.
+-- Champs "données d'entreprise" structurés pour un usage commercial du lot
+-- (export/vente à un client B2B) : telephone n'est renseigné que lorsqu'un
+-- numéro réel a été trouvé sur une page validée (jamais fabriqué, cf.
+-- email_enricher.py::extraire_telephone_depuis_html). siren/adresse
+-- proviennent directement du registre SIRENE (données publiques officielles).
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS telephone TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS siren TEXT;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS adresse TEXT;
+
+-- Suivi du cycle de relance (relance_prospects.py) : contacted_at marque le
+-- premier envoi (ceo_agent.py), relance_count/last_relance_at permettent de
+-- savoir quel palier de relance appliquer et quand, sans jamais harceler un
+-- prospect au-delà de MAX_RELANCES (cf. relance_prospects.py).
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS contacted_at TIMESTAMPTZ;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS relance_count INTEGER DEFAULT 0;
+ALTER TABLE leads ADD COLUMN IF NOT EXISTS last_relance_at TIMESTAMPTZ;
+
+-- Conservé comme garde-fou d'intégrité (deux entreprises distinctes ne
+-- devraient pas partager un email réel), mais N'EST PLUS la clé de
+-- dé-duplication utilisée par lead_worker.py (voir idx_leads_company_unique
+-- ci-dessous). Index partiel : n'impose l'unicité que sur les emails
+-- renseignés, pour ne pas bloquer les lignes sans email (majoritaires
+-- depuis que scraper_batiment.py ne fabrique plus d'email non vérifié).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_email_unique
 ON leads (email)
 WHERE email IS NOT NULL;
+
+-- Empêche les doublons de leads par entreprise et permet l'upsert
+-- (Prefer: resolution=merge-duplicates + on_conflict=company côté API).
+-- Remplace l'ancienne dé-duplication par email : depuis que
+-- scraper_batiment.py/email_enricher.py peuvent légitimement laisser
+-- email=NULL (aucun domaine réel trouvé), un upsert basé sur email seul ne
+-- protège plus contre les doublons — chaque nouveau run recréait une ligne
+-- pour chaque entreprise sans email au lieu de mettre à jour l'existante.
+-- ATTENTION : si des doublons de company existent déjà dans une base
+-- existante, cette commande échouera : dédupliquer manuellement avant de
+-- la relancer (cf. script de nettoyage utilisé lors de la migration).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_company_unique
+ON leads (company);
 
 -- Table des erreurs pour auto-amélioration
 CREATE TABLE IF NOT EXISTS error_log (
@@ -82,6 +112,45 @@ CREATE TABLE IF NOT EXISTS error_log (
     resolved BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Réponses au formulaire d'intake asynchrone (étape "Done For You" : dès
+-- qu'un artisan répond positivement, on lui envoie une présentation +
+-- ce formulaire pour collecter le contenu nécessaire à la production du
+-- site, sans jamais l'appeler).
+CREATE TABLE IF NOT EXISTS intake_responses (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    lead_id UUID REFERENCES leads(id),
+    description TEXT,
+    zone_activite TEXT,
+    lien_photos TEXT,
+    lien_site_actuel TEXT,
+    lien_gbp TEXT,
+    telephone_public TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_intake_lead ON intake_responses(lead_id);
+
+-- Cycle de vie contrat + paiement, déclenché après l'intake (soumettre_formulaire_intake).
+-- Statuts leads ajoutés à la suite de "intake_recu" :
+--   contrat_envoye -> contrat_signe -> lien_paiement_envoye -> paye
+CREATE TABLE IF NOT EXISTS contracts (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    lead_id UUID REFERENCES leads(id) UNIQUE,
+    yousign_request_id TEXT,
+    yousign_status TEXT DEFAULT 'a_envoyer',
+    stripe_payment_link_id TEXT,
+    stripe_payment_url TEXT,
+    payment_status TEXT DEFAULT 'en_attente',
+    montant_centimes INTEGER,
+    signed_at TIMESTAMPTZ,
+    paid_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_contracts_lead ON contracts(lead_id);
+CREATE INDEX IF NOT EXISTS idx_contracts_yousign ON contracts(yousign_request_id);
+CREATE INDEX IF NOT EXISTS idx_contracts_stripe_link ON contracts(stripe_payment_link_id);
 
 -- Index pour la recherche vectorielle
 CREATE INDEX IF NOT EXISTS idx_memories_embedding

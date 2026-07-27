@@ -2,6 +2,7 @@
 .env
 *.pem
 *.key
+.streamlit/secrets.toml
 
 # Python
 __pycache__/
@@ -17,8 +18,15 @@ logs/
 
 # Données générées / runtime (générées par le pipeline, pas du code source)
 leads.json
+leads.json.bak
+exports/
+dashboard/data/
+outbound_chantiers/acteurs_pro_bruts.json
+outbound_chantiers/acteurs_pro_enrichis.json
 
 # OS / éditeurs
 .DS_Store
 .vscode/
 .idea/
+*.swp
+*.swo

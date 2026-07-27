@@ -11,6 +11,8 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
+from email_tracking import demarrer_tracking, habiller_html_avec_tracking
+
 load_dotenv()
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
@@ -37,10 +39,34 @@ def get_stats() -> dict:
         return {}
 
 
+SOURCES_EMAIL_VERIFIEES = ("email_verifie_site", "domaine_verifie_sans_email")
+
+
 def get_leads_from_supabase() -> list:
-    """Récupère uniquement les leads qui n'ont pas encore été contactés."""
+    """Récupère les leads non contactés dont l'email a été vérifié (domaine
+    réel confirmé par scraper_batiment.py/email_enricher.py), via le
+    marqueur posé dans `notes`. Exclut volontairement les leads dont l'email
+    n'est qu'une génération structurelle non vérifiée
+    ("aucun_domaine_trouve") : envoyer une campagne à grande échelle sur des
+    adresses non confirmées ferait remonter le taux de rebond et dégraderait
+    la réputation d'envoi (cf. incident NXDOMAIN corrigé précédemment).
+
+    NOTE : ce filtre remplace celui, plus permissif, historiquement utilisé
+    ici (contacted=False seul) — fusionné avec la logique auparavant dans le
+    script séparé envoyer_campagne_verifiee.py, retiré car il faisait double
+    emploi avec ce module."""
     try:
-        response = supabase.table("leads").select("*").eq("contacted", False).execute()
+        filtre_or = ",".join(f"notes.ilike.*{s}*" for s in SOURCES_EMAIL_VERIFIEES)
+        # NOTE : .or_() de postgrest-py ajoute lui-même les parenthèses
+        # englobantes ; ne pas les dupliquer ici (sinon PGRST100 "failed to
+        # parse logic tree").
+        response = (
+            supabase.table("leads")
+            .select("*")
+            .eq("contacted", False)
+            .or_(filtre_or)
+            .execute()
+        )
         return response.data
     except Exception as e:
         log.error(f"Erreur lors de la récupération des leads depuis Supabase : {e}")
@@ -97,13 +123,21 @@ def save_report_to_supabase(rapport: str, stats: dict) -> bool:
         return False
 
 
-def send_email_prospect(to_email: str, subject: str, body: str) -> bool:
+def send_email_prospect(to_email: str, subject: str, body: str, lead_id: str | None = None) -> bool:
+    """Envoi SMTP Zoho inchangé. Si lead_id est fourni, une version HTML
+    trackée (pixel d'ouverture + liens redirigés, voir email_tracking.py)
+    est jointe en plus du texte brut — "alternative" et non "mixed" : ce
+    sont deux représentations du MÊME contenu, pas une pièce jointe."""
     try:
-        msg = MIMEMultipart()
+        msg = MIMEMultipart("alternative")
         msg["From"] = ZOHO_USER
         msg["To"] = to_email
         msg["Subject"] = f"[{AGENCY_NAME}] {subject}"
-        msg.attach(MIMEText(body, "plain"))
+        msg.attach(MIMEText(body, "plain", "utf-8"))
+
+        if lead_id:
+            tracking_id = demarrer_tracking("lead_artisan", lead_id)
+            msg.attach(MIMEText(habiller_html_avec_tracking(body, tracking_id), "html", "utf-8"))
 
         with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as s:
             s.login(ZOHO_USER, ZOHO_PASSWORD)
@@ -168,13 +202,24 @@ def run_ceo_analysis() -> None:
                 f"Bonjour, nous avons analysé {company} et avons quelques idées "
                 f"pour améliorer votre présence en ligne."
             )
-            success = send_email_prospect(target_email, sujet, corps)
+            success = send_email_prospect(target_email, sujet, corps, lead_id=lead["id"])
 
             if success:
                 emails_sent_count += 1
                 log.info(f"Email envoyé avec succès à {company}")
 
-                supabase.table("leads").update({"contacted": True}).eq("id", lead["id"]).execute()
+                # "status" doit refléter le même événement que "contacted" :
+                # avant ce correctif, seul "contacted" était mis à jour ici,
+                # ce qui désynchronisait les deux champs (cas réel observé :
+                # 74 leads contacted=True mais 8 seulement en status
+                # 'contacted') et empêchait tout reporting/relance fiable.
+                # "contacted_at" alimente le mécanisme de relance
+                # (relance_prospects.py).
+                supabase.table("leads").update({
+                    "contacted": True,
+                    "status": "contacte_attente_reponse",
+                    "contacted_at": datetime.now(timezone.utc).isoformat(),
+                }).eq("id", lead["id"]).execute()
 
                 sleep_time = random.uniform(20, 45)
                 log.info(f"Pause de {sleep_time:.1f} secondes...")

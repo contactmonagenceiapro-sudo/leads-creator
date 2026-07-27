@@ -1,7 +1,9 @@
 services:
   api:
     container_name: ai_api
-    build: ./api
+    build:
+      context: .
+      dockerfile: api/Dockerfile
     ports:
       - "8000:8000"
     env_file: .env
@@ -12,9 +14,23 @@ services:
       - .:/app
     working_dir: /app
     command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # Surcharge OLLAMA_HOST de .env (http://localhost:11434, valable pour un
+    # script lancé sur l'hôte) : à l'intérieur du conteneur, "localhost" désigne
+    # le conteneur lui-même. Les tâches de fond (cron, lead_worker.py lancé en
+    # subprocess) doivent utiliser l'alias réseau docker du service ai_ollama.
+    environment:
+      - OLLAMA_HOST=http://ai_ollama:11434
     depends_on:
-      - ai_ollama
+      ai_ollama:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      # Pas de curl dans l'image python:slim : on utilise urllib (stdlib).
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   ai_ollama:
     container_name: ai_ollama
@@ -29,6 +45,42 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  dashboard:
+    container_name: ai_dashboard
+    build: ./dashboard
+    ports:
+      - "8501:8501"
+    env_file: .env
+    # Alias réseau docker de l'API (et non localhost:8000, valable seulement
+    # pour un accès depuis l'hôte) ; API_SECRET_KEY est lue depuis .env par
+    # dashboard/api_client.py pour le header X-API-Key.
+    environment:
+      - AI_COMPANY_API_URL=http://ai_api:8000
+    # Volume dédié à l'état local du dashboard (ex: configuration de
+    # l'agence enregistrée depuis "Administration & Contrats", voir
+    # app_pages/administration_contrats.py::CONFIG_PATH) — sans lui, ces
+    # réglages seraient perdus à chaque rebuild de l'image (COPY . . fige
+    # le contenu au build, il n'y a pas de bind-mount du code comme pour
+    # ai_api).
+    volumes:
+      - dashboard_data:/app/data
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   n8n:
     container_name: ai_n8n
@@ -47,3 +99,4 @@ services:
 volumes:
   ollama_data:
   n8n_data:
+  dashboard_data:
