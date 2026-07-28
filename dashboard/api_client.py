@@ -28,7 +28,17 @@ try:
 except ImportError:
     pass
 
-API_BASE_URL = os.getenv("AI_COMPANY_API_URL", "http://localhost:8000")
+def _resoudre_api_base_url() -> str:
+    """AI_COMPANY_API_URL (nom historique, utilisé par docker-compose.yml
+    pour l'alias réseau interne http://ai_api:8000) est prioritaire ; API_URL
+    (nom générique utilisé partout ailleurs dans le projet — ceo_agent.py,
+    lead_worker.py, .env.example — et le plus probable côté secrets d'un
+    déploiement cloud type Streamlit Community Cloud) sert de repli. Sans
+    aucune des deux, on retombe sur localhost (poste de dev)."""
+    return os.getenv("AI_COMPANY_API_URL") or os.getenv("API_URL") or "http://localhost:8000"
+
+
+API_BASE_URL = _resoudre_api_base_url()
 DEFAULT_TIMEOUT = 10  # secondes
 
 
@@ -63,6 +73,36 @@ def login(email: str, mot_de_passe: str) -> dict:
         except Exception:
             detail = response.text
         raise ApiError(detail or "Identifiants invalides")
+
+
+def signup(email: str, mot_de_passe: str) -> dict:
+    """POST /auth/signup -> {message, email}.
+
+    Comme login(), ne requiert aucune authentification préalable. Crée
+    toujours un compte de rôle 'client' sans campagne associée : un
+    administrateur doit ensuite le rattacher à une campagne (voir
+    api/main.py::signup et creer_utilisateur_dashboard.py) avant que le
+    compte puisse se connecter."""
+    url = f"{API_BASE_URL}/auth/signup"
+    try:
+        response = requests.post(
+            url, json={"email": email, "mot_de_passe": mot_de_passe}, timeout=DEFAULT_TIMEOUT
+        )
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.ConnectionError as exc:
+        raise ApiError(
+            f"Impossible de joindre l'API sur {API_BASE_URL}. Vérifie qu'elle tourne bien."
+        ) from exc
+    except requests.exceptions.Timeout as exc:
+        raise ApiError(f"L'API n'a pas répondu à temps ({url}).") from exc
+    except requests.exceptions.HTTPError as exc:
+        detail = ""
+        try:
+            detail = response.json().get("detail", "")
+        except Exception:
+            detail = response.text
+        raise ApiError(detail or "Impossible de créer le compte")
 
 
 def _obtenir_jeton() -> str:

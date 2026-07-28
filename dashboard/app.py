@@ -5,7 +5,9 @@ Lancement :
     streamlit run app.py
 
 Configuration :
-    Variable d'environnement AI_COMPANY_API_URL (défaut http://localhost:8000)
+    Variable d'environnement AI_COMPANY_API_URL, ou à défaut API_URL
+    (défaut http://localhost:8000 si aucune des deux n'est définie —
+    voir api_client.py::_resoudre_api_base_url)
 
 Structure (multi-pages) :
     app.py                        -> point d'entrée : connexion + navigation par rôle

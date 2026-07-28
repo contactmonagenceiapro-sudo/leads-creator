@@ -333,6 +333,41 @@ def login(payload: dict):
     }
 
 
+@app.post("/auth/signup")
+def signup(payload: dict):
+    """Point d'entrée PUBLIC de création de compte du Portail Client — comme
+    /auth/login, aucune authentification n'est requise. Crée TOUJOURS un
+    compte de rôle 'client' (jamais 'admin' : ce endpoint public ne doit
+    jamais permettre d'auto-promotion), sans campagne associée — un
+    administrateur doit ensuite le rattacher à une ou plusieurs campagnes
+    (table utilisateur_campagnes, via creer_utilisateur_dashboard.py ou la
+    page Administration & Contrats) avant que le compte puisse se connecter
+    (voir /auth/login : un rôle client sans campagne est rejeté en 403)."""
+    email = (payload.get("email") or "").strip().lower()
+    mot_de_passe = payload.get("mot_de_passe") or ""
+    if not email or not mot_de_passe:
+        raise HTTPException(status_code=400, detail="email et mot_de_passe requis")
+    if len(mot_de_passe) < 8:
+        raise HTTPException(status_code=400, detail="Le mot de passe doit contenir au moins 8 caractères")
+
+    existants = supabase_get("utilisateurs_dashboard", f"select=id&email=eq.{quote(email)}")
+    if existants:
+        raise HTTPException(status_code=409, detail="Un compte existe déjà avec cet e-mail")
+
+    mot_de_passe_hash = bcrypt.hashpw(mot_de_passe.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    resultat = sb_insert(
+        "utilisateurs_dashboard",
+        {"email": email, "mot_de_passe_hash": mot_de_passe_hash, "role": "client", "actif": True},
+    )
+    if resultat["status_code"] not in (200, 201):
+        raise HTTPException(status_code=500, detail=f"Échec de la création du compte : {resultat['response']}")
+
+    return {
+        "message": "Compte créé. Un administrateur doit encore vous rattacher à une campagne avant que vous puissiez vous connecter.",
+        "email": email,
+    }
+
+
 @app.get("/stats", dependencies=[Depends(verifier_cle_api)])
 def get_stats():
     leads_count = len(supabase_get("leads", "select=id"))

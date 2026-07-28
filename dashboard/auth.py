@@ -10,7 +10,7 @@ chaque session navigateur Streamlit.
 
 import streamlit as st
 
-from api_client import ApiError, login as api_login
+from api_client import ApiError, login as api_login, signup as api_signup
 
 _CLES_SESSION = ("auth_token", "auth_role", "auth_campagnes", "auth_email")
 
@@ -35,10 +35,7 @@ def deconnexion() -> None:
     st.rerun()
 
 
-def _afficher_ecran_connexion() -> None:
-    st.title("🔐 Connexion")
-    st.caption("ai-company · Portail Admin & Client")
-
+def _afficher_formulaire_login() -> None:
     with st.form("form_login"):
         email = st.text_input("E-mail")
         mot_de_passe = st.text_input("Mot de passe", type="password")
@@ -61,6 +58,51 @@ def _afficher_ecran_connexion() -> None:
     st.session_state["auth_campagnes"] = resultat["campagnes"]
     st.session_state["auth_email"] = resultat["email"]
     st.rerun()
+
+
+def _afficher_formulaire_inscription() -> None:
+    st.caption(
+        "Crée ton compte Client. Un administrateur devra ensuite te rattacher "
+        "à une campagne avant que la connexion soit possible."
+    )
+    with st.form("form_signup"):
+        email = st.text_input("E-mail", key="signup_email")
+        mot_de_passe = st.text_input("Mot de passe", type="password", key="signup_mdp")
+        mot_de_passe_confirmation = st.text_input(
+            "Confirmer le mot de passe", type="password", key="signup_mdp_confirmation"
+        )
+        creer = st.form_submit_button("Créer mon compte", type="primary", use_container_width=True)
+
+    if not creer:
+        return
+    if not email or not mot_de_passe:
+        st.warning("Merci de renseigner l'e-mail et le mot de passe.")
+        return
+    if mot_de_passe != mot_de_passe_confirmation:
+        st.warning("Les deux mots de passe ne correspondent pas.")
+        return
+    if len(mot_de_passe) < 8:
+        st.warning("Le mot de passe doit contenir au moins 8 caractères.")
+        return
+
+    try:
+        resultat = api_signup(email.strip(), mot_de_passe)
+    except ApiError as e:
+        st.error(str(e))
+        return
+
+    st.success(f"✅ {resultat['message']}")
+
+
+def _afficher_ecran_connexion() -> None:
+    st.title("🔐 Portail ai-company")
+    st.caption("ai-company · Portail Admin & Client")
+
+    onglet_connexion, onglet_inscription = st.tabs(["Se connecter", "Créer un compte"])
+    with onglet_connexion:
+        _afficher_formulaire_login()
+    with onglet_inscription:
+        _afficher_formulaire_inscription()
 
 
 def exiger_connexion() -> None:
