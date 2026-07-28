@@ -9,6 +9,8 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
+from email_blacklist import blacklister_email
+
 load_dotenv()
 
 # Configuration
@@ -47,6 +49,18 @@ MOTS_NEGATIFS = [
     "ne pas me contacter", "retirer de votre liste", "supprimer mes coordonnees",
     "supprimer mes coordonnées",
 ]
+
+# Détection d'un message automatique de non-remise (bounce) — jamais une
+# vraie réponse humaine, à vérifier AVANT toute détection de mot-clé
+# positif/négatif (voir check_for_replies). Couvre explicitement les deux
+# formulations vues en pratique : "Undelivered Mail Returned to Sender"
+# (échec) ET "Delivery Status Notification (Delay)" (juste un délai, PAS
+# un échec — voir analyser_dsn/traiter_bounce pour la distinction).
+EXPEDITEURS_BOUNCE = ("mailer-daemon", "mail delivery subsystem", "postmaster", "mail delivery system")
+SUJETS_BOUNCE = (
+    "undelivered mail", "mail delivery failed", "delivery status notification",
+    "returned mail", "failure notice", "delivery has failed", "non remis",
+)
 
 
 def normaliser(texte: str) -> str:
@@ -164,6 +178,103 @@ def envoyer_suivi_positif(lead: dict) -> None:
         log.error(f"Échec de l'envoi du suivi automatique à {company} <{to_email}>")
 
 
+def est_message_bounce(sender_brut: str, subject: str) -> bool:
+    """Vrai si ce message est une notification automatique de non-remise
+    (bounce) — expéditeur mailer-daemon/postmaster ou sujet typique d'un
+    rapport DSN. Jamais une vraie réponse humaine : à vérifier EN PREMIER
+    dans check_for_replies(), avant toute détection de mot-clé
+    positif/négatif (qui n'a aucun sens sur ce type de message)."""
+    s = normaliser(sender_brut or "")
+    suj = normaliser(subject or "")
+    return any(m in s for m in EXPEDITEURS_BOUNCE) or any(m in suj for m in SUJETS_BOUNCE)
+
+
+def analyser_dsn(msg: email.message.Message) -> dict | None:
+    """Parse un rapport de non-remise structuré (DSN, RFC 3464 — le format
+    standard généré par la quasi-totalité des serveurs mail, dont Zoho).
+    Renvoie {'action', 'code_statut', 'destinataire', 'diagnostic'}, ou
+    None si la partie 'message/delivery-status' est absente ou illisible —
+    jamais une supposition sur un format non structuré : un bounce qu'on ne
+    sait pas parser avec confiance reste sans action automatique plutôt que
+    de risquer d'invalider le mauvais lead (voir traiter_bounce)."""
+    if not msg.is_multipart():
+        return None
+
+    for part in msg.walk():
+        if part.get_content_type() != "message/delivery-status":
+            continue
+
+        brut = part.get_payload(decode=True)
+        texte = brut.decode(errors="ignore") if brut else str(part.get_payload())
+
+        action = re.search(r"^Action:\s*(\w+)", texte, re.MULTILINE | re.IGNORECASE)
+        statut = re.search(r"^Status:\s*([\d.]+)", texte, re.MULTILINE | re.IGNORECASE)
+        # Final-Recipient est obligatoire par la RFC, Original-Recipient
+        # optionnel (peut différer en cas de redirection/alias) — on
+        # accepte les deux, Final-Recipient étant listé en premier donc
+        # prioritaire si les deux sont présents.
+        destinataire = re.search(
+            r"^(?:Final|Original)-Recipient:\s*(?:rfc822;)?\s*<?([^\s>]+@[^\s>]+)",
+            texte, re.MULTILINE | re.IGNORECASE,
+        )
+        diagnostic = re.search(r"^Diagnostic-Code:\s*(.+)$", texte, re.MULTILINE | re.IGNORECASE)
+
+        return {
+            "action": action.group(1).lower() if action else None,
+            "code_statut": statut.group(1) if statut else None,
+            "destinataire": destinataire.group(1).strip().rstrip(".,;") if destinataire else None,
+            "diagnostic": diagnostic.group(1).strip() if diagnostic else "",
+        }
+
+    return None
+
+
+def invalider_lead(email_address: str) -> None:
+    """Marque le lead correspondant 'invalide' — artisan OU acteur pro, les
+    deux tentées (même logique que le traitement d'un 'decline' plus haut,
+    on ne sait pas a priori de quel pipeline vient l'adresse). Un lead
+    'invalide' n'est plus jamais sélectionné : get_leads_from_supabase()
+    filtre sur contacted=False (déjà True à ce stade) et
+    recuperer_prospects_a_relancer()/lancer_relances() filtrent sur
+    status/statut='contacte_attente_reponse', jamais 'invalide'."""
+    update_lead_status(email_address, "invalide")
+    update_lead_professionnel_status(email_address, "invalide")
+
+
+def traiter_bounce(sender_brut: str, subject: str, msg: email.message.Message) -> None:
+    """Traite un message identifié comme bounce (voir est_message_bounce) :
+    seul un HARD bounce confirmé (Action: failed ou code 5.x.x) invalide le
+    lead et alimente la blacklist durable — un simple délai (Action:
+    delayed ou code 4.x.x, ex: 'Delivery Status Notification (Delay)') ne
+    déclenche AUCUNE action : le serveur distant retente encore, ce n'est
+    pas un échec définitif."""
+    dsn = analyser_dsn(msg)
+
+    if dsn is None:
+        log.warning(
+            f"Message de type bounce détecté (expéditeur={sender_brut!r}, sujet={subject!r}) "
+            "mais non parsable en DSN structuré — aucune action automatique, à vérifier manuellement."
+        )
+        return
+
+    destinataire = dsn["destinataire"]
+    if not destinataire:
+        log.warning(f"Bounce sans destinataire identifiable (action={dsn['action']}, statut={dsn['code_statut']}) — ignoré.")
+        return
+
+    action = dsn["action"]
+    code_statut = dsn["code_statut"] or ""
+
+    if action == "failed" or code_statut.startswith("5"):
+        log.warning(f"❌ Hard bounce confirmé pour {destinataire} (statut {code_statut}) — {dsn['diagnostic']}")
+        invalider_lead(destinataire)
+        blacklister_email(destinataire, raison="hard_bounce", code_statut=code_statut, diagnostic=dsn["diagnostic"])
+    elif action == "delayed" or code_statut.startswith("4"):
+        log.info(f"⏳ Délai de livraison pour {destinataire} (statut {code_statut}) — le serveur retente encore, aucune action.")
+    else:
+        log.warning(f"Bounce de nature indéterminée pour {destinataire} (action={action}, statut={code_statut!r}) — aucune action automatique.")
+
+
 def check_for_replies() -> None:
     if not ZOHO_USER or not ZOHO_PASSWORD:
         log.error("Identifiants Zoho manquants dans .env")
@@ -187,6 +298,16 @@ def check_for_replies() -> None:
             msg = email.message_from_bytes(msg_data[0][1])
             sender_brut = msg.get("From") or ""
             sender = extraire_email(sender_brut)
+            subject = msg.get("Subject") or ""
+
+            # Vérifié EN PREMIER, avant toute détection de mot-clé : un
+            # bounce n'est jamais une vraie réponse humaine, et son
+            # expéditeur (mailer-daemon) n'est de toute façon jamais
+            # l'adresse du lead concerné (voir traiter_bounce, qui extrait
+            # la vraie adresse depuis le contenu du rapport DSN).
+            if est_message_bounce(sender_brut, subject):
+                traiter_bounce(sender_brut, subject, msg)
+                continue
 
             body = ""
             if msg.is_multipart():

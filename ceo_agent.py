@@ -11,6 +11,7 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
+from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, habiller_html_avec_tracking
 
 load_dotenv()
@@ -67,7 +68,21 @@ def get_leads_from_supabase() -> list:
             .or_(filtre_or)
             .execute()
         )
-        return response.data
+        leads = response.data
+
+        # Protection supplémentaire au statut du lead lui-même (qui suffit
+        # déjà pour un lead déjà contacté) : un email ayant fait l'objet
+        # d'un hard bounce peut réapparaître sur une NOUVELLE ligne lead
+        # après un re-scraping (nouvel id, contacted=False) — voir
+        # email_blacklist.py.
+        blacklist = emails_blacklistes()
+        if blacklist:
+            avant = len(leads)
+            leads = [l for l in leads if (l.get("email") or "").strip().lower() not in blacklist]
+            if len(leads) < avant:
+                log.info(f"{avant - len(leads)} lead(s) exclu(s) (adresse blacklistée pour hard bounce précédent).")
+
+        return leads
     except Exception as e:
         log.error(f"Erreur lors de la récupération des leads depuis Supabase : {e}")
         return []

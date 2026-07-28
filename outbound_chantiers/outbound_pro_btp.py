@@ -32,6 +32,7 @@ from email.mime.text import MIMEText
 
 import requests
 
+from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, habiller_html_avec_tracking
 from outbound_chantiers.config import (
     AGENCY_NAME,
@@ -284,6 +285,17 @@ def lancer_campagne_initiale(limite: int = 20) -> None:
     acteurs = supabase_get(
         f"select=*&client_final=eq.{CLIENT_FINAL}&statut=eq.a_contacter&order=score_final.desc&limit={limite_effective}"
     )
+
+    # Protection supplémentaire au statut lui-même : un email ayant fait
+    # l'objet d'un hard bounce peut réapparaître sur une NOUVELLE ligne
+    # (nouveau sourcing), statut='a_contacter' à nouveau — voir email_blacklist.py.
+    blacklist = emails_blacklistes()
+    if blacklist:
+        avant = len(acteurs)
+        acteurs = [a for a in acteurs if (a.get("email") or "").strip().lower() not in blacklist]
+        if len(acteurs) < avant:
+            log.info(f"{avant - len(acteurs)} acteur(s) exclu(s) (adresse blacklistée pour hard bounce précédent).")
+
     log.info(
         f"{len(acteurs)} acteur(s) à contacter pour la première fois "
         f"(warmup jour {ramp['jour_ramp']}, budget restant aujourd'hui : {ramp['budget_restant']})."
@@ -333,10 +345,14 @@ def lancer_relances() -> None:
         return
 
     acteurs = supabase_get(f"select=*&client_final=eq.{CLIENT_FINAL}&statut=eq.contacte_attente_reponse")
+    blacklist = emails_blacklistes()
     maintenant = datetime.now(timezone.utc)
     budget_restant = ramp["budget_restant"]
 
     for acteur in acteurs:
+        if blacklist and (acteur.get("email") or "").strip().lower() in blacklist:
+            continue
+
         if budget_restant <= 0:
             log.info("Plafond de warmup atteint en cours de relances — arrêt, reprise au prochain run.")
             break

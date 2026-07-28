@@ -38,6 +38,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from ceo_agent import send_email_prospect
+from email_blacklist import emails_blacklistes
 
 load_dotenv()
 
@@ -97,7 +98,15 @@ def recuperer_prospects_a_relancer() -> list[dict]:
         log.error(f"Erreur Supabase lors de la récupération des prospects à relancer : {e}")
         return []
 
+    # Filet de sécurité supplémentaire au statut (déjà passé à 'invalide' sur
+    # hard bounce par mail_processor.py, donc déjà exclu du .eq("status", ...)
+    # ci-dessus) : couvre le cas où le bounce n'a pas encore été traité au
+    # moment de ce run (voir email_blacklist.py).
+    blacklist = emails_blacklistes()
+
     for lead in reponse.data or []:
+        if blacklist and (lead.get("email") or "").strip().lower() in blacklist:
+            continue
         relance_count = lead.get("relance_count") or 0
         if relance_count == 0:
             reference = lead.get("contacted_at")
