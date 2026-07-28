@@ -84,6 +84,40 @@ def normaliser(texte: str) -> str:
     return texte.lower()
 
 
+_SUFFIXE_ORDINAL = re.compile(r"^\d+(er|e|eme)$")
+
+
+def _mots_significatifs(nom: str) -> set[str]:
+    """Mots significatifs d'un nom de commune : tirets traités comme des
+    espaces, suffixes d'arrondissement ("1er", "2e"...) et le mot
+    "arrondissement" ignorés.
+
+    Nécessaire car l'API SIRENE renvoie souvent un nom de commune plus
+    générique ou légalement différent de la config métier : "LYON" (sans
+    numéro d'arrondissement) pour une adresse en "Lyon 3e", ou
+    "OULLINS-PIERRE-BENITE" (fusion de communes actée en 2019) pour
+    l'ancienne "Oullins". Sur un lot réel de 111 acteurs sourcés, une
+    comparaison stricte (avant ce correctif) en écartait 73 (66 %) à ce
+    seul stade, alors qu'ils étaient dans la zone ciblée."""
+    mots = normaliser(nom).replace("-", " ").split()
+    return {m for m in mots if m != "arrondissement" and not _SUFFIXE_ORDINAL.fullmatch(m)}
+
+
+def commune_correspond(commune_source: str, communes_cibles: list[str]) -> bool:
+    """Vrai si `commune_source` (telle que renvoyée par l'API SIRENE) désigne
+    la même ville qu'une des communes cibles de la campagne, en tolérant les
+    variantes ci-dessus — comparaison par inclusion d'ensembles de mots
+    plutôt qu'égalité stricte de chaîne (dans un sens ou dans l'autre, pour
+    couvrir aussi bien "LYON" ⊂ "Lyon 3e" que "Oullins" ⊂ "Oullins-Pierre-Bénite")."""
+    mots_source = _mots_significatifs(commune_source)
+    if not mots_source:
+        return False
+    return any(
+        mots_source <= _mots_significatifs(cible) or _mots_significatifs(cible) <= mots_source
+        for cible in communes_cibles
+    )
+
+
 def page_correspond_bien(html: str, nom_entreprise: str, commune: str) -> bool:
     """Garde-fou anti-homonyme : la page doit citer le nom de l'entreprise
     ET la commune, sinon on écarte le domaine (site sans rapport, revendu,
@@ -271,14 +305,13 @@ def filtrer_et_enrichir() -> list[dict]:
         return []
 
     acteurs_bruts = json.loads(FICHIER_ENTREE.read_text(encoding="utf-8"))
-    communes_normalisees = {normaliser(c) for c in COMMUNES_CIBLES}
 
     enrichis = []
     for acteur in acteurs_bruts:
         commune = acteur.get("commune") or ""
         nom = acteur.get("nom_entreprise") or ""
 
-        if normaliser(commune) not in communes_normalisees or not nom:
+        if not nom or not commune_correspond(commune, COMMUNES_CIBLES):
             continue
 
         resultat = enrichir_un_acteur(nom, commune)

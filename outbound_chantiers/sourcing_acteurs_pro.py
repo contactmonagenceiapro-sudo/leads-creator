@@ -17,7 +17,16 @@ from pathlib import Path
 
 import requests
 
-from outbound_chantiers.config import COMMUNES_CIBLES, NAF_CODES_CIBLES, SIRENE_API_URL
+from outbound_chantiers.config import (
+    API_SECRET_KEY,
+    API_URL,
+    CLIENT_FINAL,
+    COMMUNES_CIBLES,
+    MAX_PAGES_PAR_SEGMENT,
+    NAF_CODES_CIBLES,
+    NB_NOUVEAUX_SOUHAITES_PAR_SEGMENT,
+    SIRENE_API_URL,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SOURCING-PRO] %(message)s")
 log = logging.getLogger(__name__)
@@ -77,35 +86,90 @@ def extraire_champs_utiles(resultat: dict, type_acteur: str) -> dict:
     }
 
 
+def recuperer_sirens_deja_connus(client_final: str) -> set[str]:
+    """SIREN déjà présents en base (table leads_professionnels, tous statuts
+    confondus) pour cette campagne — permet au sourcing de les exclure des
+    "nouveaux" et de creuser au-delà de la page 1 tant que les résultats
+    restent dominés par des acteurs déjà connus, plutôt que de re-remonter
+    indéfiniment les mêmes têtes de classement SIRENE (page 1 uniquement,
+    déterministe d'un run à l'autre). Échec réseau -> ensemble vide : le run
+    continue sans historique plutôt que d'échouer entièrement."""
+    try:
+        reponse = requests.get(
+            f"{API_URL}/leads_pro",
+            params={"client_final": client_final},
+            headers={"X-API-Key": API_SECRET_KEY},
+            timeout=10,
+        )
+        if reponse.status_code == 200:
+            return {a["siren"] for a in reponse.json().get("leads_pro", []) if a.get("siren")}
+        log.warning(f"Impossible de récupérer l'historique SIREN ({client_final}) : HTTP {reponse.status_code}")
+    except requests.exceptions.RequestException as e:
+        log.warning(f"Impossible de récupérer l'historique SIREN ({client_final}) : {e}")
+    return set()
+
+
 def sourcer_acteurs_pro() -> list[dict]:
-    """Parcourt chaque commune cible × chaque code NAF professionnel et
-    agrège les résultats bruts (avant filtrage/enrichissement, module 2)."""
+    """Parcourt chaque commune cible x chaque code NAF professionnel
+    ("segment") et agrège les résultats bruts (avant filtrage/enrichissement,
+    module 2). Pagine réellement chaque segment (jusqu'à MAX_PAGES_PAR_SEGMENT)
+    et exclut les SIREN déjà en base pour cette campagne, en s'arrêtant dès
+    que NB_NOUVEAUX_SOUHAITES_PAR_SEGMENT nouveaux acteurs ont été trouvés
+    (ou que la dernière page SIRENE du segment est atteinte) — sans ça, un
+    run répété ne fait que re-confirmer la même page 1, déjà toute
+    entièrement connue, sans jamais aller chercher de nouveaux prospects."""
     acteurs = []
     vus = set()  # dédoublonnage par SIREN au sein d'un même run
+    deja_connus = recuperer_sirens_deja_connus(CLIENT_FINAL)
+    log.info(f"{len(deja_connus)} acteur(s) déjà en base pour « {CLIENT_FINAL} » — exclus des nouveaux résultats")
+
     nb_requetes = 0
     nb_echecs = 0
+    nb_reexclus_deja_connus = 0
 
     for type_acteur, codes_naf in NAF_CODES_CIBLES.items():
         for code_naf in codes_naf:
             for commune in COMMUNES_CIBLES:
-                nb_requetes += 1
-                data = interroger_sirene(commune, code_naf)
-                time.sleep(PAUSE_ENTRE_REQUETES_SECONDES)
-                if not data:
-                    nb_echecs += 1
-                    continue
+                nouveaux_ce_segment = 0
 
-                for resultat in data.get("results", []):
-                    siren = resultat.get("siren")
-                    if not siren or siren in vus:
-                        continue
-                    vus.add(siren)
-                    acteurs.append(extraire_champs_utiles(resultat, type_acteur))
+                for page in range(1, MAX_PAGES_PAR_SEGMENT + 1):
+                    nb_requetes += 1
+                    data = interroger_sirene(commune, code_naf, page=page)
+                    time.sleep(PAUSE_ENTRE_REQUETES_SECONDES)
+                    if not data:
+                        nb_echecs += 1
+                        break
 
-                log.info(
-                    f"{type_acteur} / {code_naf} / {commune} : "
-                    f"{len(data.get('results', []))} résultat(s) bruts"
-                )
+                    resultats = data.get("results", [])
+                    if not resultats:
+                        break
+
+                    for resultat in resultats:
+                        siren = resultat.get("siren")
+                        if not siren or siren in vus:
+                            continue
+                        vus.add(siren)
+                        if siren in deja_connus:
+                            nb_reexclus_deja_connus += 1
+                            continue
+                        acteurs.append(extraire_champs_utiles(resultat, type_acteur))
+                        nouveaux_ce_segment += 1
+
+                    log.info(
+                        f"{type_acteur} / {code_naf} / {commune} / page {page} : "
+                        f"{len(resultats)} résultat(s) bruts, {nouveaux_ce_segment} nouveau(x) cumulé(s)"
+                    )
+
+                    if nouveaux_ce_segment >= NB_NOUVEAUX_SOUHAITES_PAR_SEGMENT:
+                        break  # objectif de nouveauté atteint pour ce segment
+                    if page >= data.get("total_pages", 1):
+                        break  # plus aucune page disponible côté SIRENE
+
+    if nb_reexclus_deja_connus:
+        log.info(
+            f"{nb_reexclus_deja_connus} résultat(s) déjà connu(s) en base réexclus "
+            "(non comptés comme nouveaux, mais comptabilisés dans les requêtes ci-dessus)"
+        )
 
     # Garde-fou : si (quasi-)toutes les requêtes échouent, c'est un problème
     # systémique (mauvais format de code NAF, API indisponible, quota...),

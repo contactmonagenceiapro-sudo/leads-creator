@@ -133,6 +133,19 @@ MAX_RELANCES = int(os.getenv("OUTBOUND_MAX_RELANCES", "2"))
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
 
+# === Sourcing SIRENE (module 1a) — pagination et objectif de nouveauté ===
+# Nombre d'acteurs INÉDITS (jamais vus en base pour cette campagne) visés
+# par segment (commune x code NAF) avant de passer au suivant — évite de
+# épuiser inutilement le quota de pages sur un segment déjà "mûr" une fois
+# l'objectif atteint, tout en creusant au-delà de la page 1 quand les
+# résultats déjà connus dominent (cf. incident réel : sourcing systématique
+# des mêmes ~2 acteurs, page 1 uniquement, jamais paginé).
+NB_NOUVEAUX_SOUHAITES_PAR_SEGMENT = int(os.getenv("OUTBOUND_NB_NOUVEAUX_PAR_SEGMENT", "10"))
+# Plafond de pages SIRENE interrogées par segment (25 résultats/page) — garde-fou
+# de temps/quota, pas une limite métier : un segment avec peu de nouveauté
+# s'arrête de lui-même bien avant (total_pages atteint ou objectif rempli).
+MAX_PAGES_PAR_SEGMENT = int(os.getenv("OUTBOUND_MAX_PAGES_PAR_SEGMENT", "5"))
+
 # === Envoi (réutilise le compte Zoho existant, cf. ceo_agent.py) ===
 ZOHO_USER = os.getenv("ZOHO_USER", "")
 ZOHO_PASSWORD = os.getenv("ZOHO_PASSWORD", "")
