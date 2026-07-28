@@ -300,7 +300,17 @@ def login(payload: dict):
         raise HTTPException(status_code=401, detail="Identifiants invalides")
     utilisateur = utilisateurs[0]
 
-    if not bcrypt.checkpw(mot_de_passe.encode("utf-8"), utilisateur["mot_de_passe_hash"].encode("utf-8")):
+    try:
+        mot_de_passe_valide = bcrypt.checkpw(
+            mot_de_passe.encode("utf-8"), utilisateur["mot_de_passe_hash"].encode("utf-8")
+        )
+    except ValueError:
+        # bcrypt >=4.0 lève ValueError (au lieu de renvoyer False) pour un
+        # mot de passe > 72 octets ou un hash stocké malformé — jamais une
+        # 500 brute pour un cas qui reste, du point de vue du client, un
+        # simple échec d'authentification.
+        mot_de_passe_valide = False
+    if not mot_de_passe_valide:
         raise HTTPException(status_code=401, detail="Identifiants invalides")
 
     liens = supabase_get("utilisateur_campagnes", f"select=client_final&utilisateur_id=eq.{utilisateur['id']}")
@@ -349,6 +359,11 @@ def signup(payload: dict):
         raise HTTPException(status_code=400, detail="email et mot_de_passe requis")
     if len(mot_de_passe) < 8:
         raise HTTPException(status_code=400, detail="Le mot de passe doit contenir au moins 8 caractères")
+    if len(mot_de_passe.encode("utf-8")) > 72:
+        # bcrypt (>=4.0) lève ValueError et non plus une simple troncature
+        # silencieuse au-delà de 72 octets — mieux vaut le rejeter proprement
+        # ici que de laisser hashpw() planter en 500 plus bas.
+        raise HTTPException(status_code=400, detail="Le mot de passe ne doit pas dépasser 72 caractères")
 
     existants = supabase_get("utilisateurs_dashboard", f"select=id&email=eq.{quote(email)}")
     if existants:

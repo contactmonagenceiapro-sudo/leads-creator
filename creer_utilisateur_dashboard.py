@@ -77,6 +77,11 @@ def main() -> None:
     mot_de_passe = args.password or getpass.getpass("Mot de passe : ")
     if not mot_de_passe:
         sys.exit("❌ Mot de passe vide.")
+    if len(mot_de_passe.encode("utf-8")) > 72:
+        # bcrypt (>=4.0) lève ValueError au-delà de 72 octets, au lieu de
+        # tronquer silencieusement comme avant — mieux vaut le signaler ici
+        # qu'avoir un hashpw() qui plante plus bas.
+        sys.exit("❌ Le mot de passe ne doit pas dépasser 72 caractères.")
     mot_de_passe_hash = bcrypt.hashpw(mot_de_passe.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
     res = requests.post(
