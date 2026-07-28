@@ -46,6 +46,16 @@ BEGIN
     END IF;
 END $$;
 
+-- Filet de sécurité en plus du DO block ci-dessus : si ce script a déjà
+-- été exécuté une première fois (constraint donc déjà nommée exactement
+-- leads_professionnels_statut_check), le DO block la retrouve et la
+-- supprime normalement — mais si jamais il ne l'a pas retrouvée (script
+-- relancé après un échec partiel, exécution manuelle de seulement une
+-- partie du fichier...), ce DROP CONSTRAINT IF EXISTS explicite rend le
+-- script rejouable sans erreur dans tous les cas.
+ALTER TABLE leads_professionnels
+    DROP CONSTRAINT IF EXISTS leads_professionnels_statut_check;
+
 ALTER TABLE leads_professionnels
     ADD CONSTRAINT leads_professionnels_statut_check
     CHECK (statut IN ('a_contacter', 'contacte_attente_reponse', 'interested', 'decline', 'sans_reponse', 'invalide'));
