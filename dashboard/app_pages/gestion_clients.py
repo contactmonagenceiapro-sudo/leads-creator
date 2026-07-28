@@ -175,6 +175,42 @@ with tab_pro:
                     "depuis l'interface « Sourcing / Scraping »."
                 )
             else:
+                # --- Engagement e-mail (ouvertures/clics), lié à chaque lead ---
+                # Un appel par type d'événement plutôt qu'un seul mélangé : le
+                # plafond de 200 côté API (/email_events) s'applique alors par
+                # type (200 envois + 200 ouvertures + 200 clics), pas partagé
+                # entre les trois — sinon une campagne active verrait ses
+                # ouvertures anciennes évincées par les envois récents.
+                evts_envoye, _ = safe_call(get_email_events, "envoye", campagne_selectionnee, 200)
+                evts_ouvert, _ = safe_call(get_email_events, "ouvert", campagne_selectionnee, 200)
+                evts_clique, _ = safe_call(get_email_events, "clique", campagne_selectionnee, 200)
+
+                ids_envoyes = {e["lead_id"] for e in (evts_envoye or {}).get("email_events", [])}
+                liste_ids_ouverts = [e["lead_id"] for e in (evts_ouvert or {}).get("email_events", [])]
+                ids_ouverts = set(liste_ids_ouverts)
+                ids_cliques = {e["lead_id"] for e in (evts_clique or {}).get("email_events", [])}
+                nb_ouvertures_par_lead = pd.Series(liste_ids_ouverts).value_counts().to_dict()
+
+                if ids_envoyes:
+                    taux_ouverture = len(ids_ouverts & ids_envoyes) / len(ids_envoyes)
+                    taux_clic = len(ids_cliques & ids_envoyes) / len(ids_envoyes)
+                    col_m1, col_m2, col_m3 = st.columns(3)
+                    col_m1.metric("E-mails envoyés", len(ids_envoyes))
+                    col_m2.metric("Taux d'ouverture", f"{taux_ouverture:.0%}")
+                    col_m3.metric("Taux de clic", f"{taux_clic:.0%}")
+                    st.caption(
+                        "Taux calculés sur les 200 derniers événements de chaque type pour cette "
+                        "campagne (pixel invisible pour les ouvertures, redirection trackée pour "
+                        "les clics — voir email_tracking.py)."
+                    )
+
+                if "id" in df_pro.columns:
+                    df_pro["Ouvert"] = df_pro["id"].apply(
+                        lambda i: "👁️ Oui" if i in ids_ouverts else ("📤 Envoyé, non ouvert" if i in ids_envoyes else "—")
+                    )
+                    df_pro["Nb ouvertures"] = df_pro["id"].apply(lambda i: nb_ouvertures_par_lead.get(i, 0))
+                    df_pro["Cliqué"] = df_pro["id"].apply(lambda i: "🖱️ Oui" if i in ids_cliques else "—")
+
                 col_f1, col_f2 = st.columns(2)
                 with col_f1:
                     types_dispo = sorted(df_pro["type_acteur"].dropna().unique()) if "type_acteur" in df_pro else []
@@ -192,7 +228,7 @@ with tab_pro:
                 colonnes_utiles = [c for c in [
                     "nom_entreprise", "type_acteur", "commune", "score_final",
                     "statut", "email", "telephone", "site_web", "linkedin_url",
-                    "enrichissement_statut",
+                    "enrichissement_statut", "Ouvert", "Nb ouvertures", "Cliqué",
                 ] if c in df_filtre.columns]
 
                 df_affiche = df_filtre[colonnes_utiles]
