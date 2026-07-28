@@ -53,6 +53,15 @@ FICHIER_SORTIE = Path(__file__).parent / "acteurs_pro_enrichis.json"
 TIMEOUT_SECONDES = 5
 PAUSE_ENTRE_REQUETES_SECONDES = 1.0
 
+# Recherche DuckDuckGo (chercher_site_via_recherche_web) : bien plus
+# surveillée que la récupération d'une simple page de contact — cf.
+# _reponse_ddg_bloquee ci-dessous. Pause dédiée, plus longue, pour rester
+# sous le seuil de blocage anti-bot plutôt que de le découvrir en production
+# (incident réel du 28/07 : 461/465 acteurs en échec sur un run à ~1 req/1s).
+PAUSE_ENTRE_RECHERCHES_DDG_SECONDES = 3.0
+NB_TENTATIVES_AVANT_ABANDON_DDG = 2  # au-delà, on cesse d'interroger DDG pour le reste du run (voir _ddg_bloque)
+DELAI_BACKOFF_BLOCAGE_DDG_SECONDES = 20
+
 # Domaines d'annuaires/réseaux sociaux/agrégateurs jamais retenus comme
 # "site de l'entreprise" même s'ils apparaissent en tête de résultats — ce
 # sont des tiers, pas l'entreprise elle-même, et n'exposent jamais son
@@ -155,24 +164,70 @@ def _url_reelle_depuis_lien_resultat(href: str) -> str | None:
     return None
 
 
+def _reponse_ddg_bloquee(html: str) -> bool:
+    """Vrai si DuckDuckGo a renvoyé sa page de challenge anti-bot (captcha
+    image "anomaly detection", HTTP 202) plutôt que de vrais résultats.
+    Marqueurs stables observés en production le 28/07 : classe CSS
+    "anomaly-modal__check" et formulaire "challenge-form" postant vers
+    duckduckgo.com/anomaly.js — jamais présents sur une page de résultats
+    normale. Ce n'est PAS un simple rate-limit ponctuel (comme un 429) :
+    un vrai captcha ne se résout pas en réessayant après une courte pause,
+    d'où le disjoncteur ci-dessous plutôt qu'une boucle de retry classique."""
+    return "anomaly-modal" in html or "challenge-form" in html
+
+
+_ddg_definitivement_bloque = False  # disjoncteur : une fois vrai, plus aucun appel DDG pour le reste de ce run (process)
+
+
 def chercher_site_via_recherche_web(nom_entreprise: str, commune: str) -> str | None:
     """Cherche le vrai site de l'entreprise via une recherche web plutôt que
     de deviner un nom de domaine — examine les premiers résultats pertinents
     (hors annuaires/réseaux sociaux) et ne retient le premier qui passe
     page_correspond_bien() (anti-homonyme). Ne lève jamais d'exception :
     une recherche indisponible/bloquée renvoie simplement None, traité comme
-    "site introuvable" par l'appelant."""
-    try:
-        reponse = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": f"{nom_entreprise} {commune}"},
-            headers=HEADERS_RECHERCHE,
-            timeout=TIMEOUT_SECONDES,
-        )
-        reponse.raise_for_status()
-    except requests.exceptions.RequestException as e:
-        log.warning(f"Recherche web indisponible pour « {nom_entreprise} » ({commune}) : {e}")
+    "site introuvable" par l'appelant.
+
+    Si DuckDuckGo bloque (cf. _reponse_ddg_bloquee), un seul nouvel essai est
+    tenté après une pause ; si le blocage persiste, le disjoncteur
+    _ddg_definitivement_bloque s'active pour le reste du run — sans lui, un
+    run de plusieurs centaines d'acteurs continuerait à cogner contre le mur
+    pendant des dizaines de minutes pour un résultat nul garanti (incident
+    réel : 461/465 échecs sur un run bloqué dès les premières recherches)."""
+    global _ddg_definitivement_bloque
+    if _ddg_definitivement_bloque:
         return None
+
+    reponse = None
+    for tentative in range(1, NB_TENTATIVES_AVANT_ABANDON_DDG + 1):
+        try:
+            reponse = requests.get(
+                "https://html.duckduckgo.com/html/",
+                params={"q": f"{nom_entreprise} {commune}"},
+                headers=HEADERS_RECHERCHE,
+                timeout=TIMEOUT_SECONDES,
+            )
+            reponse.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            log.warning(f"Recherche web indisponible pour « {nom_entreprise} » ({commune}) : {e}")
+            return None
+
+        if not _reponse_ddg_bloquee(reponse.text):
+            break
+
+        if tentative < NB_TENTATIVES_AVANT_ABANDON_DDG:
+            log.warning(
+                f"DuckDuckGo a renvoyé une page anti-bot (essai {tentative}/{NB_TENTATIVES_AVANT_ABANDON_DDG}) — "
+                f"pause {DELAI_BACKOFF_BLOCAGE_DDG_SECONDES}s avant nouvel essai."
+            )
+            time.sleep(DELAI_BACKOFF_BLOCAGE_DDG_SECONDES)
+        else:
+            log.error(
+                "DuckDuckGo bloque toujours après un nouvel essai — recherche de site DÉSACTIVÉE pour le "
+                "reste de ce run (les acteurs restants seront marqués 'non_tente', pas 'echec' : à "
+                "ré-enrichir individuellement une fois le blocage levé, cf. bouton Ré-enrichir du dashboard)."
+            )
+            _ddg_definitivement_bloque = True
+            return None
 
     soup = BeautifulSoup(reponse.text, "html.parser")
     liens_resultats = soup.select("a.result__a") or soup.select("a.result__url")
@@ -273,9 +328,15 @@ def enrichir_un_acteur(nom_entreprise: str, commune: str) -> dict:
     crash qui ferait perdre le reste du lot (pipeline) ou planterait la
     requête (bouton "Ré-enrichir" du dashboard, voir api/main.py)."""
     site, email, telephone, reseaux = None, None, None, {}
+    ddg_bloque_avant_appel = _ddg_definitivement_bloque
     try:
         site = chercher_site_via_recherche_web(nom_entreprise, commune)
-        time.sleep(PAUSE_ENTRE_REQUETES_SECONDES)
+        # Pas la peine de patienter si le disjoncteur DDG est déjà déclenché
+        # (ou vient de l'être ci-dessus) : plus aucune requête ne part, donc
+        # rien à espacer — sans ce test, chaque acteur restant du run
+        # perdrait quand même PAUSE_ENTRE_RECHERCHES_DDG_SECONDES pour rien.
+        if not _ddg_definitivement_bloque:
+            time.sleep(PAUSE_ENTRE_RECHERCHES_DDG_SECONDES)
         if site:
             email, telephone, reseaux = extraire_contact(site)
     except Exception as e:
@@ -285,6 +346,12 @@ def enrichir_un_acteur(nom_entreprise: str, commune: str) -> dict:
         statut = "reussi"
     elif email or telephone:
         statut = "partiel"
+    elif ddg_bloque_avant_appel:
+        # DDG était déjà hors-jeu avant même de tenter cet acteur : jamais
+        # réellement recherché, à distinguer d'un échec de recherche réel
+        # (voir docstring de la fonction et le bouton "Ré-enrichir" du
+        # dashboard, qui doit pouvoir cibler spécifiquement ce cas).
+        statut = "non_tente"
     else:
         statut = "echec"
 
