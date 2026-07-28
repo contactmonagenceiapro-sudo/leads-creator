@@ -44,9 +44,11 @@ from outbound_chantiers.config import (
     OLLAMA_HOST,
     OLLAMA_MODEL_MAIN,
     OLLAMA_TIMEOUT,
+    PALIERS_RAMP_ENVOI_QUOTIDIEN,
     SECTEUR,
     ZOHO_PASSWORD,
     ZOHO_USER,
+    plafond_envoi_du_jour,
 )
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -208,12 +210,84 @@ def message_relance(acteur: dict, numero_relance: int) -> tuple[str, str]:
     return sujet, corps
 
 
-def lancer_campagne_initiale(limite: int = 20) -> None:
-    """Premier contact des acteurs jamais sollicités, par score décroissant."""
-    acteurs = supabase_get(
-        f"select=*&client_final=eq.{CLIENT_FINAL}&statut=eq.a_contacter&order=score_final.desc&limit={limite}"
+def _email_events_get(params: str) -> list[dict]:
+    """Lecture directe de la table email_events (pas de dédoublonnage avec
+    supabase_get() ci-dessus : celle-ci est verrouillée sur TABLE=
+    "leads_professionnels", email_events est une table distincte —
+    voir sql/init_email_tracking.sql)."""
+    try:
+        reponse = requests.get(
+            f"{SUPABASE_URL}/rest/v1/email_events?{params}", headers=supabase_headers(), timeout=10
+        )
+        return reponse.json() if reponse.status_code == 200 else []
+    except requests.exceptions.RequestException as e:
+        log.error(f"Erreur lecture email_events : {e}")
+        return []
+
+
+def statut_ramp_warmup() -> dict:
+    """Où en est la montée en charge progressive du domaine d'envoi
+    (warmup) — voir PALIERS_RAMP_ENVOI_QUOTIDIEN dans config.py. Agrège
+    TOUTES les campagnes B2B (tous client_final confondus, lead_type=
+    'lead_professionnel') : la boîte d'envoi est partagée, sa réputation
+    ne se découpe pas par campagne. N'inclut PAS les envois B2C
+    (ceo_agent.py/lead_worker.py, lead_type='lead_artisan') qui partagent
+    pourtant la même boîte Zoho — limitation connue.
+
+    Utilisée à la fois pour VRAIMENT plafonner l'envoi (lancer_campagne_initiale/
+    lancer_relances ci-dessous) et pour l'afficher côté dashboard
+    (api/main.py::GET /outbound/warmup_status) — un seul calcul, deux usages,
+    jamais deux sources de vérité qui pourraient diverger."""
+    premiers = _email_events_get(
+        "select=created_at&type_evenement=eq.envoye&lead_type=eq.lead_professionnel"
+        "&order=created_at.asc&limit=1"
     )
-    log.info(f"{len(acteurs)} acteur(s) à contacter pour la première fois.")
+    maintenant = datetime.now(timezone.utc)
+
+    if not premiers:
+        jour_ramp = 1  # tout premier envoi B2B jamais effectué : c'est aujourd'hui le jour 1
+    else:
+        premier_envoi = _parser_horodatage(premiers[0]["created_at"])
+        jour_ramp = (maintenant.date() - premier_envoi.date()).days + 1
+
+    plafond_jour = plafond_envoi_du_jour(jour_ramp - 1)
+
+    debut_jour_iso = maintenant.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    envoyes_aujourdhui = len(_email_events_get(
+        f"select=id&type_evenement=eq.envoye&lead_type=eq.lead_professionnel&created_at=gte.{debut_jour_iso}"
+    ))
+
+    return {
+        "jour_ramp": jour_ramp,
+        "plafond_jour": plafond_jour,
+        "envoyes_aujourdhui": envoyes_aujourdhui,
+        "budget_restant": max(0, plafond_jour - envoyes_aujourdhui),
+        "paliers": PALIERS_RAMP_ENVOI_QUOTIDIEN,
+    }
+
+
+def lancer_campagne_initiale(limite: int = 20) -> None:
+    """Premier contact des acteurs jamais sollicités, par score décroissant.
+    `limite` reste un plafond technique haut ; le plafond RÉEL du jour vient
+    de statut_ramp_warmup() (montée en charge progressive du domaine
+    d'envoi, voir config.py) et peut être bien plus bas tant que le domaine
+    est jeune en prospection à froid."""
+    ramp = statut_ramp_warmup()
+    if ramp["budget_restant"] <= 0:
+        log.info(
+            f"Plafond de warmup atteint pour aujourd'hui (jour {ramp['jour_ramp']}, "
+            f"{ramp['envoyes_aujourdhui']}/{ramp['plafond_jour']}) — aucun premier contact envoyé."
+        )
+        return
+
+    limite_effective = min(limite, ramp["budget_restant"])
+    acteurs = supabase_get(
+        f"select=*&client_final=eq.{CLIENT_FINAL}&statut=eq.a_contacter&order=score_final.desc&limit={limite_effective}"
+    )
+    log.info(
+        f"{len(acteurs)} acteur(s) à contacter pour la première fois "
+        f"(warmup jour {ramp['jour_ramp']}, budget restant aujourd'hui : {ramp['budget_restant']})."
+    )
 
     for acteur in acteurs:
         if not acteur.get("email"):
@@ -244,11 +318,29 @@ def _parser_horodatage(valeur: str) -> datetime:
 
 def lancer_relances() -> None:
     """Relance à J+DELAI_PREMIERE_RELANCE_JOURS puis J+DELAI_RELANCE_SUIVANTE_JOURS,
-    abandon définitif après MAX_RELANCES — cadence demandée : J+3 puis J+7."""
+    abandon définitif après MAX_RELANCES — cadence demandée : J+3 puis J+7.
+
+    Partage le MÊME budget quotidien de warmup que lancer_campagne_initiale
+    (voir statut_ramp_warmup) — recalculé ici en direct, donc reflète déjà
+    ce que lancer_campagne_initiale a consommé plus tôt dans le même run
+    (pipeline_outbound_chantiers.py appelle les deux en séquence)."""
+    ramp = statut_ramp_warmup()
+    if ramp["budget_restant"] <= 0:
+        log.info(
+            f"Plafond de warmup atteint pour aujourd'hui (jour {ramp['jour_ramp']}, "
+            f"{ramp['envoyes_aujourdhui']}/{ramp['plafond_jour']}) — aucune relance envoyée."
+        )
+        return
+
     acteurs = supabase_get(f"select=*&client_final=eq.{CLIENT_FINAL}&statut=eq.contacte_attente_reponse")
     maintenant = datetime.now(timezone.utc)
+    budget_restant = ramp["budget_restant"]
 
     for acteur in acteurs:
+        if budget_restant <= 0:
+            log.info("Plafond de warmup atteint en cours de relances — arrêt, reprise au prochain run.")
+            break
+
         relance_count = acteur.get("relance_count") or 0
         if relance_count >= MAX_RELANCES:
             supabase_patch(acteur["id"], {"statut": "sans_reponse"})
@@ -269,6 +361,7 @@ def lancer_relances() -> None:
                 "relance_count": relance_count + 1,
                 "last_relance_at": maintenant.isoformat(),
             })
+            budget_restant -= 1
             log.info(f"Relance {relance_count + 1} envoyée : {acteur['nom_entreprise']}")
         time.sleep(random.uniform(PAUSE_MIN_SECONDES, PAUSE_MAX_SECONDES))
 

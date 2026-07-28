@@ -324,3 +324,10 @@ def get_email_events(type_evenement: str | None = None, client_final: str | None
     if client_final:
         params["client_final"] = client_final
     return _request("GET", "/email_events", params=params)
+
+
+def get_warmup_status() -> dict:
+    """GET /outbound/warmup_status -> jour_ramp, plafond_jour,
+    envoyes_aujourdhui, budget_restant, paliers — montée en charge
+    progressive du domaine d'envoi B2B (voir outbound_chantiers/config.py)."""
+    return _request("GET", "/outbound/warmup_status")

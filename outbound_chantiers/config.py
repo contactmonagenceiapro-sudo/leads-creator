@@ -129,6 +129,39 @@ DELAI_PREMIERE_RELANCE_JOURS = int(os.getenv("OUTBOUND_DELAI_RELANCE_1", "3"))
 DELAI_RELANCE_SUIVANTE_JOURS = int(os.getenv("OUTBOUND_DELAI_RELANCE_2", "7"))
 MAX_RELANCES = int(os.getenv("OUTBOUND_MAX_RELANCES", "2"))
 
+# === Montée en charge progressive du volume d'envoi (warmup, module 4) ===
+# La boîte d'envoi (ZOHO_USER) est PARTAGÉE par toutes les campagnes B2B —
+# ce plafond protège la réputation de cette boîte/ce domaine dans son
+# ensemble, pas celle d'une seule campagne (voir
+# outbound_pro_btp.py::statut_ramp_warmup, qui agrège tous les
+# client_final). Paliers (jours écoulés depuis le tout premier envoi B2B
+# jamais effectué, plafond quotidien) — valeurs de départ raisonnables pour
+# un domaine encore jeune en prospection à froid, à ajuster selon les
+# retours de délivrabilité réels (taux de bounce/plainte, cf. dashboard
+# "Délivrabilité"). Complète un warmup tiers (Instantly/Lemwarm/...) — ne
+# le remplace pas : un warmup actif construit la réputation, ce plafond
+# évite d'envoyer un volume réel disproportionné pendant que cette
+# réputation se construit encore.
+PALIERS_RAMP_ENVOI_QUOTIDIEN = [
+    (0, 5),    # jours 1-3
+    (3, 10),   # jours 4-7
+    (7, 20),   # semaine 2
+    (14, 30),  # semaine 3
+    (21, 50),  # semaine 4 et au-delà (plateau)
+]
+
+
+def plafond_envoi_du_jour(jours_ecoules: int) -> int:
+    """Plafond d'e-mails de prospection B2B (premier contact + relances
+    confondus) autorisé aujourd'hui, selon le palier de montée en charge
+    atteint. jours_ecoules=0 le jour du tout premier envoi B2B jamais
+    effectué (voir PALIERS_RAMP_ENVOI_QUOTIDIEN)."""
+    plafond = PALIERS_RAMP_ENVOI_QUOTIDIEN[0][1]
+    for seuil_jours, valeur in PALIERS_RAMP_ENVOI_QUOTIDIEN:
+        if jours_ecoules >= seuil_jours:
+            plafond = valeur
+    return plafond
+
 # === API interne (réutilise l'API existante : /leads_pro, /campagnes, clé partagée) ===
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")

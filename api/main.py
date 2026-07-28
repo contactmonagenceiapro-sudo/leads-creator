@@ -1194,6 +1194,17 @@ def get_email_events(
     return {"email_events": resultats}
 
 
+@app.get("/outbound/warmup_status", dependencies=[Depends(verifier_cle_api)])
+def get_warmup_status():
+    """État de la montée en charge progressive (warmup) du domaine d'envoi
+    B2B — admin uniquement (visibilité infra, pas une donnée par campagne
+    client). Calcul réel partagé avec le plafond effectivement appliqué à
+    l'envoi (voir outbound_chantiers/outbound_pro_btp.py::statut_ramp_warmup),
+    jamais une estimation séparée qui pourrait diverger."""
+    from outbound_chantiers.outbound_pro_btp import statut_ramp_warmup
+    return statut_ramp_warmup()
+
+
 # === WEBHOOKS (Yousign / Stripe) ===
 # Routes publiques (pas de X-API-Key : Yousign/Stripe ne peuvent pas la connaître).
 # La sécurité repose entièrement sur la vérification de signature ci-dessous —
