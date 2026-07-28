@@ -39,6 +39,8 @@ from pathlib import Path
 
 import requests
 
+from phone_enricher import enrichir_telephone_via_google_places
+
 LEADS_FILE = Path(__file__).resolve().parent / "leads.json"
 BACKUP_FILE = Path(__file__).resolve().parent / "leads.json.bak"
 
@@ -333,6 +335,13 @@ def enrichir_lead(lead: dict) -> dict:
             valide, email, telephone = sonder_domaine(session, domaine, lead["company_name"], ville)
             if not valide:
                 continue
+            if not telephone:
+                # Site validé mais aucun téléphone publié dessus : dernier
+                # recours (payant, optionnel) via Google Places — voir
+                # phone_enricher.py. Un numéro publié sur la fiche Google
+                # Business de l'entreprise reste une donnée fiable, à la
+                # différence de l'e-mail (jamais fabriqué, voir plus bas).
+                telephone = enrichir_telephone_via_google_places(lead["company_name"], ville or "")
             if email:
                 log.info(f"Email trouvé et validé pour {lead['company_name']} : {email}")
                 return {**lead, "email": email, "email_source": "email_verifie_site", "telephone": telephone}
@@ -351,10 +360,12 @@ def enrichir_lead(lead: dict) -> dict:
     # qu'une supposition et provoque un rejet NXDOMAIN à l'envoi (cas réel :
     # STENGER PLATRES & STAFF -> contact@stengerplatresstaffwereystenger.fr,
     # un domaine qui n'existe pas). None est filtré par le pipeline d'envoi
-    # (cf. ceo_agent.py::get_leads_from_supabase, filtre email vérifié). Même
-    # logique pour le téléphone : aucun domaine confirmé -> aucune page réelle
-    # à sonder -> aucun numéro (jamais inventé).
-    return {**lead, "email": None, "email_source": "aucun_domaine_trouve", "telephone": None}
+    # (cf. ceo_agent.py::get_leads_from_supabase, filtre email vérifié). Le
+    # téléphone n'a pas la même contrainte (jamais fabriqué non plus, mais
+    # une fiche Google Places n'a pas besoin d'un domaine confirmé pour être
+    # fiable) : dernier recours tenté ici aussi avant d'abandonner.
+    telephone = enrichir_telephone_via_google_places(lead["company_name"], ville or "")
+    return {**lead, "email": None, "email_source": "aucun_domaine_trouve", "telephone": telephone}
 
 
 def enrichir_tous(leads: list[dict]) -> list[dict]:

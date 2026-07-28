@@ -7,9 +7,16 @@ MODULE 2 — Filtrage & enrichissement des acteurs professionnels.
    PROFESSIONNELS réellement publiés sur le site de l'entreprise (page
    d'accueil, contact, mentions légales) — jamais de donnée personnelle,
    jamais de déduction/fabrication d'adresse. Reste volontairement
-   "best-effort/gratuit" (pas d'API d'enrichissement payante) : impossible
-   d'obtenir de façon fiable un e-mail nominatif par cette méthode, seulement
-   les contacts génériques publiés par l'entreprise elle-même.
+   "best-effort/gratuit" pour l'e-mail (pas d'API d'enrichissement payante) :
+   impossible d'obtenir de façon fiable un e-mail nominatif par cette
+   méthode, seulement les contacts génériques publiés par l'entreprise
+   elle-même.
+3. Si aucun téléphone n'a été trouvé sur le site (ou qu'aucun site n'a été
+   localisé), tente un dernier recours via Google Places (voir
+   phone_enricher.py) — payant mais optionnel (désactivé sans
+   GOOGLE_PLACES_API_KEY), retenu uniquement pour le téléphone car,
+   contrairement à l'e-mail nominatif, une fiche Google Business publiée
+   par l'entreprise elle-même est une donnée fiable, pas une supposition.
 
 Le site est localisé par une VRAIE recherche web (DuckDuckGo, version HTML
 sans JS, aucune clé API) plutôt qu'en devinant un nom de domaine dérivé de
@@ -43,6 +50,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from outbound_chantiers.config import COMMUNES_CIBLES
+from phone_enricher import enrichir_telephone_via_google_places
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [ENRICHISSEMENT-PRO] %(message)s")
 log = logging.getLogger(__name__)
@@ -341,6 +349,14 @@ def enrichir_un_acteur(nom_entreprise: str, commune: str) -> dict:
             email, telephone, reseaux = extraire_contact(site)
     except Exception as e:
         log.error(f"Enrichissement échoué pour {nom_entreprise} ({commune}) — contact non trouvé : {e}")
+
+    if not telephone:
+        # Dernier recours (payant, optionnel) : le site propre de l'entreprise
+        # ne publiait aucun téléphone, ou aucun site n'a été localisé du tout —
+        # voir phone_enricher.py pour pourquoi Google Places et pas
+        # SIRENE/Pappers/Pages Jaunes (aucune de ces sources n'a de téléphone,
+        # ou pas de façon exploitable sans risque ToS).
+        telephone = enrichir_telephone_via_google_places(nom_entreprise, commune)
 
     if email and telephone:
         statut = "reussi"
