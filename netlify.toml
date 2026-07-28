@@ -1,0 +1,24 @@
+# Configuration Netlify pour ce dépôt.
+#
+# Un seul site statique déployable ici : landing/index.html (page de
+# consultation des rapports CEO, appelle directement l'API REST Supabase
+# depuis le navigateur — aucun backend requis).
+#
+# Le reste du dépôt (api/, dashboard/, outbound_chantiers/, requirements.txt
+# racine...) est le backend Docker (FastAPI + Streamlit + APScheduler) : il
+# ne peut de toute façon pas tourner sur Netlify (pas de process
+# long-running/WebSocket, pas de support Docker) et n'a rien à faire dans le
+# build. Sans ce fichier, Netlify scanne tout le dépôt, détecte le
+# requirements.txt racine et tente d'y provisionner/installer un
+# environnement Python — c'est ce qui fait planter le build. `base` restreint
+# tout le contexte de build (détection ET publication) au dossier landing/,
+# qui ne contient qu'un fichier HTML autonome : plus aucune détection Python
+# possible.
+[build]
+  base = "landing"
+  publish = "."
+  # Site 100% statique, aucune étape de build nécessaire.
+  command = "echo 'Site statique landing/ — aucun build requis'"
+
+# Aucune fonction serverless, aucun plugin : inutile de déclarer [functions]
+# ou [[plugins]] ici.
