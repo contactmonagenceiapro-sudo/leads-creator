@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inscription artisan — Expertise Digitale</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #121214;
+            color: #e1e1e6;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .carte {
+            width: 100%;
+            max-width: 480px;
+            background: #202024;
+            padding: 32px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+        h1 { color: #00b37e; font-size: 1.5em; margin-top: 0; border-bottom: 2px solid #29292e; padding-bottom: 12px; }
+        p.sous-titre { color: #8d8d99; margin-top: -4px; margin-bottom: 24px; font-size: 0.9em; }
+        label { display: block; font-size: 0.85em; color: #8d8d99; margin-bottom: 4px; margin-top: 16px; }
+        input {
+            width: 100%;
+            box-sizing: border-box;
+            background: #18181b;
+            border: 1px solid #3f3f46;
+            color: #f4f4f5;
+            padding: 10px 12px;
+            border-radius: 6px;
+            font-size: 1em;
+        }
+        input:focus { outline: none; border-color: #00b37e; }
+        .ligne-double { display: flex; gap: 12px; }
+        .ligne-double > div { flex: 1; }
+        button {
+            width: 100%;
+            margin-top: 24px;
+            background: #00b37e;
+            color: #121214;
+            border: none;
+            padding: 12px;
+            border-radius: 6px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button:hover { background: #00d492; }
+        button:disabled { background: #3f3f46; color: #8d8d99; cursor: not-allowed; }
+        .message { margin-top: 16px; padding: 10px 12px; border-radius: 6px; font-size: 0.9em; display: none; }
+        .message.erreur { display: block; background: rgba(247, 90, 104, 0.15); color: #f75a68; border: 1px solid #f75a68; }
+        .message.succes { display: block; background: rgba(0, 179, 126, 0.15); color: #00b37e; border: 1px solid #00b37e; }
+        .lien-bas { text-align: center; margin-top: 20px; font-size: 0.9em; color: #8d8d99; }
+        .lien-bas a { color: #00b37e; text-decoration: none; }
+        .lien-bas a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="carte">
+        <h1>Créer mon compte artisan</h1>
+        <p class="sous-titre">Expertise Digitale — Espace Artisans</p>
+
+        <form id="form-inscription" novalidate>
+            <label for="nom_entreprise">Nom de l'entreprise</label>
+            <input type="text" id="nom_entreprise" required placeholder="ex. Dupont Rénovation SARL">
+
+            <label for="nom_complet">Nom / Prénom</label>
+            <input type="text" id="nom_complet" required placeholder="ex. Jean Dupont">
+
+            <div class="ligne-double">
+                <div>
+                    <label for="siret">Numéro SIRET</label>
+                    <input type="text" id="siret" inputmode="numeric" placeholder="14 chiffres" maxlength="17">
+                </div>
+                <div>
+                    <label for="corps_metier">Corps de métier</label>
+                    <input type="text" id="corps_metier" list="liste-corps-metier" placeholder="ex. Plomberie">
+                    <datalist id="liste-corps-metier">
+                        <option value="Maçonnerie / Gros œuvre">
+                        <option value="Plomberie / Chauffage">
+                        <option value="Électricité">
+                        <option value="Plâtrerie / Isolation">
+                        <option value="Peinture / Revêtements">
+                        <option value="Menuiserie">
+                        <option value="Couverture / Charpente">
+                        <option value="Rénovation générale">
+                    </datalist>
+                </div>
+            </div>
+
+            <label for="email">E-mail</label>
+            <input type="email" id="email" required placeholder="vous@entreprise.fr">
+
+            <div class="ligne-double">
+                <div>
+                    <label for="mot_de_passe">Mot de passe</label>
+                    <input type="password" id="mot_de_passe" required minlength="8" placeholder="8 caractères min.">
+                </div>
+                <div>
+                    <label for="confirmation_mot_de_passe">Confirmation</label>
+                    <input type="password" id="confirmation_mot_de_passe" required minlength="8">
+                </div>
+            </div>
+
+            <div id="message" class="message"></div>
+
+            <button type="submit" id="bouton-inscription">Créer mon compte</button>
+        </form>
+
+        <div class="lien-bas">Déjà un compte ? <a href="artisan-connexion.html">Se connecter</a></div>
+    </div>
+
+    <script src="supabase-client.js"></script>
+    <script>
+        const zoneMessage = document.getElementById("message");
+        const boutonInscription = document.getElementById("bouton-inscription");
+
+        function afficherMessage(texte, type) {
+            zoneMessage.textContent = texte;
+            zoneMessage.className = "message " + type;
+        }
+
+        document.getElementById("form-inscription").addEventListener("submit", async (evenement) => {
+            evenement.preventDefault();
+            zoneMessage.className = "message";
+
+            const nomEntreprise = document.getElementById("nom_entreprise").value.trim();
+            const nomComplet = document.getElementById("nom_complet").value.trim();
+            const siret = document.getElementById("siret").value.replace(/\s+/g, "").trim();
+            const corpsMetier = document.getElementById("corps_metier").value.trim();
+            const email = document.getElementById("email").value.trim();
+            const motDePasse = document.getElementById("mot_de_passe").value;
+            const confirmation = document.getElementById("confirmation_mot_de_passe").value;
+
+            if (siret && !/^\d{14}$/.test(siret)) {
+                afficherMessage("Le numéro SIRET doit contenir exactement 14 chiffres.", "erreur");
+                return;
+            }
+            if (motDePasse.length < 8) {
+                afficherMessage("Le mot de passe doit contenir au moins 8 caractères.", "erreur");
+                return;
+            }
+            if (motDePasse !== confirmation) {
+                afficherMessage("Les deux mots de passe ne correspondent pas.", "erreur");
+                return;
+            }
+
+            boutonInscription.disabled = true;
+            boutonInscription.textContent = "Création en cours...";
+
+            const { data, error } = await supabaseClient.auth.signUp({
+                email,
+                password: motDePasse,
+                options: {
+                    data: {
+                        nom_entreprise: nomEntreprise,
+                        nom_complet: nomComplet,
+                        siret: siret || null,
+                        corps_metier: corpsMetier || null,
+                    },
+                },
+            });
+
+            boutonInscription.disabled = false;
+            boutonInscription.textContent = "Créer mon compte";
+
+            if (error) {
+                afficherMessage(traduireErreurAuth(error), "erreur");
+                return;
+            }
+
+            if (data.session) {
+                // Confirmation e-mail désactivée côté projet Supabase : session
+                // immédiatement active, on peut aller directement au tableau de bord.
+                window.location.href = "artisan-tableau-de-bord.html";
+            } else {
+                afficherMessage(
+                    "Compte créé ! Vérifie ta boîte mail pour confirmer ton adresse avant de te connecter.",
+                    "succes"
+                );
+                document.getElementById("form-inscription").reset();
+            }
+        });
+    </script>
+</body>
+</html>
