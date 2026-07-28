@@ -22,6 +22,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fpdf import FPDF
+from dotenv import load_dotenv
+
+# Sans cet appel explicite, ce module ne charge le .env que par effet de
+# bord de l'import de ceo_agent juste en dessous (qui appelle lui-même
+# load_dotenv()) — fragile si l'ordre des imports change un jour. Appelé
+# ici en premier, avant toute lecture d'os.getenv() ci-dessous.
+load_dotenv()
 
 # Import du CEO Agent et du CRM mail (le volume docker-compose monte la
 # racine du projet sur /app)

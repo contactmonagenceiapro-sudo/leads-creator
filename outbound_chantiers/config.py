@@ -22,6 +22,17 @@ import json
 import logging
 import os
 
+from dotenv import load_dotenv
+
+# Sans cet appel, un lancement direct de ce module (ex: python3 -m
+# outbound_chantiers.pipeline_outbound_chantiers, hors docker-compose) ne
+# lit jamais le .env : les os.getenv() ci-dessous retombent alors sur leurs
+# valeurs par défaut historiques (ex: OLLAMA_HOST=http://ai_ollama:11434,
+# qui ne résout que sur le réseau docker-compose) même si le .env définit
+# une valeur différente (ex: http://localhost:11434 pour un lancement sur
+# l'hôte) — cf. ceo_agent.py/lead_worker.py qui suivent déjà ce pattern.
+load_dotenv()
+
 log = logging.getLogger(__name__)
 
 # === Repli CLI (lancement direct sans passer par l'API) ===
