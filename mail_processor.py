@@ -229,6 +229,132 @@ def analyser_dsn(msg: email.message.Message) -> dict | None:
     return None
 
 
+def _texte_complet_bounce(msg: email.message.Message) -> str:
+    """Concatène tout le texte exploitable du message (sujet + chaque
+    partie text/plain, message/delivery-status, message/rfc822) — sert de
+    matière première aux replis ci-dessous quand la structure DSN stricte
+    (RFC 3464) n'est pas respectée : observé en pratique, certains bounces
+    Zoho n'exposent pas de partie message/delivery-status correctement
+    formée, ou omettent purement et simplement Action:/Status:. Une partie
+    message/rfc822 (copie de l'e-mail original en échec, souvent incluse
+    dans un DSN) est précieuse ici : son en-tête 'To:' est justement
+    l'adresse du destinataire visé."""
+    morceaux = [msg.get("Subject") or ""]
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() not in ("text/plain", "message/delivery-status", "message/rfc822"):
+                continue
+            brut = part.get_payload(decode=True)
+            morceaux.append(brut.decode(errors="ignore") if brut else str(part.get_payload()))
+    else:
+        brut = msg.get_payload(decode=True)
+        if brut:
+            morceaux.append(brut.decode(errors="ignore"))
+    return "\n".join(morceaux)
+
+
+# Adresses techniques jamais retenues comme "destinataire en échec" — elles
+# apparaissent presque systématiquement quelque part dans un bounce (dans
+# l'en-tête From du rapport lui-même, ou en pied de page), sans jamais être
+# la vraie cible.
+PREFIXES_ADRESSES_TECHNIQUES = ("mailer-daemon", "postmaster", "abuse@", "noreply@", "no-reply@")
+
+MOTIF_EMAIL_GENERIQUE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
+
+
+def extraire_destinataire_repli(texte: str, adresse_envoi: str) -> str | None:
+    """Repli quand analyser_dsn() n'a pas trouvé de destinataire dans une
+    partie MIME strictement formée — cherche dans TOUT le texte disponible
+    (sujet, corps, copie de l'original), du signal le plus fiable au moins
+    fiable :
+    1. En-têtes DSN présents en texte libre (hors partie MIME dédiée) ;
+    2. En-tête 'To:' d'une copie de l'e-mail original incluse dans le
+       rapport (message/rfc822) — l'adresse qu'on a nous-mêmes visée ;
+    3. Formulations humaines fréquentes ('failed to deliver to X',
+       'X: 550 ...') ;
+    4. Dernier recours : première adresse du texte qui n'est ni notre
+       propre boîte d'envoi, ni une adresse technique connue.
+    Renvoie None si rien de plausible n'est trouvé — jamais une adresse
+    inventée."""
+    match = re.search(
+        r"(?:Final|Original)-Recipient:\s*(?:rfc822;)?\s*<?([^\s>,]+@[^\s>,]+)",
+        texte, re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip().rstrip(".,;")
+
+    match = re.search(r"^To:\s*(?:\"[^\"]*\"\s*)?<?([^\s>,]+@[^\s>,]+)>?\s*$", texte, re.MULTILINE | re.IGNORECASE)
+    if match:
+        return match.group(1).strip().rstrip(".,;")
+
+    for motif in (
+        r"(?:delivery (?:to|of your message to)|failed to deliver to|"
+        r"could not be delivered to|undelivered to|n'a pas pu être livré à)\s*:?\s*<?([^\s>,]+@[^\s>,]+)",
+        r"<?([^\s>,]+@[^\s>,]+)>?\s*:\s*(?:550|551|553|554|5\.\d\.\d)",
+    ):
+        match = re.search(motif, texte, re.IGNORECASE)
+        if match:
+            return match.group(1).strip().rstrip(".,;")
+
+    adresse_envoi_normalisee = (adresse_envoi or "").strip().lower()
+    for candidate in MOTIF_EMAIL_GENERIQUE.findall(texte):
+        c = candidate.strip().lower()
+        if c == adresse_envoi_normalisee:
+            continue
+        if any(c.startswith(p) for p in PREFIXES_ADRESSES_TECHNIQUES):
+            continue
+        return candidate.strip().rstrip(".,;")
+
+    return None
+
+
+CODES_SMTP_DEFINITIFS = re.compile(r"\b(550|551|553|554)\b|\b5\.\d\.\d\b")
+CODES_SMTP_TEMPORAIRES = re.compile(r"\b(421|450|451|452)\b|\b4\.\d\.\d\b")
+
+MOTS_ECHEC_DEFINITIF = (
+    "user unknown", "no such user", "does not exist", "mailbox not found",
+    "mailbox unavailable", "recipient rejected", "address rejected",
+    "invalid recipient", "unknown recipient", "undeliverable",
+    "n'existe pas", "boite introuvable", "utilisateur inconnu",
+    # Formulations plus vagues mais tout aussi définitives, très courantes
+    # en pratique (y compris les deux exemples exacts rapportés en usage
+    # réel : "Undelivered Mail Returned to Sender").
+    "could not be delivered", "was not delivered", "delivery failed",
+    "delivery has failed", "permanently failed", "returned to sender",
+    "undelivered mail",
+)
+MOTS_ECHEC_TEMPORAIRE = (
+    "will keep trying", "delayed", "temporarily deferred", "try again later",
+    "greylist", "mailbox full", "quota exceeded", "temporary failure",
+    "deferred", "sera retente", "nouvelle tentative",
+    # "(Delay)" est le qualificatif exact qui distingue un simple délai
+    # (encore en cours de tentative) d'un échec définitif dans les rapports
+    # DSN Zoho observés en usage réel — à vérifier explicitement, sans quoi
+    # "delivery status notification" seul ne permet pas de trancher (les
+    # deux variantes, délai et échec, partagent ce même sujet générique).
+    "(delay)", "notification (delay)",
+)
+
+
+def deviner_gravite_repli(texte: str) -> str | None:
+    """Repli quand ni Action: ni Status: n'ont été trouvés dans une partie
+    DSN structurée : déduit 'failed' (définitif) ou 'delayed' (temporaire)
+    du contenu libre du message. Renvoie None si le texte contient des
+    signaux contradictoires ou aucun signal net — mieux vaut ne rien faire
+    que de deviner à tort et invalider un lead valide."""
+    texte_normalise = normaliser(texte)
+    a_code_definitif = bool(CODES_SMTP_DEFINITIFS.search(texte))
+    a_code_temporaire = bool(CODES_SMTP_TEMPORAIRES.search(texte))
+    a_mot_definitif = any(m in texte_normalise for m in MOTS_ECHEC_DEFINITIF)
+    a_mot_temporaire = any(m in texte_normalise for m in MOTS_ECHEC_TEMPORAIRE)
+
+    if (a_code_definitif or a_mot_definitif) and not (a_code_temporaire or a_mot_temporaire):
+        return "failed"
+    if (a_code_temporaire or a_mot_temporaire) and not (a_code_definitif or a_mot_definitif):
+        return "delayed"
+    return None
+
+
 def invalider_lead(email_address: str) -> None:
     """Marque le lead correspondant 'invalide' — artisan OU acteur pro, les
     deux tentées (même logique que le traitement d'un 'decline' plus haut,
@@ -243,34 +369,51 @@ def invalider_lead(email_address: str) -> None:
 
 def traiter_bounce(sender_brut: str, subject: str, msg: email.message.Message) -> None:
     """Traite un message identifié comme bounce (voir est_message_bounce) :
-    seul un HARD bounce confirmé (Action: failed ou code 5.x.x) invalide le
-    lead et alimente la blacklist durable — un simple délai (Action:
-    delayed ou code 4.x.x, ex: 'Delivery Status Notification (Delay)') ne
-    déclenche AUCUNE action : le serveur distant retente encore, ce n'est
-    pas un échec définitif."""
-    dsn = analyser_dsn(msg)
+    seul un HARD bounce confirmé (Action: failed ou code 5.x.x, y compris
+    déduit par repli sur texte libre — voir extraire_destinataire_repli/
+    deviner_gravite_repli) invalide le lead et alimente la blacklist
+    durable. Un simple délai (Action: delayed ou code 4.x.x, ex: 'Delivery
+    Status Notification (Delay)') ne déclenche AUCUNE action : le serveur
+    distant retente encore, ce n'est pas un échec définitif.
 
-    if dsn is None:
+    La structure DSN stricte (RFC 3464) sert de source PRIORITAIRE (la plus
+    fiable), mais n'est pas toujours respectée en pratique par Zoho — d'où
+    les replis en texte libre à chaque étape plutôt qu'un simple abandon
+    quand la partie message/delivery-status est absente ou incomplète."""
+    dsn = analyser_dsn(msg)
+    texte_complet = _texte_complet_bounce(msg)
+
+    destinataire = dsn["destinataire"] if dsn else None
+    action = dsn["action"] if dsn else None
+    code_statut = (dsn["code_statut"] if dsn else None) or ""
+    diagnostic = (dsn["diagnostic"] if dsn else None) or ""
+
+    if not destinataire:
+        destinataire = extraire_destinataire_repli(texte_complet, ZOHO_USER)
+        if destinataire:
+            log.info(f"Destinataire du bounce retrouvé par repli (texte libre, pas de DSN structuré exploitable) : {destinataire}")
+
+    if not destinataire:
         log.warning(
-            f"Message de type bounce détecté (expéditeur={sender_brut!r}, sujet={subject!r}) "
-            "mais non parsable en DSN structuré — aucune action automatique, à vérifier manuellement."
+            f"Bounce sans destinataire identifiable, même après repli texte libre "
+            f"(expéditeur={sender_brut!r}, sujet={subject!r}) — ignoré, à vérifier manuellement."
         )
         return
 
-    destinataire = dsn["destinataire"]
-    if not destinataire:
-        log.warning(f"Bounce sans destinataire identifiable (action={dsn['action']}, statut={dsn['code_statut']}) — ignoré.")
-        return
-
-    action = dsn["action"]
-    code_statut = dsn["code_statut"] or ""
+    if not action and not code_statut:
+        action = deviner_gravite_repli(texte_complet)
+        if action:
+            log.info(f"Gravité du bounce déduite du texte libre pour {destinataire} : {action}")
 
     if action == "failed" or code_statut.startswith("5"):
-        log.warning(f"❌ Hard bounce confirmé pour {destinataire} (statut {code_statut}) — {dsn['diagnostic']}")
+        log.warning(f"❌ Hard bounce confirmé pour {destinataire} (statut {code_statut or '?'}) — {diagnostic or texte_complet[:200]!r}")
         invalider_lead(destinataire)
-        blacklister_email(destinataire, raison="hard_bounce", code_statut=code_statut, diagnostic=dsn["diagnostic"])
+        blacklister_email(
+            destinataire, raison="hard_bounce",
+            code_statut=code_statut or None, diagnostic=diagnostic or texte_complet[:500],
+        )
     elif action == "delayed" or code_statut.startswith("4"):
-        log.info(f"⏳ Délai de livraison pour {destinataire} (statut {code_statut}) — le serveur retente encore, aucune action.")
+        log.info(f"⏳ Délai de livraison pour {destinataire} (statut {code_statut or '?'}) — le serveur retente encore, aucune action.")
     else:
         log.warning(f"Bounce de nature indéterminée pour {destinataire} (action={action}, statut={code_statut!r}) — aucune action automatique.")
 
