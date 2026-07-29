@@ -19,6 +19,12 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 ZOHO_USER = os.getenv("ZOHO_USER", "")
 ZOHO_PASSWORD = os.getenv("ZOHO_PASSWORD", "")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
+# Dossier IMAP optionnel vers lequel déplacer les bounces déjà traités
+# (hard bounce, delay, ou indéterminé) une fois marqués lus, pour ne pas
+# les laisser traîner dans la boîte de réception. Si vide, ils sont
+# simplement marqués comme lus et restent dans "inbox" (comportement par
+# défaut, aucune config supplémentaire requise côté Zoho).
+ZOHO_DOSSIER_BOUNCES_TRAITES = os.getenv("ZOHO_DOSSIER_BOUNCES_TRAITES", "")
 # URL publique (domaine réel, pas localhost/docker) sous laquelle l'API est
 # joignable par un artisan externe. Tant qu'aucun domaine public n'est
 # configuré, les liens envoyés dans l'email de suivi ne seront PAS
@@ -367,19 +373,25 @@ def invalider_lead(email_address: str) -> None:
     update_lead_professionnel_status(email_address, "invalide")
 
 
-def traiter_bounce(sender_brut: str, subject: str, msg: email.message.Message) -> None:
+def traiter_bounce(sender_brut: str, subject: str, msg: email.message.Message) -> str:
     """Traite un message identifié comme bounce (voir est_message_bounce) :
     seul un HARD bounce confirmé (Action: failed ou code 5.x.x, y compris
     déduit par repli sur texte libre — voir extraire_destinataire_repli/
     deviner_gravite_repli) invalide le lead et alimente la blacklist
     durable. Un simple délai (Action: delayed ou code 4.x.x, ex: 'Delivery
-    Status Notification (Delay)') ne déclenche AUCUNE action : le serveur
-    distant retente encore, ce n'est pas un échec définitif.
+    Status Notification (Delay)') ne déclenche AUCUNE action métier : le
+    serveur distant retente encore, ce n'est pas un échec définitif.
 
     La structure DSN stricte (RFC 3464) sert de source PRIORITAIRE (la plus
     fiable), mais n'est pas toujours respectée en pratique par Zoho — d'où
     les replis en texte libre à chaque étape plutôt qu'un simple abandon
-    quand la partie message/delivery-status est absente ou incomplète."""
+    quand la partie message/delivery-status est absente ou incomplète.
+
+    Renvoie un statut ('hard_bounce', 'delayed', 'indetermine' ou
+    'sans_destinataire') utilisé par check_for_replies() pour décider du
+    sort IMAP du message (marquage lu / déplacement) : dans tous les cas un
+    bounce est 100% automatique, jamais une réponse humaine à laisser traîner
+    non lue dans la boîte de réception."""
     dsn = analyser_dsn(msg)
     texte_complet = _texte_complet_bounce(msg)
 
@@ -396,9 +408,9 @@ def traiter_bounce(sender_brut: str, subject: str, msg: email.message.Message) -
     if not destinataire:
         log.warning(
             f"Bounce sans destinataire identifiable, même après repli texte libre "
-            f"(expéditeur={sender_brut!r}, sujet={subject!r}) — ignoré, à vérifier manuellement."
+            f"(expéditeur={sender_brut!r}, sujet={subject!r}) — aucune action métier, à vérifier manuellement."
         )
-        return
+        return "sans_destinataire"
 
     if not action and not code_statut:
         action = deviner_gravite_repli(texte_complet)
@@ -412,10 +424,40 @@ def traiter_bounce(sender_brut: str, subject: str, msg: email.message.Message) -
             destinataire, raison="hard_bounce",
             code_statut=code_statut or None, diagnostic=diagnostic or texte_complet[:500],
         )
+        return "hard_bounce"
     elif action == "delayed" or code_statut.startswith("4"):
-        log.info(f"⏳ Délai de livraison pour {destinataire} (statut {code_statut or '?'}) — le serveur retente encore, aucune action.")
+        log.info(f"⏳ Délai de livraison pour {destinataire} (statut {code_statut or '?'}) — le serveur retente encore, aucune action métier.")
+        return "delayed"
     else:
-        log.warning(f"Bounce de nature indéterminée pour {destinataire} (action={action}, statut={code_statut!r}) — aucune action automatique.")
+        log.warning(f"Bounce de nature indéterminée pour {destinataire} (action={action}, statut={code_statut!r}) — aucune action métier automatique.")
+        return "indetermine"
+
+
+def marquer_message_traite(mail: imaplib.IMAP4_SSL, num: bytes, dossier_archive: str = "") -> None:
+    """Marque un message IMAP comme lu (\\Seen) une fois son traitement
+    métier terminé, pour ne pas laisser les notifications 100% automatiques
+    (bounces) s'accumuler comme non lues dans la boîte Zoho. Si
+    `dossier_archive` est fourni, tente en plus de déplacer le message hors
+    de la boîte de réception (COPY + marquage \\Deleted ; l'EXPUNGE final
+    est fait une seule fois par check_for_replies() après la boucle, pour ne
+    pas décaler les numéros de séquence des messages restant à traiter)."""
+    try:
+        mail.store(num, "+FLAGS", "\\Seen")
+    except Exception as e:
+        log.error(f"Impossible de marquer le message {num!r} comme lu : {e}")
+        return
+
+    if not dossier_archive:
+        return
+
+    try:
+        typ, _ = mail.copy(num, dossier_archive)
+        if typ == "OK":
+            mail.store(num, "+FLAGS", "\\Deleted")
+        else:
+            log.warning(f"Échec de la copie du message {num!r} vers '{dossier_archive}' ({typ}) — message laissé dans inbox (mais marqué lu).")
+    except Exception as e:
+        log.error(f"Erreur lors du déplacement du message {num!r} vers '{dossier_archive}' : {e}")
 
 
 def check_for_replies() -> None:
@@ -449,7 +491,14 @@ def check_for_replies() -> None:
             # l'adresse du lead concerné (voir traiter_bounce, qui extrait
             # la vraie adresse depuis le contenu du rapport DSN).
             if est_message_bounce(sender_brut, subject):
-                traiter_bounce(sender_brut, subject, msg)
+                statut_bounce = traiter_bounce(sender_brut, subject, msg)
+                # Un bounce est toujours 100% automatique (jamais une
+                # réponse humaine à laisser en attente) : on le marque lu
+                # dans tous les cas, et on le déplace en plus hors de
+                # l'inbox si ZOHO_DOSSIER_BOUNCES_TRAITES est configuré —
+                # objectif : ne plus le voir s'accumuler par centaines.
+                marquer_message_traite(mail, num, ZOHO_DOSSIER_BOUNCES_TRAITES)
+                log.info(f"📭 Bounce ({statut_bounce}) marqué comme lu.")
                 continue
 
             body = ""
@@ -484,6 +533,12 @@ def check_for_replies() -> None:
                     log.warning(f"Lead introuvable en base pour {sender}, suivi automatique non envoyé")
             else:
                 log.info(f"Message de {sender} reçu (aucun mot-clé détecté).")
+
+        # EXPUNGE unique après la boucle (et non message par message) :
+        # supprimer un message en cours d'itération décalerait les numéros
+        # de séquence IMAP des messages suivants encore à traiter.
+        if ZOHO_DOSSIER_BOUNCES_TRAITES:
+            mail.expunge()
 
         mail.logout()
     except Exception as e:
