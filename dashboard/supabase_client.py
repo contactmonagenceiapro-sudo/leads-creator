@@ -7,6 +7,7 @@ côté scripts racine.
 
 import os
 
+import streamlit as st
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -16,18 +17,27 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 # Supabase est une dépendance dure (aucune donnée n'est accessible sans
-# elle) : pas de mode dégradé possible ici, contrairement à Ollama. Mais un
-# secret manquant/mal nommé côté Streamlit Cloud ne doit pas planter l'app
-# avec une erreur interne cryptique ("Invalid API key") — le message ci-
-# dessous pointe directement vers la cause probable et sa correction.
+# elle) : pas de mode dégradé possible ici, contrairement à Ollama.
+# app.py::secrets_loader.initialiser_secrets() a déjà vérifié plus tôt que
+# ces deux variables sont au moins PRÉSENTES (sinon l'app se serait arrêtée
+# avant même d'importer ce module) — si create_client() échoue quand même
+# ici, c'est qu'une valeur est présente mais INVALIDE (clé expirée, projet
+# différent, faute de frappe dans la valeur elle-même). st.error + st.stop()
+# plutôt que de laisser l'exception remonter telle quelle : jamais de
+# traceback brut, illisible sur un petit écran (mobile notamment).
 try:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception as e:
-    raise RuntimeError(
-        "Impossible de se connecter à Supabase — SUPABASE_URL/SUPABASE_KEY "
-        "sont probablement manquantes ou invalides. Si l'app tourne sur "
-        "Streamlit Community Cloud, vérifie les secrets configurés dans "
-        "App settings → Secrets (voir dashboard/SECRETS.md) ; en local, "
-        "vérifie ton fichier .env. "
-        f"Erreur d'origine : {e}"
-    ) from e
+    st.error(
+        "⚠️ Connexion à Supabase refusée — SUPABASE_URL/SUPABASE_KEY sont "
+        "présentes mais semblent invalides (clé expirée, faute de frappe, "
+        "ou mauvais projet)."
+    )
+    st.markdown(
+        "- Sur **Streamlit Community Cloud** : App settings → Secrets "
+        "(voir `dashboard/SECRETS.md`).\n"
+        "- En **local** : vérifie ton fichier `.env` à la racine du dépôt."
+    )
+    with st.expander("Détails techniques"):
+        st.caption(str(e))
+    st.stop()

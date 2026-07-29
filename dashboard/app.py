@@ -7,7 +7,8 @@ Lancement :
     streamlit run app.py
 
 Structure (multi-pages) :
-    app.py                        -> point d'entrée : routing public + connexion + navigation
+    app.py                        -> point d'entrée : secrets, routing public, connexion, navigation
+    secrets_loader.py             -> chargement tolérant de st.secrets (jamais de crash brut)
     auth.py                       -> écran de login + session_state (bcrypt direct, plus de JWT)
     pages_publiques.py            -> [Public, sans connexion] présentation / intake / devis
     app_pages/sourcing.py           -> [Admin] Sourcing / Scraping
@@ -29,7 +30,6 @@ e-mail (voir mail_processor.py::envoyer_suivi_positif), qui ne doivent
 évidemment pas nécessiter de compte.
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -44,24 +44,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 
-# Streamlit Cloud n'injecte les secrets configurés dans son interface QUE
-# dans st.secrets, jamais dans os.environ — mais tout le reste du projet
-# (scripts lancés en subprocess : ceo_agent.py, mail_processor.py...) lit sa
-# config via os.getenv(). Ce pont est nécessaire pour qu'un subprocess
-# hérite bien de ces valeurs (subprocess.Popen(..., env=os.environ.copy())
-# dans process_runner.py). Sans effet en dev local (st.secrets vide si aucun
-# fichier .streamlit/secrets.toml n'existe).
-try:
-    for _cle, _valeur in st.secrets.items():
-        os.environ.setdefault(_cle, str(_valeur))
-except Exception:
-    pass
-
 st.set_page_config(
     page_title="ai-company · Dashboard",
     page_icon="📊",
     layout="wide",
 )
+
+# Doit s'exécuter EN TOUT PREMIER, avant tout import de auth/data_access/
+# pages_publiques (qui importent tous supabase_client, lequel plante de
+# façon bien moins lisible si SUPABASE_URL/SUPABASE_KEY manquent) — voir
+# secrets_loader.py pour le détail (tolérant aux sections TOML imbriquées,
+# à st.secrets inaccessible, affiche un message clair + st.stop() propre
+# plutôt qu'un traceback si une clé critique manque).
+from secrets_loader import initialiser_secrets  # noqa: E402
+
+initialiser_secrets()
 
 # ---------------------------------------------------------------------
 # Routing des pages PUBLIQUES — avant tout gate d'authentification.
