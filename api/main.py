@@ -243,6 +243,21 @@ def supabase_get(table: str, params: str = "") -> list:
         log.error(f"Supabase GET {table} : {e}")
         return []
 
+def supabase_delete(table: str, params: str) -> bool:
+    """Supprime les lignes correspondant à `params` (ex: "id=eq.<uuid>").
+    Utilisé pour le renommage d'une campagne brouillon (voir
+    renommer_campagne) : la nouvelle ligne est créée AVANT que l'ancienne
+    soit supprimée, pour ne jamais perdre la campagne en cas d'échec de
+    l'insertion."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return False
+    try:
+        res = requests.delete(f"{SUPABASE_URL}/rest/v1/{table}?{params}", headers=supabase_headers(), timeout=10)
+        return res.status_code in (200, 204)
+    except requests.exceptions.RequestException as e:
+        log.error(f"Supabase DELETE {table} : {e}")
+        return False
+
 # === TÂCHE DE FOND ===
 def execution_differee(payload: dict):
     """Exécute la génération de l'article en arrière-plan."""
@@ -530,6 +545,98 @@ def creer_ou_modifier_campagne(payload: dict):
     resultat = sb_insert("campagnes", corps, on_conflict="nom_client")
     if resultat.get("status_code") not in (200, 201):
         raise HTTPException(status_code=502, detail=f"Échec enregistrement campagne : {resultat.get('response')}")
+    return resultat
+
+
+@app.post("/campagnes/{nom_client}/dupliquer", dependencies=[Depends(verifier_cle_api)])
+def dupliquer_campagne(nom_client: str, payload: dict):
+    """Duplique une campagne existante (typiquement un modèle/brouillon
+    préparé à l'avance) sous un nouveau nom de client : copie secteur,
+    description des services, communes ciblées et types d'acteurs ciblés,
+    pour lancer une prospection rapidement sans tout reconfigurer dans
+    l'urgence. La campagne source n'est pas modifiée.
+
+    Payload attendu : {"nouveau_nom_client": str, "statut": str optionnel
+    (par défaut 'active', pour lancer directement la prospection)}."""
+    source = supabase_get("campagnes", f"select=*&nom_client=eq.{quote(nom_client)}&limit=1")
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Campagne « {nom_client} » introuvable")
+    source = source[0]
+
+    nouveau_nom = (payload.get("nouveau_nom_client") or "").strip()
+    if not nouveau_nom:
+        raise HTTPException(status_code=400, detail="nouveau_nom_client est requis")
+    if nouveau_nom == nom_client:
+        raise HTTPException(status_code=400, detail="Le nouveau nom doit être différent de la campagne source")
+
+    corps = {
+        "nom_client": nouveau_nom,
+        "slug": _slugifier(nouveau_nom),
+        "secteur": source.get("secteur", ""),
+        "description_services": source.get("description_services", ""),
+        "communes_cibles": source.get("communes_cibles", []),
+        "types_acteur_cibles": source.get("types_acteur_cibles", []),
+        "statut": payload.get("statut") or "active",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    resultat = sb_insert("campagnes", corps, on_conflict="nom_client")
+    if resultat.get("status_code") not in (200, 201):
+        raise HTTPException(status_code=502, detail=f"Échec duplication campagne : {resultat.get('response')}")
+    return resultat
+
+
+@app.patch("/campagnes/{nom_client}/renommer", dependencies=[Depends(verifier_cle_api)])
+def renommer_campagne(nom_client: str, payload: dict):
+    """Renomme une campagne EN BROUILLON — jamais une campagne
+    active/en_pause/archivée, dont le nom peut déjà être référencé ailleurs
+    en texte libre (leads_professionnels.client_final,
+    utilisateur_campagnes.client_final) : un renommage direct y créerait des
+    références orphelines. Un brouillon n'a par construction jamais servi à
+    du sourcing réel, donc rien ne le référence ailleurs : le renommage
+    consiste à créer la ligne sous le nouveau nom PUIS à supprimer
+    l'ancienne (jamais l'inverse, pour ne pas perdre la campagne si la
+    création échoue). Pour renommer une campagne déjà active, dupliquez-la
+    plutôt sous le nouveau nom (voir dupliquer_campagne)."""
+    source = supabase_get("campagnes", f"select=*&nom_client=eq.{quote(nom_client)}&limit=1")
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Campagne « {nom_client} » introuvable")
+    source = source[0]
+
+    if source.get("statut") != "brouillon":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Seule une campagne en brouillon peut être renommée directement. "
+                "Dupliquez plutôt cette campagne sous un nouveau nom."
+            ),
+        )
+
+    nouveau_nom = (payload.get("nouveau_nom_client") or "").strip()
+    if not nouveau_nom:
+        raise HTTPException(status_code=400, detail="nouveau_nom_client est requis")
+    if nouveau_nom == nom_client:
+        raise HTTPException(status_code=400, detail="Le nouveau nom doit être différent de l'original")
+
+    corps = {
+        "nom_client": nouveau_nom,
+        "slug": _slugifier(nouveau_nom),
+        "secteur": source.get("secteur", ""),
+        "description_services": source.get("description_services", ""),
+        "communes_cibles": source.get("communes_cibles", []),
+        "types_acteur_cibles": source.get("types_acteur_cibles", []),
+        "statut": "brouillon",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    resultat = sb_insert("campagnes", corps, on_conflict="nom_client")
+    if resultat.get("status_code") not in (200, 201):
+        raise HTTPException(status_code=502, detail=f"Échec renommage campagne : {resultat.get('response')}")
+
+    if not supabase_delete("campagnes", f"id=eq.{source['id']}"):
+        log.error(
+            f"Renommage « {nom_client} » -> « {nouveau_nom} » : nouvelle ligne créée mais "
+            f"l'ancienne (id={source['id']}) n'a pas pu être supprimée — nettoyage manuel requis."
+        )
+
     return resultat
 
 

@@ -10,7 +10,14 @@ suivi et les campagnes d'envoi.
 import pandas as pd
 import streamlit as st
 
-from api_client import creer_ou_modifier_campagne, get_campagnes, trigger_agent_action
+from api_client import (
+    ApiError,
+    creer_ou_modifier_campagne,
+    dupliquer_campagne,
+    get_campagnes,
+    renommer_campagne,
+    trigger_agent_action,
+)
 from common import afficher_suivi, demarrer_suivi, executer_avec_spinner, safe_call
 
 st.title("🔍 Sourcing / Scraping")
@@ -65,6 +72,12 @@ st.caption(
     "lisent cette configuration dynamiquement — aucun secteur ni zone n'est "
     "plus codé en dur dans les scripts."
 )
+st.caption(
+    "💡 Pour préparer le terrain sans se précipiter : crée une campagne au "
+    "statut **brouillon** (un modèle, vide ou partiellement rempli), puis "
+    "au moment de démarrer une prospection, duplique-la ou renomme-la au nom "
+    "du vrai client — voir la section « Modèles & duplication » ci-dessous."
+)
 
 campagnes_data, campagnes_error = safe_call(get_campagnes)
 if campagnes_error:
@@ -94,11 +107,16 @@ with st.expander("➕ Créer une nouvelle campagne / modifier une campagne exist
             value="\n".join(donnees_existantes.get("communes_cibles", [])),
             height=120,
         )
-        statuts_possibles = ["active", "en_pause", "archivee"]
+        statuts_possibles = ["brouillon", "active", "en_pause", "archivee"]
         statut = st.selectbox(
             "Statut",
             options=statuts_possibles,
             index=statuts_possibles.index(donnees_existantes.get("statut", "active")),
+            help=(
+                "« brouillon » = modèle préparé à l'avance, jamais repris par le sourcing "
+                "automatique ni le pipeline quotidien tant qu'il n'est pas dupliqué ou "
+                "passé à « active »."
+            ),
         )
 
         st.markdown(
@@ -175,6 +193,100 @@ if liste_campagnes:
 else:
     st.info("Aucune campagne configurée pour le moment — crée-en une ci-dessus.")
 
+
+# ---------------------------------------------------------------------
+# 2bis. Modèles & duplication — dupliquer une campagne existante (souvent
+# un brouillon préparé à l'avance) sous un nouveau nom de client, ou
+# renommer directement un brouillon qui n'a encore servi à aucun sourcing.
+# ---------------------------------------------------------------------
+
+st.subheader("📋 Modèles & duplication")
+st.caption(
+    "Prépare le terrain à l'avance : crée une campagne « brouillon » ci-dessus "
+    "(secteur, communes, types d'acteurs déjà remplis), puis duplique-la ici au "
+    "nom du vrai client le jour où tu démarres la prospection — plus besoin de "
+    "tout reconfigurer dans l'urgence."
+)
+
+if not liste_campagnes:
+    st.info("Crée d'abord une campagne ci-dessus pour pouvoir la dupliquer ou la renommer.")
+else:
+    col_dup, col_ren = st.columns(2)
+
+    with col_dup:
+        st.markdown("**Dupliquer sous un nouveau nom**")
+        with st.form("form_dupliquer_campagne"):
+            campagne_source = st.selectbox(
+                "Campagne à dupliquer",
+                options=noms_campagnes,
+                key="select_campagne_source_duplication",
+            )
+            nouveau_nom_duplication = st.text_input(
+                "Nom de la nouvelle campagne (ex. le vrai client)",
+                key="input_nouveau_nom_duplication",
+                placeholder="ex. ACME Bâtiment SARL",
+            )
+            statut_nouvelle_campagne = st.selectbox(
+                "Statut de la copie", options=["active", "brouillon", "en_pause"], index=0,
+                key="select_statut_duplication",
+            )
+            dupliquer = st.form_submit_button(
+                "🧬 Dupliquer", type="primary", use_container_width=True
+            )
+
+        if dupliquer:
+            if not nouveau_nom_duplication.strip():
+                st.warning("Le nom de la nouvelle campagne est requis.")
+            else:
+                _, err = executer_avec_spinner(
+                    "Duplication de la campagne...",
+                    dupliquer_campagne,
+                    campagne_source, nouveau_nom_duplication.strip(), statut_nouvelle_campagne,
+                )
+                if err:
+                    st.error(err)
+                else:
+                    st.success(
+                        f"Campagne « {campagne_source} » dupliquée sous « {nouveau_nom_duplication.strip()} »."
+                    )
+                    st.rerun()
+
+    with col_ren:
+        st.markdown("**Renommer un brouillon**")
+        campagnes_brouillon = [c["nom_client"] for c in liste_campagnes if c.get("statut") == "brouillon"]
+        if not campagnes_brouillon:
+            st.caption(
+                "Aucune campagne en brouillon pour le moment. Seul un brouillon peut être "
+                "renommé directement (une campagne déjà active a pu servir à du sourcing "
+                "réel sous son nom actuel) — duplique plutôt une campagne active si besoin."
+            )
+        else:
+            with st.form("form_renommer_campagne"):
+                brouillon_a_renommer = st.selectbox(
+                    "Brouillon à renommer", options=campagnes_brouillon, key="select_brouillon_a_renommer",
+                )
+                nouveau_nom_renommage = st.text_input(
+                    "Nouveau nom", key="input_nouveau_nom_renommage", placeholder="ex. ACME Bâtiment SARL",
+                )
+                renommer = st.form_submit_button(
+                    "✏️ Renommer", use_container_width=True
+                )
+
+            if renommer:
+                if not nouveau_nom_renommage.strip():
+                    st.warning("Le nouveau nom est requis.")
+                else:
+                    try:
+                        with st.spinner("Renommage de la campagne..."):
+                            renommer_campagne(brouillon_a_renommer, nouveau_nom_renommage.strip())
+                    except ApiError as e:
+                        st.error(str(e))
+                    else:
+                        st.success(
+                            f"Brouillon « {brouillon_a_renommer} » renommé en « {nouveau_nom_renommage.strip()} »."
+                        )
+                        st.rerun()
+
 st.divider()
 
 
@@ -184,10 +296,22 @@ st.divider()
 
 st.subheader("🏗️ Lancer le sourcing B2B pour une campagne")
 
-if not noms_campagnes:
-    st.info("Crée d'abord une campagne ci-dessus pour pouvoir lancer un sourcing.")
+# Un brouillon est un modèle non destiné à être sourcé tel quel : il doit
+# d'abord être dupliqué ou renommé au nom du vrai client (section
+# "Modèles & duplication" ci-dessus).
+noms_campagnes_sourcables = [
+    c["nom_client"] for c in liste_campagnes if c.get("statut") != "brouillon"
+]
+
+if not noms_campagnes_sourcables:
+    st.info(
+        "Crée d'abord une campagne (autre qu'un brouillon) ci-dessus pour pouvoir lancer un "
+        "sourcing — un brouillon doit d'abord être dupliqué ou renommé au nom du vrai client."
+    )
 else:
-    campagne_active = st.selectbox("Campagne à sourcer", options=noms_campagnes, key="select_campagne_sourcing")
+    campagne_active = st.selectbox(
+        "Campagne à sourcer", options=noms_campagnes_sourcables, key="select_campagne_sourcing"
+    )
     campagne_courante = next((c for c in liste_campagnes if c["nom_client"] == campagne_active), {})
 
     communes_dispo = campagne_courante.get("communes_cibles") or []

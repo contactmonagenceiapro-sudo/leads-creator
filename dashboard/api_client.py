@@ -228,6 +228,29 @@ def creer_ou_modifier_campagne(campagne: dict) -> dict:
     return _request("POST", "/campagnes", json=campagne)
 
 
+def dupliquer_campagne(nom_client: str, nouveau_nom_client: str, statut: str = "active") -> dict:
+    """POST /campagnes/{nom_client}/dupliquer -> copie une campagne existante
+    (modèle/brouillon ou déjà active) sous un nouveau nom de client, en
+    reprenant secteur, description_services, communes_cibles et
+    types_acteur_cibles. Ne modifie pas la campagne source."""
+    return _request(
+        "POST",
+        f"/campagnes/{nom_client}/dupliquer",
+        json={"nouveau_nom_client": nouveau_nom_client, "statut": statut},
+    )
+
+
+def renommer_campagne(nom_client: str, nouveau_nom_client: str) -> dict:
+    """PATCH /campagnes/{nom_client}/renommer -> renomme une campagne EN
+    BROUILLON (rejeté par l'API pour toute autre statut — dupliquer_campagne
+    est le chemin prévu pour une campagne déjà active)."""
+    return _request(
+        "PATCH",
+        f"/campagnes/{nom_client}/renommer",
+        json={"nouveau_nom_client": nouveau_nom_client},
+    )
+
+
 def get_campagne_stats(nom_client: str) -> dict:
     """GET /campagnes/{nom_client}/stats -> leads_total, contactes,
     taux_contact, opportunites pour cette campagne."""
