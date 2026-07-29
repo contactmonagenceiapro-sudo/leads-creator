@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 
 import process_runner
-from common import afficher_suivi, executer_avec_spinner, safe_call
+from common import afficher_suivi, executer_avec_spinner, liste_noms_campagnes, safe_call
 from data_access import (
     DataAccessError,
     creer_ou_modifier_campagne,
@@ -34,20 +34,26 @@ st.caption("Scraping SIRENE puis traitement IA (scoring + pitch) des nouveaux pr
 col1, col2 = st.columns(2)
 with col1:
     st.caption("⏱️ Estimation : environ 1 à 2 minutes selon le nombre de nouvelles entreprises détectées.")
-    if st.button("🕸️ Lancer le scraping", use_container_width=True):
+    scraping_en_cours = process_runner.est_en_cours("scraping")
+    if scraping_en_cours:
+        st.caption("⏳ Scraping déjà en cours...")
+    if st.button("🕸️ Lancer le scraping", use_container_width=True, disabled=scraping_en_cours):
         _, err = executer_avec_spinner("Déclenchement du scraping...", process_runner.lancer_scraping)
         if err:
             st.error(err)
 with col2:
     st.caption("⏱️ Estimation : environ 1 à 3 minutes selon le nombre de leads à traiter (un appel IA par lead).")
     leads_json_ok = process_runner.leads_json_disponible()
+    leads_en_cours = process_runner.est_en_cours("leads")
     if not leads_json_ok:
         st.caption(
             "⚠️ Aucun `leads.json` trouvé — lance d'abord le scraping. (Si tu l'as déjà fait : "
             "l'app a peut-être redémarré entre les deux étapes, le fichier ne survit pas à un "
             "redémarrage sur Streamlit Cloud — relance simplement le scraping.)"
         )
-    if st.button("🤖 Traitement IA des leads", use_container_width=True, disabled=not leads_json_ok):
+    elif leads_en_cours:
+        st.caption("⏳ Traitement IA déjà en cours...")
+    if st.button("🤖 Traitement IA des leads", use_container_width=True, disabled=not leads_json_ok or leads_en_cours):
         _, err = executer_avec_spinner("Déclenchement du traitement IA...", process_runner.lancer_leads)
         if err:
             st.error(err)
@@ -85,8 +91,9 @@ st.caption(
 campagnes_data, campagnes_error = safe_call(get_campagnes)
 if campagnes_error:
     st.error(campagnes_error)
+    st.stop()
 liste_campagnes = (campagnes_data or {}).get("campagnes", []) if campagnes_data else []
-noms_campagnes = [c["nom_client"] for c in liste_campagnes]
+noms_campagnes = liste_noms_campagnes(campagnes_data)
 
 with st.expander("➕ Créer une nouvelle campagne / modifier une campagne existante", expanded=not liste_campagnes):
     campagne_a_editer = st.selectbox(
@@ -337,8 +344,12 @@ else:
             "enrichissement des contacts + scoring) — plus long si plusieurs sites "
             "d'entreprises ciblées répondent lentement ou sont injoignables."
         )
+        pipeline_pro_en_cours = process_runner.est_en_cours("pipeline_pro", campagne_active)
+        if pipeline_pro_en_cours:
+            st.caption(f"⏳ Une recherche B2B est déjà en cours pour « {campagne_active} ».")
         lancer_pro = st.form_submit_button(
-            "🔍 Lancer la recherche de leads B2B", type="primary", use_container_width=True
+            "🔍 Lancer la recherche de leads B2B", type="primary", use_container_width=True,
+            disabled=pipeline_pro_en_cours,
         )
 
     if lancer_pro:
@@ -373,7 +384,13 @@ else:
         "manuel uniquement (aucune tâche planifiée automatique) — à relancer "
         "toi-même quand tu veux prospecter une campagne."
     )
-    if st.button("⚡ Lancer le Pipeline Automatique complet", type="primary", use_container_width=True):
+    pipeline_auto_en_cours = process_runner.est_en_cours("pipeline_auto", campagne_active)
+    if pipeline_auto_en_cours:
+        st.caption(f"⏳ Un Pipeline Automatique est déjà en cours pour « {campagne_active} ».")
+    if st.button(
+        "⚡ Lancer le Pipeline Automatique complet", type="primary", use_container_width=True,
+        disabled=pipeline_auto_en_cours,
+    ):
         _, err = executer_avec_spinner(
             "Déclenchement du Pipeline Automatique...",
             process_runner.lancer_pipeline_b2b, "pipeline_auto", campagne_active,

@@ -16,7 +16,7 @@ qu'un compte client peut lui-même voir.
 import streamlit as st
 
 from auth import campagnes_autorisees, est_admin
-from common import executer_avec_spinner, safe_call, to_dataframe
+from common import executer_avec_spinner, liste_noms_campagnes, safe_call, to_dataframe
 from data_access import (
     get_campagne_stats,
     get_campagnes,
@@ -36,7 +36,7 @@ if est_admin():
     if campagnes_error:
         st.error(campagnes_error)
         st.stop()
-    mes_campagnes = [c["nom_client"] for c in (campagnes_data or {}).get("campagnes", [])]
+    mes_campagnes = liste_noms_campagnes(campagnes_data)
     if not mes_campagnes:
         st.info("Aucune campagne configurée pour le moment — crée-en une depuis « Sourcing / Scraping ».")
         st.stop()
@@ -65,10 +65,15 @@ stats, stats_error = safe_call(get_campagne_stats, campagne_selectionnee)
 if stats_error:
     st.error(stats_error)
 elif stats:
-    col1, col2, col3, col4, col5 = st.columns(5)
+    # 2 rangées plutôt que 5 colonnes d'un coup : cette page est consultée
+    # par des comptes clients, potentiellement sur mobile — Streamlit empile
+    # les colonnes verticalement en dessous d'un certain seuil de largeur,
+    # 5 blocs à la suite allongent inutilement la page.
+    col1, col2, col3 = st.columns(3)
     col1.metric("Leads générés", stats.get("leads_total", 0))
     col2.metric("Contactés", stats.get("contactes", 0))
     col3.metric("Taux de contact", f"{stats.get('taux_contact', 0) * 100:.0f} %")
+    col4, col5 = st.columns(2)
     col4.metric("Opportunités", stats.get("opportunites", 0))
     col5.metric("🌟 Ultra-qualifiés", stats.get("leads_ultra_qualifies", 0))
 

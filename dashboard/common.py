@@ -16,8 +16,14 @@ from data_access import DataAccessError
 # l'état du subprocess en boucle. Au-delà, elle rend systématiquement la main
 # à l'utilisateur avec un message clair + un bouton pour reprendre le suivi,
 # plutôt que de le laisser face à une page figée pendant tout timeout_secondes
-# (jusqu'à 900s / 15 min pour le Pipeline Automatique).
-DUREE_MAX_BLOCAGE_SECONDES = 60
+# (jusqu'à 900s / 15 min pour le Pipeline Automatique). Volontairement plus
+# court que la première version (60s) : pendant ce blocage, AUCUN autre
+# bouton de la page ne peut répondre (Streamlit exécute le script du début à
+# la fin avant de traiter la prochaine interaction) — un clic sur un autre
+# bouton de lancement pendant ce laps de temps semble ne rien faire. Une
+# tranche plus courte rend la main plus vite, au prix de rafraîchissements
+# un peu plus fréquents de la page pendant un suivi long.
+DUREE_MAX_BLOCAGE_SECONDES = 25
 
 
 def safe_call(fn, *args, **kwargs):
@@ -144,3 +150,15 @@ def to_dataframe(data) -> pd.DataFrame:
         elif len(data) == 1:
             data = next(iter(data.values()))
     return pd.DataFrame(data)
+
+
+def liste_noms_campagnes(campagnes_data: dict) -> list[str]:
+    """Déballe `{"campagnes": [...]}` (renvoyé par data_access.get_campagnes())
+    en une simple liste de nom_client — motif répété tel quel dans
+    sourcing.py, gestion_clients.py, portail_client.py et
+    administration_contrats.py, chacune l'exploitant ensuite différemment
+    (filtrage brouillon, branchement admin/client...) : ce helper ne
+    factorise que la partie strictement identique, pas le widget de
+    sélection lui-même (les besoins diffèrent trop d'une page à l'autre pour
+    qu'un composant unique reste simple)."""
+    return [c["nom_client"] for c in (campagnes_data or {}).get("campagnes", [])]

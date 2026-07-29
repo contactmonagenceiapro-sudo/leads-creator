@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
@@ -15,7 +14,6 @@ from email_blacklist import emails_blacklistes
 
 load_dotenv()
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -23,7 +21,6 @@ ZOHO_USER = os.getenv("ZOHO_USER", "")
 ZOHO_PASSWORD = os.getenv("ZOHO_PASSWORD", "")
 CEO_EMAIL = os.getenv("CEO_EMAIL", "")
 AGENCY_NAME = os.getenv("AGENCY_NAME", "AI Company")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_MAIN", "qwen2.5:7b")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [CEO] %(message)s")
 log = logging.getLogger(__name__)
@@ -75,41 +72,6 @@ def get_leads_from_supabase() -> list:
     except Exception as e:
         log.error(f"Erreur lors de la récupération des leads depuis Supabase : {e}")
         return []
-
-
-def analyze_with_ollama(stats: dict, leads: list) -> str:
-    """Génère un rapport d'opportunités marché (une section par secteur)."""
-    secteurs = list(set(lead["industry"] for lead in leads))
-    full_report = "### RAPPORT D'OPPORTUNITÉS (MARKET SCOUT)\n\n"
-
-    for secteur in secteurs:
-        full_report += f"\n--- SECTEUR : {secteur} ---\n"
-        leads_secteur = [l for l in leads if l["industry"] == secteur]
-
-        prompt = f"""
-        Agis comme un consultant expert en stratégie d'entreprise.
-        Voici des entreprises du secteur {secteur} avec leurs faiblesses identifiées :
-        {str(leads_secteur)}
-
-        Pour chaque entreprise, suggère une solution technologique simple, automatisable et rentable.
-        Sois concis, factuel et pragmatique.
-        """
-
-        try:
-            res = requests.post(
-                f"{OLLAMA_HOST}/api/generate",
-                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-                timeout=90,
-            )
-            res.raise_for_status()
-            reponse = res.json().get("response", "Pas de réponse.")
-        except requests.exceptions.RequestException as e:
-            log.error(f"Erreur Ollama pour le secteur {secteur} : {e}")
-            reponse = "Analyse indisponible (échec de l'appel IA)."
-
-        full_report += reponse + "\n"
-
-    return full_report
 
 
 def save_report_to_supabase(rapport: str, stats: dict) -> bool:

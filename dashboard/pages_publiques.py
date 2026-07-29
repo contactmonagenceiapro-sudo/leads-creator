@@ -17,7 +17,7 @@ import os
 import streamlit as st
 
 from contrats_signature import envoyer_contrat_signature
-from notifications import alerter_discord
+from alertes import alerter_discord
 from supabase_client import supabase
 
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
@@ -120,15 +120,28 @@ def afficher_intake(lead_id: str | None) -> None:
     st.title(f"Démarrons votre projet, {company}")
     st.write("Ce formulaire remplace tout appel téléphonique : remplissez-le à votre rythme.")
 
+    # max_chars sur chaque champ : ce formulaire est public et non authentifié,
+    # rien n'empêche un abus (texte massif envoyé en boucle) sans une limite
+    # basique — appliquée au niveau du widget, la plus simple à maintenir.
     with st.form("form_intake_public"):
-        description = st.text_area("Décrivez votre activité en quelques phrases", height=120)
-        zone_activite = st.text_input("Zone d'intervention (villes/rayon)", placeholder="Ex : Reims et 30km alentour")
-        lien_photos = st.text_input("Lien vers vos photos (Google Drive, WeTransfer...)", placeholder="https://...")
-        lien_site_actuel = st.text_input("Lien de votre site actuel (si vous en avez un)", placeholder="https://...")
-        lien_gbp = st.text_input("Lien de votre fiche Google Maps / Google Business Profile", placeholder="https://...")
+        description = st.text_area(
+            "Décrivez votre activité en quelques phrases", height=120, max_chars=3000,
+        )
+        zone_activite = st.text_input(
+            "Zone d'intervention (villes/rayon)", placeholder="Ex : Reims et 30km alentour", max_chars=300,
+        )
+        lien_photos = st.text_input(
+            "Lien vers vos photos (Google Drive, WeTransfer...)", placeholder="https://...", max_chars=500,
+        )
+        lien_site_actuel = st.text_input(
+            "Lien de votre site actuel (si vous en avez un)", placeholder="https://...", max_chars=500,
+        )
+        lien_gbp = st.text_input(
+            "Lien de votre fiche Google Maps / Google Business Profile", placeholder="https://...", max_chars=500,
+        )
         telephone_public = st.text_input(
             "Téléphone à afficher publiquement sur le site (pas pour vous appeler)",
-            placeholder="0X XX XX XX XX",
+            placeholder="0X XX XX XX XX", max_chars=50,
         )
         envoyer = st.form_submit_button("Envoyer", type="primary", use_container_width=True)
 
@@ -185,13 +198,15 @@ def afficher_devis(slug: str | None) -> None:
     st.write("Décrivez votre projet, nous revenons vers vous rapidement.")
 
     with st.form("form_devis_public"):
-        nom = st.text_input("Votre nom")
-        email = st.text_input("E-mail")
-        telephone = st.text_input("Téléphone", placeholder="0X XX XX XX XX")
-        type_projet = st.text_input("Type de projet", placeholder="Construction, rénovation lourde, extension...")
-        commune = st.text_input("Commune du projet")
-        budget_estime = st.text_input("Budget estimé (optionnel)")
-        message = st.text_area("Votre message", height=120)
+        nom = st.text_input("Votre nom", max_chars=200)
+        email = st.text_input("E-mail", max_chars=200)
+        telephone = st.text_input("Téléphone", placeholder="0X XX XX XX XX", max_chars=50)
+        type_projet = st.text_input(
+            "Type de projet", placeholder="Construction, rénovation lourde, extension...", max_chars=300,
+        )
+        commune = st.text_input("Commune du projet", max_chars=200)
+        budget_estime = st.text_input("Budget estimé (optionnel)", max_chars=100)
+        message = st.text_area("Votre message", height=120, max_chars=3000)
         consentement = st.checkbox(f"J'accepte d'être recontacté(e) par {client_final} au sujet de ma demande.")
         envoyer = st.form_submit_button("Envoyer ma demande", type="primary", use_container_width=True)
 

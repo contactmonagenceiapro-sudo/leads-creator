@@ -10,6 +10,8 @@ d'utilité puisqu'il n'y a plus de frontière réseau à franchir : la seule
 façon d'atteindre ce code est de passer par cette page elle-même).
 """
 
+import re
+
 import bcrypt
 import streamlit as st
 
@@ -17,6 +19,11 @@ from data_access import DataAccessError
 from supabase_client import supabase
 
 _CLES_SESSION = ("auth_connecte", "auth_role", "auth_campagnes", "auth_email")
+
+# Volontairement permissif (pas de RFC 5322 complet) : sert juste à
+# rejeter les fautes de frappe évidentes ("test", "a@b") avant d'aller
+# jusqu'à Supabase, pas à valider rigoureusement une adresse.
+_MOTIF_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def utilisateur_connecte() -> bool:
@@ -80,6 +87,8 @@ def _creer_compte(email: str, mot_de_passe: str) -> str:
     """Reprend la logique exacte de l'ancien POST /auth/signup — crée
     TOUJOURS un compte de rôle 'client', jamais admin, sans campagne
     associée (un admin doit ensuite le rattacher via utilisateur_campagnes)."""
+    if not _MOTIF_EMAIL.match(email):
+        raise DataAccessError("Adresse e-mail invalide.")
     if len(mot_de_passe) < 8:
         raise DataAccessError("Le mot de passe doit contenir au moins 8 caractères")
     if len(mot_de_passe.encode("utf-8")) > 72:

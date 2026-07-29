@@ -14,7 +14,7 @@ import pandas as pd
 import streamlit as st
 
 import process_runner
-from common import afficher_suivi, executer_avec_spinner, safe_call, to_dataframe
+from common import afficher_suivi, executer_avec_spinner, liste_noms_campagnes, safe_call, to_dataframe
 from contrats_signature import creer_et_envoyer_lien_paiement
 from data_access import (
     creer_remboursement,
@@ -103,8 +103,9 @@ st.divider()
 campagnes_data, campagnes_error = safe_call(get_campagnes)
 if campagnes_error:
     st.error(campagnes_error)
+    st.stop()
 liste_campagnes = (campagnes_data or {}).get("campagnes", []) if campagnes_data else []
-noms_campagnes = [c["nom_client"] for c in liste_campagnes]
+noms_campagnes = liste_noms_campagnes(campagnes_data)
 
 campagne_selectionnee = None
 if noms_campagnes:
@@ -133,10 +134,16 @@ if campagne_selectionnee:
     if campagne_stats_error:
         st.error(campagne_stats_error)
     elif campagne_stats:
-        col_k1, col_k2, col_k3, col_k4, col_k5 = st.columns(5)
+        # 2 rangées plutôt que 5 colonnes d'un coup : sur mobile, Streamlit
+        # empile les colonnes verticalement en dessous d'un certain seuil de
+        # largeur — 5 blocs à la suite allongent inutilement la page avant
+        # d'atteindre le contenu utile ; 3+2 reste lisible sur desktop tout
+        # en réduisant cet effet sur petit écran.
+        col_k1, col_k2, col_k3 = st.columns(3)
         col_k1.metric("Leads générés", campagne_stats.get("leads_total", 0))
         col_k2.metric("Contactés", campagne_stats.get("contactes", 0))
         col_k3.metric("Taux de contact", f"{campagne_stats.get('taux_contact', 0) * 100:.0f} %")
+        col_k4, col_k5 = st.columns(2)
         col_k4.metric("Opportunités / chantiers ouverts", campagne_stats.get("opportunites", 0))
         col_k5.metric("🌟 Ultra-qualifiés", campagne_stats.get("leads_ultra_qualifies", 0))
 
@@ -329,37 +336,49 @@ st.subheader("📬 Campagnes & relances")
 
 col_a, col_b, col_c, col_d = st.columns(4)
 with col_a:
-    if st.button("📨 Vérifier les réponses (IMAP)", use_container_width=True):
+    mail_check_en_cours = process_runner.est_en_cours("mail_check")
+    if st.button("📨 Vérifier les réponses (IMAP)", use_container_width=True, disabled=mail_check_en_cours):
         _, err = executer_avec_spinner("Vérification en cours...", process_runner.lancer_mail_check)
         if err:
             st.error(err)
         else:
             st.success("Vérification des réponses lancée.")
+    elif mail_check_en_cours:
+        st.caption("⏳ Déjà en cours...")
 with col_b:
-    if st.button("🚀 Campagne + rapport — artisans", use_container_width=True):
+    ceo_report_en_cours = process_runner.est_en_cours("ceo_report")
+    if st.button("🚀 Campagne + rapport — artisans", use_container_width=True, disabled=ceo_report_en_cours):
         _, err = executer_avec_spinner("Déclenchement en cours...", process_runner.lancer_ceo_report)
         if err:
             st.error(err)
         else:
             st.success("Campagne d'e-mails + rapport CEO lancés.")
+    elif ceo_report_en_cours:
+        st.caption("⏳ Déjà en cours...")
 with col_c:
-    if st.button("🔁 Relancer les sans-réponse — artisans", use_container_width=True):
+    relance_en_cours = process_runner.est_en_cours("relance")
+    if st.button("🔁 Relancer les sans-réponse — artisans", use_container_width=True, disabled=relance_en_cours):
         _, err = executer_avec_spinner("Déclenchement en cours...", process_runner.lancer_relance)
         if err:
             st.error(err)
         else:
             st.success("Relances (artisans) lancées.")
+    elif relance_en_cours:
+        st.caption("⏳ Déjà en cours...")
 with col_d:
     libelle_bouton_b2b = (
         f"📧 Campagne + relances B2B — {campagne_selectionnee}" if campagne_selectionnee else "📧 Campagne + relances B2B"
     )
-    if st.button(libelle_bouton_b2b, use_container_width=True, disabled=not campagne_selectionnee):
+    envoi_pro_en_cours = campagne_selectionnee and process_runner.est_en_cours("envoi_pro", campagne_selectionnee)
+    if st.button(libelle_bouton_b2b, use_container_width=True, disabled=not campagne_selectionnee or envoi_pro_en_cours):
         _, err = executer_avec_spinner(
             "Déclenchement de la campagne B2B...",
             process_runner.lancer_pipeline_b2b, "envoi_pro", campagne_selectionnee,
         )
         if err:
             st.error(err)
+    elif envoi_pro_en_cours:
+        st.caption("⏳ Déjà en cours...")
 
 # En dehors du `if st.button(...)` (voir sourcing.py pour la même logique) :
 # reste actif après un rerun déclenché par le bouton "Vérifier l'avancement"

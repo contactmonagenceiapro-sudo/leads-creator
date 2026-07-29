@@ -87,7 +87,17 @@ def lancer(action: str, campagne: str | None, commande: list[str], env: dict | N
     """Lance `commande` en subprocess (cwd = racine du dépôt, pour que les
     chemins relatifs internes aux scripts — leads.json, article*.md... —
     se résolvent au même endroit qu'avant) et enregistre le handle pour
-    suivi via statut()/afficher_suivi()."""
+    suivi via statut()/afficher_suivi().
+
+    Refuse de relancer si un run est déjà `en_cours` pour la même
+    action/campagne : filet de sécurité en plus de la désactivation des
+    boutons côté page (celle-ci peut être court-circuitée par un double-clic
+    juste avant le rerun qui la déclenche)."""
+    if est_en_cours(action, campagne):
+        raise RuntimeError(
+            f"Une tâche « {action} » est déjà en cours{f' pour {campagne}' if campagne else ''} "
+            "— attends qu'elle se termine avant d'en relancer une."
+        )
     processus = subprocess.Popen(commande, cwd=str(RACINE_REPO), env=env)
     st.session_state[_cle_session(action, campagne)] = {
         "processus": processus,
@@ -119,6 +129,15 @@ def statut(action: str, campagne: str | None = None) -> dict:
         "elapsed_seconds": round(ecoule),
         "returncode": code_retour,
     }
+
+
+def est_en_cours(action: str, campagne: str | None = None) -> bool:
+    """À utiliser dans les pages pour désactiver (`disabled=...`) un bouton
+    de lancement tant que la même action tourne déjà — deux clics rapides
+    (ou un clic pendant qu'`afficher_suivi()` bloque encore le script pour
+    une autre action) ne doivent jamais démarrer deux subprocess concurrents
+    sur la même tâche."""
+    return statut(action, campagne).get("state") == "en_cours"
 
 
 def effacer_suivi(action: str, campagne: str | None = None) -> None:
