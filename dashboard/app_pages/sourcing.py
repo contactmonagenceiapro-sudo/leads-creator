@@ -40,7 +40,14 @@ with col1:
             st.error(err)
 with col2:
     st.caption("⏱️ Estimation : environ 1 à 3 minutes selon le nombre de leads à traiter (un appel IA par lead).")
-    if st.button("🤖 Traitement IA des leads", use_container_width=True):
+    leads_json_ok = process_runner.leads_json_disponible()
+    if not leads_json_ok:
+        st.caption(
+            "⚠️ Aucun `leads.json` trouvé — lance d'abord le scraping. (Si tu l'as déjà fait : "
+            "l'app a peut-être redémarré entre les deux étapes, le fichier ne survit pas à un "
+            "redémarrage sur Streamlit Cloud — relance simplement le scraping.)"
+        )
+    if st.button("🤖 Traitement IA des leads", use_container_width=True, disabled=not leads_json_ok):
         _, err = executer_avec_spinner("Déclenchement du traitement IA...", process_runner.lancer_leads)
         if err:
             st.error(err)

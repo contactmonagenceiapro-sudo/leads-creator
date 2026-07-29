@@ -1,7 +1,8 @@
-# Environnement unique pour tout le projet (scripts racine + dashboard
-# Streamlit) — c'est aussi le fichier utilisé par Streamlit Community Cloud
-# pour déployer dashboard/app.py (voir dashboard/SECRETS.md). Plus de backend
-# FastAPI séparé : tout tourne dans ce même environnement Python.
+# Environnement pour le développement LOCAL (scripts racine + dashboard).
+# En production, Streamlit Community Cloud utilise dashboard/requirements.txt
+# (co-localisé avec le "main file path" dashboard/app.py, prioritaire sur
+# celui-ci) — les deux fichiers doivent rester synchronisés (mêmes pins).
+# Voir dashboard/SECRETS.md pour la configuration des secrets côté Cloud.
 
 # === Cœur du pipeline (scraper -> lead_worker -> ceo_agent) ===
 requests==2.32.3

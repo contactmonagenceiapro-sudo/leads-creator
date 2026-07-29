@@ -33,6 +33,20 @@ import streamlit as st
 from supabase_client import supabase
 
 RACINE_REPO = Path(__file__).resolve().parent.parent
+LEADS_JSON = RACINE_REPO / "leads.json"
+
+
+def leads_json_disponible() -> bool:
+    """« Lancer le scraping » et « Traitement IA des leads » (sourcing.py)
+    sont deux boutons/subprocess séparés qui communiquent via ce fichier sur
+    disque — jamais persistant sur Streamlit Community Cloud (filesystem
+    éphémère, réinitialisé à chaque redémarrage/redéploiement du conteneur).
+    Si l'app a redémarré entre les deux clics, le fichier a disparu et
+    lead_worker.py traiterait silencieusement 0 lead (code retour 1, visible
+    comme "erreur" dans le suivi, mais sans expliquer pourquoi) — ce
+    contrôle permet de désactiver le bouton avec un message clair plutôt que
+    de laisser l'admin découvrir un run vide après coup."""
+    return LEADS_JSON.exists()
 
 
 def _cle_session(action: str, campagne: str | None) -> str:

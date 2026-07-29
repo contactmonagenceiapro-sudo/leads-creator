@@ -1,14 +1,22 @@
-# Utilisé par Streamlit Community Cloud pour déployer app.py. Doit couvrir
-# TOUTES les dépendances : celles du dashboard lui-même ET celles des
-# scripts racine qu'il lance en subprocess (même environnement Python,
-# voir dashboard/process_runner.py) — supabase, beautifulsoup4 (scraper),
-# stripe/bcrypt (contrats_signature.py, auth.py).
-streamlit
-pandas
-requests
-python-dotenv
-fpdf2
-supabase
-beautifulsoup4
-stripe
-bcrypt
+# Utilisé par Streamlit Community Cloud pour déployer app.py (ce fichier,
+# co-localisé avec le "main file path", est prioritaire sur le
+# requirements.txt racine — c'est donc CELUI-CI qui fait foi en prod). Doit
+# couvrir TOUTES les dépendances : celles du dashboard lui-même ET celles
+# des scripts racine qu'il lance en subprocess/importe directement (même
+# environnement Python, voir dashboard/process_runner.py) — supabase,
+# beautifulsoup4 (scraper), stripe/bcrypt (contrats_signature.py, auth.py).
+#
+# Versions pinnées à l'identique du requirements.txt racine (dev local) :
+# une divergence de version entre les deux (ex: un simple changement majeur
+# de stripe-python ou de postgrest-py/.or_()) peut casser silencieusement
+# en prod sans jamais avoir été testée en local — voir les pins exacts
+# maintenus à la racine du dépôt.
+streamlit==1.38.0
+pandas==2.2.2
+requests==2.32.3
+python-dotenv==1.0.0
+fpdf2==2.7.9
+supabase==2.5.0
+beautifulsoup4==4.14.3
+stripe==10.12.0
+bcrypt==4.2.0

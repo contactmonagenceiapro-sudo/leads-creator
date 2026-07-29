@@ -22,10 +22,40 @@ from supabase_client import supabase
 
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
 
+# Tout statut atteint APRÈS une soumission d'intake réussie (voir
+# envoyer_contrat_signature / marquer_contrat_signe / marquer_contrat_paye
+# dans contrats_signature.py / data_access.py) — sert de garde-fou CÔTÉ
+# SERVEUR contre une resoumission (st.session_state seul ne suffit pas : il
+# est propre à une session navigateur, un lien réouvert ailleurs le
+# contournerait entièrement).
+STATUTS_INTAKE_DEJA_ENVOYE = {
+    "intake_recu", "contrat_envoye", "contrat_signe", "lien_paiement_envoye", "paye",
+}
+
 
 def _get_lead(lead_id: str) -> dict | None:
-    leads = supabase.table("leads").select("*").eq("id", lead_id).execute().data
+    """None aussi bien si le lead n'existe pas que si la lecture échoue
+    (ex: lead_id malformé — pas un UUID valide — ou Supabase injoignable) :
+    ces pages sont publiques et sans authentification, une erreur ne doit
+    jamais remonter un traceback brut à un visiteur externe."""
+    try:
+        leads = supabase.table("leads").select("*").eq("id", lead_id).execute().data
+    except Exception:
+        return None
     return leads[0] if leads else None
+
+
+def _get_campagne_active_par_slug(slug: str) -> str | None:
+    """Même principe que _get_lead() : toute erreur devient un simple
+    'page introuvable', jamais un crash visible publiquement."""
+    try:
+        resultats = (
+            supabase.table("campagnes").select("nom_client")
+            .eq("slug", slug).eq("statut", "active").limit(1).execute().data
+        )
+    except Exception:
+        return None
+    return resultats[0]["nom_client"] if resultats else None
 
 
 def afficher_presentation(lead_id: str | None) -> None:
@@ -76,7 +106,8 @@ def afficher_intake(lead_id: str | None) -> None:
         return
 
     cle_envoye = f"intake_envoye_{lead_id}"
-    if st.session_state.get(cle_envoye):
+    deja_recu = lead.get("status") in STATUTS_INTAKE_DEJA_ENVOYE
+    if st.session_state.get(cle_envoye) or deja_recu:
         st.title("Merci, c'est enregistré !")
         with st.container(border=True):
             st.write(
@@ -138,14 +169,10 @@ def afficher_devis(slug: str | None) -> None:
         st.error("Page introuvable.")
         return
 
-    resultats = (
-        supabase.table("campagnes").select("nom_client")
-        .eq("slug", slug).eq("statut", "active").limit(1).execute().data
-    )
-    if not resultats:
+    client_final = _get_campagne_active_par_slug(slug)
+    if not client_final:
         st.error("Page introuvable.")
         return
-    client_final = resultats[0]["nom_client"]
 
     cle_envoye = f"devis_envoye_{slug}"
     if st.session_state.get(cle_envoye):

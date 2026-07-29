@@ -76,55 +76,62 @@ def envoyer_contrat_signature(lead: dict, intake: dict) -> bool:
     lead_id = lead["id"]
     pdf_bytes = generer_pdf_devis(lead, intake)
 
-    r = requests.post(
-        f"{YOUSIGN_API_URL}/signature_requests",
-        headers=yousign_headers(),
-        json={"name": f"Devis {lead.get('company', lead_id)}", "delivery_mode": "email"},
-        timeout=15,
-    )
-    if r.status_code not in (200, 201):
-        log.error(f"Yousign création demande échouée pour {lead_id} : {r.status_code} {r.text}")
-        return False
-    signature_request_id = r.json()["id"]
+    try:
+        r = requests.post(
+            f"{YOUSIGN_API_URL}/signature_requests",
+            headers=yousign_headers(),
+            json={"name": f"Devis {lead.get('company', lead_id)}", "delivery_mode": "email"},
+            timeout=15,
+        )
+        if r.status_code not in (200, 201):
+            log.error(f"Yousign création demande échouée pour {lead_id} : {r.status_code} {r.text}")
+            return False
+        signature_request_id = r.json()["id"]
 
-    r = requests.post(
-        f"{YOUSIGN_API_URL}/signature_requests/{signature_request_id}/documents",
-        headers=yousign_headers(),
-        files={"file": (f"devis_{lead_id}.pdf", pdf_bytes, "application/pdf")},
-        data={"nature": "signable_document"},
-        timeout=30,
-    )
-    if r.status_code not in (200, 201):
-        log.error(f"Yousign upload document échoué pour {lead_id} : {r.status_code} {r.text}")
-        return False
-    document_id = r.json()["id"]
+        r = requests.post(
+            f"{YOUSIGN_API_URL}/signature_requests/{signature_request_id}/documents",
+            headers=yousign_headers(),
+            files={"file": (f"devis_{lead_id}.pdf", pdf_bytes, "application/pdf")},
+            data={"nature": "signable_document"},
+            timeout=30,
+        )
+        if r.status_code not in (200, 201):
+            log.error(f"Yousign upload document échoué pour {lead_id} : {r.status_code} {r.text}")
+            return False
+        document_id = r.json()["id"]
 
-    r = requests.post(
-        f"{YOUSIGN_API_URL}/signature_requests/{signature_request_id}/signers",
-        headers=yousign_headers(),
-        json={
-            "info": {
-                "first_name": nettoyer_nom_yousign(lead.get("name") or lead.get("company") or "Client"),
-                "last_name": "Client",
-                "email": lead["email"],
-                "locale": "fr",
+        r = requests.post(
+            f"{YOUSIGN_API_URL}/signature_requests/{signature_request_id}/signers",
+            headers=yousign_headers(),
+            json={
+                "info": {
+                    "first_name": nettoyer_nom_yousign(lead.get("name") or lead.get("company") or "Client"),
+                    "last_name": "Client",
+                    "email": lead["email"],
+                    "locale": "fr",
+                },
+                "signature_level": "electronic_signature",
+                "signature_authentication_mode": "no_otp",
+                "fields": [{"document_id": document_id, "type": "signature", "page": 1, "x": 100, "y": 700}],
             },
-            "signature_level": "electronic_signature",
-            "signature_authentication_mode": "no_otp",
-            "fields": [{"document_id": document_id, "type": "signature", "page": 1, "x": 100, "y": 700}],
-        },
-        timeout=15,
-    )
-    if r.status_code not in (200, 201):
-        log.error(f"Yousign ajout signataire échoué pour {lead_id} : {r.status_code} {r.text}")
-        return False
+            timeout=15,
+        )
+        if r.status_code not in (200, 201):
+            log.error(f"Yousign ajout signataire échoué pour {lead_id} : {r.status_code} {r.text}")
+            return False
 
-    r = requests.post(
-        f"{YOUSIGN_API_URL}/signature_requests/{signature_request_id}/activate",
-        headers=yousign_headers(), timeout=15,
-    )
-    if r.status_code not in (200, 201):
-        log.error(f"Yousign activation échouée pour {lead_id} : {r.status_code} {r.text}")
+        r = requests.post(
+            f"{YOUSIGN_API_URL}/signature_requests/{signature_request_id}/activate",
+            headers=yousign_headers(), timeout=15,
+        )
+        if r.status_code not in (200, 201):
+            log.error(f"Yousign activation échouée pour {lead_id} : {r.status_code} {r.text}")
+            return False
+    except requests.exceptions.RequestException as e:
+        log.error(f"Erreur réseau Yousign pour {lead_id} : {e}")
+        return False
+    except (ValueError, KeyError) as e:
+        log.error(f"Réponse Yousign inattendue (JSON invalide/champ manquant) pour {lead_id} : {e}")
         return False
 
     supabase.table("contracts").insert({
