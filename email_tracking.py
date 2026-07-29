@@ -6,11 +6,13 @@ ce module se contente d'habiller en HTML le texte déjà généré par
 ceo_agent.py / outbound_chantiers/outbound_pro_btp.py, sans rien changer à
 la façon dont l'e-mail part.
 
-ATTENTION DÉPLOIEMENT : PUBLIC_APP_URL (même variable que mail_processor.py,
-déjà utilisée pour les liens de présentation/intake) doit pointer vers un
-domaine réellement accessible depuis Internet — jamais un alias docker
-interne ni 127.0.0.1 — sinon le pixel et les liens seront cassés pour le
-destinataire.
+ATTENTION DÉPLOIEMENT : l'URL utilisée est récupérée dynamiquement (voir
+ngrok_url.obtenir_url_publique) — l'URL ngrok active si l'agent ngrok tourne,
+sinon PUBLIC_APP_URL (même variable que mail_processor.py, déjà utilisée pour
+les liens de présentation/intake) en repli. Dans tous les cas, l'URL
+effectivement utilisée doit rester réellement accessible depuis Internet —
+jamais un alias docker interne ni 127.0.0.1 — sinon le pixel et les liens
+seront cassés pour le destinataire.
 
 La fiabilité du pixel d'ouverture a une limite connue et non contournable :
 certains clients mail (ex: proxy images de Gmail) mettent l'image en cache
@@ -26,6 +28,8 @@ import uuid
 from urllib.parse import quote
 
 import requests
+
+from ngrok_url import obtenir_url_publique
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [TRACKING] %(message)s")
 log = logging.getLogger(__name__)
@@ -80,19 +84,21 @@ def habiller_html_avec_tracking(corps_texte: str, tracking_id: str) -> str:
     équivalent : les URLs présentes dans le texte deviennent des liens
     cliquables redirigés via /track/click, et un pixel invisible 1x1 est
     ajouté en fin de corps pour détecter l'ouverture."""
+    url_publique = obtenir_url_publique(PUBLIC_APP_URL)
+
     morceaux: list[str] = []
     dernier_index = 0
     for match in MOTIF_URL.finditer(corps_texte):
         morceaux.append(html.escape(corps_texte[dernier_index:match.start()]))
         url_originale = match.group(0)
-        url_suivie = f"{PUBLIC_APP_URL}/track/click/{tracking_id}?url={quote(url_originale, safe='')}"
+        url_suivie = f"{url_publique}/track/click/{tracking_id}?url={quote(url_originale, safe='')}"
         morceaux.append(f'<a href="{html.escape(url_suivie)}">{html.escape(url_originale)}</a>')
         dernier_index = match.end()
     morceaux.append(html.escape(corps_texte[dernier_index:]))
 
     corps_html = "".join(morceaux).replace("\n", "<br>\n")
     pixel = (
-        f'<img src="{PUBLIC_APP_URL}/track/open/{tracking_id}.png" '
+        f'<img src="{url_publique}/track/open/{tracking_id}.png" '
         f'width="1" height="1" alt="" style="display:none">'
     )
     return f'<html><body style="font-family:sans-serif;">{corps_html}{pixel}</body></html>'

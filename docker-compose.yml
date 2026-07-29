@@ -5,7 +5,10 @@ services:
       context: .
       dockerfile: api/Dockerfile
     ports:
-      - "8000:8000"
+      # Bindé sur 127.0.0.1 uniquement : pas d'accès direct en HTTP nu depuis
+      # Internet, seul Caddy (reverse proxy HTTPS, réseau interne Docker) et
+      # l'hôte lui-même (debug local) peuvent l'atteindre.
+      - "127.0.0.1:8000:8000"
     env_file: .env
     # Toute la racine du projet est montée (et non seulement ./api) car
     # main.py importe ceo_agent.py et lance lead_worker.py / scraper_batiment.py
@@ -13,7 +16,16 @@ services:
     volumes:
       - .:/app
     working_dir: /app
-    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # --proxy-headers + --forwarded-allow-ips="*" : nécessaire derrière le
+    # reverse proxy Caddy (voir service "caddy" ci-dessous) pour qu'uvicorn
+    # interprète correctement X-Forwarded-Proto/X-Forwarded-For (IP client
+    # réelle dans les logs, détection HTTPS correcte) au lieu de voir toutes
+    # les requêtes comme venant en HTTP depuis l'IP interne de Caddy. Sans
+    # danger ici : seul le réseau Docker interne (Caddy) parle à ce port.
+    command: [
+      "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000",
+      "--proxy-headers", "--forwarded-allow-ips=*",
+    ]
     # Surcharge OLLAMA_HOST de .env (http://localhost:11434, valable pour un
     # script lancé sur l'hôte) : à l'intérieur du conteneur, "localhost" désigne
     # le conteneur lui-même. Les tâches de fond (cron, lead_worker.py lancé en
@@ -37,8 +49,13 @@ services:
     image: ollama/ollama:latest
     environment:
       - OLLAMA_HOST=0.0.0.0
-    ports:
-      - "11435:11434"
+    # Pas de "ports:" ici volontairement : Ollama n'a AUCUNE authentification
+    # native — un accès public équivaudrait à donner un LLM gratuit à
+    # n'importe qui sur Internet. Seul le réseau Docker interne (alias
+    # "ai_ollama", utilisé par le service api) doit pouvoir l'atteindre.
+    # Pour un accès debug ponctuel depuis l'hôte : `docker compose exec
+    # ai_ollama ollama ...`, ou ajouter temporairement
+    # "127.0.0.1:11435:11434" ici.
     volumes:
       - ollama_data:/root/.ollama
     dns:
@@ -56,7 +73,9 @@ services:
     container_name: ai_dashboard
     build: ./dashboard
     ports:
-      - "8501:8501"
+      # Bindé sur 127.0.0.1 : accessible uniquement via Caddy (HTTPS) ou
+      # l'hôte lui-même, jamais en HTTP nu depuis Internet.
+      - "127.0.0.1:8501:8501"
     env_file: .env
     # Alias réseau docker de l'API (et non localhost:8000, valable seulement
     # pour un accès depuis l'hôte) ; API_SECRET_KEY est lue depuis .env par
@@ -86,7 +105,9 @@ services:
     container_name: ai_n8n
     image: n8nio/n8n:latest
     ports:
-      - "5678:5678"
+      # Bindé sur 127.0.0.1 : le Basic Auth de n8n ne doit jamais circuler
+      # en clair sur Internet — seul Caddy (HTTPS) ou l'hôte y accèdent.
+      - "127.0.0.1:5678:5678"
     env_file: .env
     environment:
       - N8N_BASIC_AUTH_ACTIVE=true

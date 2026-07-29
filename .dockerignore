@@ -1,0 +1,25 @@
+# Contexte de build de l'image api (docker-compose.yml : build.context = ".")
+# — sans ce fichier, "COPY . ." embarque TOUT dans l'image, y compris .env
+# (secrets en clair) et .git/ (historique complet). Ne jamais retirer .env
+# de cette liste.
+
+.env
+.env.*
+!.env.example
+
+.git/
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+*.log
+
+# Site vitrine statique, déployé séparément sur Netlify (voir netlify.toml) —
+# aucune dépendance du conteneur api dessus.
+landing/
+
+# Artefacts locaux qui n'ont pas leur place dans une image reconstruite à
+# partir du dépôt.
+test_install/
+leads.json.bak
