@@ -10,15 +10,15 @@ suivi et les campagnes d'envoi.
 import pandas as pd
 import streamlit as st
 
-from api_client import (
-    ApiError,
+import process_runner
+from common import afficher_suivi, executer_avec_spinner, safe_call
+from data_access import (
+    DataAccessError,
     creer_ou_modifier_campagne,
     dupliquer_campagne,
     get_campagnes,
     renommer_campagne,
-    trigger_agent_action,
 )
-from common import afficher_suivi, demarrer_suivi, executer_avec_spinner, safe_call
 
 st.title("🔍 Sourcing / Scraping")
 st.caption("Recherche de futurs clients — configuration des campagnes, lancement et ciblage.")
@@ -35,25 +35,21 @@ col1, col2 = st.columns(2)
 with col1:
     st.caption("⏱️ Estimation : environ 1 à 2 minutes selon le nombre de nouvelles entreprises détectées.")
     if st.button("🕸️ Lancer le scraping", use_container_width=True):
-        _, err = executer_avec_spinner("Déclenchement du scraping...", trigger_agent_action, "scraping")
+        _, err = executer_avec_spinner("Déclenchement du scraping...", process_runner.lancer_scraping)
         if err:
             st.error(err)
-        else:
-            demarrer_suivi("scraping")
 with col2:
     st.caption("⏱️ Estimation : environ 1 à 3 minutes selon le nombre de leads à traiter (un appel IA par lead).")
     if st.button("🤖 Traitement IA des leads", use_container_width=True):
-        _, err = executer_avec_spinner("Déclenchement du traitement IA...", trigger_agent_action, "leads")
+        _, err = executer_avec_spinner("Déclenchement du traitement IA...", process_runner.lancer_leads)
         if err:
             st.error(err)
-        else:
-            demarrer_suivi("leads")
 
 # En dehors des blocs `if st.button(...)` : ces deux appels doivent rester
 # actifs après un rerun déclenché par autre chose que le clic initial (ex:
 # le bouton "Vérifier l'avancement" d'afficher_suivi elle-même) — voir
-# common.py::afficher_suivi. Ne s'affichent que si demarrer_suivi() a été
-# appelé plus haut pour cette action (aucun effet sinon).
+# common.py::afficher_suivi. Ne s'affichent que si une tâche a bien été
+# lancée plus haut pour cette action (aucun effet sinon).
 afficher_suivi("scraping", estimation_secondes=90, libelle="Scraping des artisans")
 afficher_suivi("leads", estimation_secondes=120, libelle="Traitement IA des leads")
 
@@ -279,7 +275,7 @@ else:
                     try:
                         with st.spinner("Renommage de la campagne..."):
                             renommer_campagne(brouillon_a_renommer, nouveau_nom_renommage.strip())
-                    except ApiError as e:
+                    except DataAccessError as e:
                         st.error(str(e))
                     else:
                         st.success(
@@ -342,20 +338,16 @@ else:
         if not communes_choisies or not types_choisis:
             st.warning("Sélectionne au moins une commune et un type d'acteur avant de lancer la recherche.")
         else:
-            options_ciblage = {"campagne": campagne_active}
-            if set(communes_choisies) != set(communes_dispo):
-                options_ciblage["communes"] = communes_choisies
-            if set(types_choisis) != set(types_dispo_cles):
-                options_ciblage["types_acteur"] = types_choisis
+            communes_override = communes_choisies if set(communes_choisies) != set(communes_dispo) else None
+            types_override = types_choisis if set(types_choisis) != set(types_dispo_cles) else None
 
             _, err = executer_avec_spinner(
                 "Déclenchement de la recherche de leads B2B...",
-                trigger_agent_action, "pipeline_pro", options_ciblage,
+                process_runner.lancer_pipeline_b2b, "pipeline_pro", campagne_active, communes_override, types_override,
             )
             if err:
                 st.error(err)
             else:
-                demarrer_suivi("pipeline_pro", campagne=campagne_active)
                 st.info("Va sur l'interface « Gestion & Réponse » pour consulter les résultats en détail.")
 
     afficher_suivi(
@@ -370,25 +362,23 @@ else:
     st.caption(
         "Enchaîne automatiquement : sourcing → enrichissement → scoring → "
         "enregistrement des leads qualifiés en base → campagne d'e-mailing "
-        "personnalisée par IA (selon le secteur) → relances J+3/J+7. Tourne "
-        "aussi automatiquement chaque jour pour toutes les campagnes actives "
-        "(tâche planifiée côté serveur)."
+        "personnalisée par IA (selon le secteur) → relances J+3/J+7. Déclenchement "
+        "manuel uniquement (aucune tâche planifiée automatique) — à relancer "
+        "toi-même quand tu veux prospecter une campagne."
     )
     if st.button("⚡ Lancer le Pipeline Automatique complet", type="primary", use_container_width=True):
         _, err = executer_avec_spinner(
             "Déclenchement du Pipeline Automatique...",
-            trigger_agent_action, "pipeline_auto", {"campagne": campagne_active},
+            process_runner.lancer_pipeline_b2b, "pipeline_auto", campagne_active,
         )
         if err:
             st.error(err)
-        else:
-            demarrer_suivi("pipeline_auto", campagne=campagne_active)
 
     # Tâche la plus longue de l'app (jusqu'à 15 min, timeout_secondes=900) :
     # c'est justement celle où afficher_suivi() rend la main le plus souvent
     # (plafond DUREE_MAX_BLOCAGE_SECONDES par exécution) — le message de
     # complétion vient d'afficher_suivi elle-même, jamais affiché ici en dur,
-    # pour ne jamais annoncer "terminé" avant que ce soit confirmé côté API.
+    # pour ne jamais annoncer "terminé" avant que ce soit confirmé.
     afficher_suivi(
         "pipeline_auto",
         estimation_secondes=240,

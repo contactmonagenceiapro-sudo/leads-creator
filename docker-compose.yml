@@ -1,112 +1,19 @@
+# Le dashboard Streamlit (dashboard/) tourne désormais sur Streamlit
+# Community Cloud, pas dans ce docker-compose : il n'y a plus de backend
+# FastAPI ni d'Ollama conteneurisé à faire tourner ici (voir dashboard/SECRETS.md
+# pour la configuration des secrets côté Streamlit Cloud, et data_access.py /
+# process_runner.py pour comment le dashboard accède à Supabase et lance les
+# scripts de fond directement, sans passer par une API séparée).
+#
+# Ce fichier ne sert donc plus qu'à faire tourner n8n (automatisation de
+# contenu, sans rapport avec la migration ci-dessus) — à nettoyer séparément
+# si n8n n'est plus utilisé.
+
 services:
-  api:
-    container_name: ai_api
-    build:
-      context: .
-      dockerfile: api/Dockerfile
-    ports:
-      # Bindé sur 127.0.0.1 uniquement : pas d'accès direct en HTTP nu depuis
-      # Internet, seul Caddy (reverse proxy HTTPS, réseau interne Docker) et
-      # l'hôte lui-même (debug local) peuvent l'atteindre.
-      - "127.0.0.1:8000:8000"
-    env_file: .env
-    # Toute la racine du projet est montée (et non seulement ./api) car
-    # main.py importe ceo_agent.py et lance lead_worker.py / scraper_batiment.py
-    # en subprocess depuis /app : ces fichiers vivent à la racine du dépôt.
-    volumes:
-      - .:/app
-    working_dir: /app
-    # --proxy-headers + --forwarded-allow-ips="*" : nécessaire derrière le
-    # reverse proxy Caddy (voir service "caddy" ci-dessous) pour qu'uvicorn
-    # interprète correctement X-Forwarded-Proto/X-Forwarded-For (IP client
-    # réelle dans les logs, détection HTTPS correcte) au lieu de voir toutes
-    # les requêtes comme venant en HTTP depuis l'IP interne de Caddy. Sans
-    # danger ici : seul le réseau Docker interne (Caddy) parle à ce port.
-    command: [
-      "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000",
-      "--proxy-headers", "--forwarded-allow-ips=*",
-    ]
-    # Surcharge OLLAMA_HOST de .env (http://localhost:11434, valable pour un
-    # script lancé sur l'hôte) : à l'intérieur du conteneur, "localhost" désigne
-    # le conteneur lui-même. Les tâches de fond (cron, lead_worker.py lancé en
-    # subprocess) doivent utiliser l'alias réseau docker du service ai_ollama.
-    environment:
-      - OLLAMA_HOST=http://ai_ollama:11434
-    depends_on:
-      ai_ollama:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      # Pas de curl dans l'image python:slim : on utilise urllib (stdlib).
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=3)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-
-  ai_ollama:
-    container_name: ai_ollama
-    image: ollama/ollama:latest
-    environment:
-      - OLLAMA_HOST=0.0.0.0
-    # Pas de "ports:" ici volontairement : Ollama n'a AUCUNE authentification
-    # native — un accès public équivaudrait à donner un LLM gratuit à
-    # n'importe qui sur Internet. Seul le réseau Docker interne (alias
-    # "ai_ollama", utilisé par le service api) doit pouvoir l'atteindre.
-    # Pour un accès debug ponctuel depuis l'hôte : `docker compose exec
-    # ai_ollama ollama ...`, ou ajouter temporairement
-    # "127.0.0.1:11435:11434" ici.
-    volumes:
-      - ollama_data:/root/.ollama
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 20s
-
-  dashboard:
-    container_name: ai_dashboard
-    build: ./dashboard
-    ports:
-      # Bindé sur 127.0.0.1 : accessible uniquement via Caddy (HTTPS) ou
-      # l'hôte lui-même, jamais en HTTP nu depuis Internet.
-      - "127.0.0.1:8501:8501"
-    env_file: .env
-    # Alias réseau docker de l'API (et non localhost:8000, valable seulement
-    # pour un accès depuis l'hôte) ; API_SECRET_KEY est lue depuis .env par
-    # dashboard/api_client.py pour le header X-API-Key.
-    environment:
-      - AI_COMPANY_API_URL=http://ai_api:8000
-    # Volume dédié à l'état local du dashboard (ex: configuration de
-    # l'agence enregistrée depuis "Administration & Contrats", voir
-    # app_pages/administration_contrats.py::CONFIG_PATH) — sans lui, ces
-    # réglages seraient perdus à chaque rebuild de l'image (COPY . . fige
-    # le contenu au build, il n'y a pas de bind-mount du code comme pour
-    # ai_api).
-    volumes:
-      - dashboard_data:/app/data
-    depends_on:
-      api:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=3)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-
   n8n:
     container_name: ai_n8n
     image: n8nio/n8n:latest
     ports:
-      # Bindé sur 127.0.0.1 : le Basic Auth de n8n ne doit jamais circuler
-      # en clair sur Internet — seul Caddy (HTTPS) ou l'hôte y accèdent.
       - "127.0.0.1:5678:5678"
     env_file: .env
     environment:
@@ -118,6 +25,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  ollama_data:
   n8n_data:
-  dashboard_data:

@@ -26,6 +26,7 @@ Usage :
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,8 +34,6 @@ import requests
 
 from alertes import alerter_discord, envoyer_alerte_email
 from outbound_chantiers.config import (
-    API_SECRET_KEY,
-    API_URL,
     CLIENT_FINAL,
     POIDS_ACTIVITE_CHANTIERS,
     POIDS_TYPE_ACTEUR,
@@ -44,6 +43,9 @@ from outbound_chantiers.signal_activite_chantiers import recuperer_activite_par_
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SCORING] %(message)s")
 log = logging.getLogger(__name__)
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 FICHIER_ENTREE = Path(__file__).parent / "acteurs_pro_enrichis.json"
 
@@ -79,10 +81,15 @@ def publier_en_base(acteur: dict) -> bool:
     }
     try:
         reponse = requests.post(
-            f"{API_URL}/sb_insert",
-            params={"table": "leads_professionnels", "on_conflict": "client_final,nom_entreprise"},
+            f"{SUPABASE_URL}/rest/v1/leads_professionnels",
+            params={"on_conflict": "client_final,nom_entreprise"},
             json=payload,
-            headers={"X-API-Key": API_SECRET_KEY},
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation,resolution=merge-duplicates",
+            },
             timeout=10,
         )
         if reponse.status_code >= 400:
@@ -100,13 +107,16 @@ def _noms_deja_en_base(client_final: str) -> set[str]:
     ultra-qualifié déjà signalé lors d'un run précédent."""
     try:
         reponse = requests.get(
-            f"{API_URL}/leads_pro",
-            params={"client_final": client_final},
-            headers={"X-API-Key": API_SECRET_KEY},
+            f"{SUPABASE_URL}/rest/v1/leads_professionnels",
+            params={"select": "nom_entreprise", "client_final": f"eq.{client_final}"},
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            },
             timeout=10,
         )
         if reponse.status_code == 200:
-            return {a["nom_entreprise"] for a in reponse.json().get("leads_pro", [])}
+            return {a["nom_entreprise"] for a in reponse.json()}
     except requests.exceptions.RequestException as e:
         log.error(f"Impossible de vérifier les acteurs déjà en base (alerte lead qualifié ignorée) : {e}")
     return set()

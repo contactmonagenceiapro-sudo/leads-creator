@@ -46,9 +46,6 @@ load_dotenv()
 
 LEADS_FILE = Path(__file__).resolve().parent / "leads.json"
 
-API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
-API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
-
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
@@ -230,12 +227,12 @@ def deja_contacte(company_name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# PERSISTANCE (upsert Supabase via l'API interne)
+# PERSISTANCE (upsert Supabase direct)
 # ---------------------------------------------------------------------------
 
 def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool:
-    """Upsert le lead dans Supabase via l'API interne, avec anti-doublon sur
-    l'entreprise (on_conflict=company + resolution=merge-duplicates côté API).
+    """Upsert le lead dans Supabase directement, avec anti-doublon sur
+    l'entreprise (on_conflict=company + resolution=merge-duplicates).
 
     Anciennement dédupliqué par email : depuis que scraper_batiment.py et
     email_enricher.py peuvent légitimement laisser email=None (aucun domaine
@@ -275,33 +272,28 @@ def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool:
     else:
         db_payload["status"] = "a_contacter"
 
-    headers = {"X-API-Key": API_SECRET_KEY} if API_SECRET_KEY else {}
-
     try:
         reponse = requests.post(
-            f"{API_URL}/sb_insert",
-            params={"table": "leads", "on_conflict": "company"},
+            f"{SUPABASE_URL}/rest/v1/leads",
+            params={"on_conflict": "company"},
             json=db_payload,
-            headers=headers,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation,resolution=merge-duplicates",
+            },
             timeout=15,
         )
-        reponse.raise_for_status()
     except requests.exceptions.RequestException as erreur:
-        log.error(f"Échec réseau vers l'API ({API_URL}) pour {lead['company_name']} : {erreur}")
+        log.error(f"Échec réseau Supabase pour {lead['company_name']} : {erreur}")
         return False
 
-    try:
-        resultat = reponse.json()
-    except ValueError:
-        log.error(f"Réponse API non-JSON pour {lead['company_name']}")
-        return False
-
-    status_code = resultat.get("status_code")
-    if status_code in (200, 201):
-        log.info(f"Lead '{lead['company_name']}' upserté avec succès dans Supabase (code {status_code})")
+    if reponse.status_code in (200, 201):
+        log.info(f"Lead '{lead['company_name']}' upserté avec succès dans Supabase (code {reponse.status_code})")
         return True
 
-    log.error(f"Échec Supabase pour '{lead['company_name']}' (code {status_code}) : {resultat.get('response')}")
+    log.error(f"Échec Supabase pour '{lead['company_name']}' (code {reponse.status_code}) : {reponse.text}")
     return False
 
 
@@ -312,9 +304,6 @@ def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool:
 def process_pipeline() -> ResultatTraitement:
     configurer_logging()
     log.info("=== Démarrage du Lead Worker ===")
-
-    if not API_SECRET_KEY:
-        log.warning("API_SECRET_KEY absente de .env : les appels à l'API échoueront si elle est protégée")
 
     leads = charger_leads()
     resultat = ResultatTraitement(total=len(leads))

@@ -1,5 +1,14 @@
+# Utilisé par Streamlit Community Cloud pour déployer app.py. Doit couvrir
+# TOUTES les dépendances : celles du dashboard lui-même ET celles des
+# scripts racine qu'il lance en subprocess (même environnement Python,
+# voir dashboard/process_runner.py) — supabase, beautifulsoup4 (scraper),
+# stripe/bcrypt (contrats_signature.py, auth.py).
 streamlit
 pandas
 requests
 python-dotenv
 fpdf2
+supabase
+beautifulsoup4
+stripe
+bcrypt

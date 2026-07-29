@@ -1,50 +1,87 @@
 """
-Dashboard client pour ai-company — Portail Admin & Client.
+Dashboard ai-company — Portail Admin & Client, 100% Streamlit (plus de
+backend FastAPI séparé : accès direct à Supabase, scripts de fond lancés en
+subprocess depuis ce process — voir data_access.py / process_runner.py).
 
 Lancement :
     streamlit run app.py
 
-Configuration :
-    Variable d'environnement AI_COMPANY_API_URL, ou à défaut API_URL
-    (défaut http://localhost:8000 si aucune des deux n'est définie —
-    voir api_client.py::_resoudre_api_base_url)
-
 Structure (multi-pages) :
-    app.py                        -> point d'entrée : connexion + navigation par rôle
-    auth.py                       -> écran de login + session_state
+    app.py                        -> point d'entrée : routing public + connexion + navigation
+    auth.py                       -> écran de login + session_state (bcrypt direct, plus de JWT)
+    pages_publiques.py            -> [Public, sans connexion] présentation / intake / devis
     app_pages/sourcing.py           -> [Admin] Sourcing / Scraping
     app_pages/gestion_clients.py    -> [Admin] Gestion & Réponse aux clients
     app_pages/administration_contrats.py -> [Admin] Administration & Contrats
+    app_pages/deliverabilite.py     -> [Admin] Délivrabilité
     app_pages/portail_client.py     -> [Client] Vue restreinte à ses propres campagnes
-                                        (également accessible à l'admin, en aperçu/test,
-                                        via un sélecteur de campagne — voir portail_client.py)
+                                        (également accessible à l'admin, en aperçu/test)
 
 Le dossier s'appelle "app_pages/" et NON "pages/" : Streamlit détecte
 automatiquement tout dossier littéralement nommé "pages/" à côté du script
 d'entrée et construit SA PROPRE navigation en plus de celle définie ici via
-st.navigation()/st.Page() — les deux mécanismes entrent alors en conflit
-("st.navigation was called in an app with a pages/ directory", comportement
-indéterminé/reruns superflus). st.navigation() est le mécanisme voulu ici
-(navigation conditionnée par le rôle) ; le dossier est donc renommé pour ne
-plus jamais être auto-détecté.
+st.navigation()/st.Page() — les deux mécanismes entrent alors en conflit.
 
-Toute la page est bloquée par auth.exiger_connexion() tant qu'aucune session
-valide n'existe : le rôle affiché (Admin/Client) et les campagnes accessibles
-viennent uniquement du jeton JWT renvoyé par l'API au login, jamais d'un
-choix fait dans le dashboard lui-même.
+Pages PUBLIQUES (dashboard/pages_publiques.py) : accessibles via un
+paramètre d'URL dédié (?vue=presentation|intake|devis), interceptées ici
+AVANT auth.exiger_connexion() — ce sont les liens envoyés aux prospects par
+e-mail (voir mail_processor.py::envoyer_suivi_positif), qui ne doivent
+évidemment pas nécessiter de compte.
 """
+
+import os
+import sys
+from pathlib import Path
+
+# La racine du dépôt doit être sur sys.path AVANT tout autre import de ce
+# fichier (ou de tout module dashboard/ qu'il importe) : plusieurs modules
+# du dashboard importent des scripts qui vivent à la racine du dépôt, pas
+# dans dashboard/ (ceo_agent.py via contrats_signature.py, le package
+# outbound_chantiers via data_access.py) — sans cet ajout explicite, Python
+# ne les trouve pas (streamlit ne place que le dossier de app.py sur
+# sys.path, pas son parent).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import streamlit as st
 
-from api_client import API_BASE_URL, get_health
-from auth import campagnes_autorisees, deconnexion, est_admin, exiger_connexion
-from common import safe_call
+# Streamlit Cloud n'injecte les secrets configurés dans son interface QUE
+# dans st.secrets, jamais dans os.environ — mais tout le reste du projet
+# (scripts lancés en subprocess : ceo_agent.py, mail_processor.py...) lit sa
+# config via os.getenv(). Ce pont est nécessaire pour qu'un subprocess
+# hérite bien de ces valeurs (subprocess.Popen(..., env=os.environ.copy())
+# dans process_runner.py). Sans effet en dev local (st.secrets vide si aucun
+# fichier .streamlit/secrets.toml n'existe).
+try:
+    for _cle, _valeur in st.secrets.items():
+        os.environ.setdefault(_cle, str(_valeur))
+except Exception:
+    pass
 
 st.set_page_config(
     page_title="ai-company · Dashboard",
     page_icon="📊",
     layout="wide",
 )
+
+# ---------------------------------------------------------------------
+# Routing des pages PUBLIQUES — avant tout gate d'authentification.
+# ---------------------------------------------------------------------
+_vue_publique = st.query_params.get("vue")
+if _vue_publique in ("presentation", "intake", "devis"):
+    from pages_publiques import afficher_devis, afficher_intake, afficher_presentation
+
+    if _vue_publique == "presentation":
+        afficher_presentation(st.query_params.get("lead_id"))
+    elif _vue_publique == "intake":
+        afficher_intake(st.query_params.get("lead_id"))
+    else:
+        afficher_devis(st.query_params.get("slug"))
+    st.stop()
+
+
+from auth import campagnes_autorisees, deconnexion, est_admin, exiger_connexion  # noqa: E402
+from common import safe_call  # noqa: E402
+from data_access import get_health  # noqa: E402
 
 exiger_connexion()
 
@@ -55,7 +92,6 @@ exiger_connexion()
 
 with st.sidebar:
     st.title("⚙️ ai-company")
-    st.caption(f"API : `{API_BASE_URL}`")
 
     role_libelle = "🛠️ Admin" if est_admin() else "👤 Client"
     st.markdown(f"**{st.session_state.get('auth_email', '')}**  \n{role_libelle}")
@@ -88,8 +124,9 @@ with st.sidebar:
 
 
 # ---------------------------------------------------------------------
-# Navigation — dépend uniquement du rôle du jeton, jamais d'un choix
-# manuel : un compte client ne doit jamais pouvoir atteindre les pages admin.
+# Navigation — dépend uniquement du rôle du compte connecté, jamais d'un
+# choix manuel : un compte client ne doit jamais pouvoir atteindre les
+# pages admin.
 # ---------------------------------------------------------------------
 
 if est_admin():
@@ -101,9 +138,7 @@ if est_admin():
     page_deliverabilite = st.Page("app_pages/deliverabilite.py", title="Délivrabilité", icon="📶")
     # Portail Client accessible en aperçu à l'admin (choix de la campagne à
     # prévisualiser géré dans portail_client.py) — pour pouvoir tester
-    # directement depuis l'interface ce que voit un compte client, sans
-    # changer ce qu'un compte client peut lui-même voir (toujours restreint
-    # à ses seules campagnes, voir auth.py::campagnes_autorisees).
+    # directement depuis l'interface ce que voit un compte client.
     page_portail_client = st.Page("app_pages/portail_client.py", title="Portail Client (aperçu)", icon="📊")
     pg = st.navigation(
         [page_sourcing, page_gestion, page_administration, page_deliverabilite, page_portail_client]

@@ -6,11 +6,11 @@ La configuration métier (client, secteur, zone géographique, types
 d'acteurs ciblés avec leurs codes NAF et poids) n'est PLUS codée en dur
 ici : elle est gérée dans la table Supabase `campagnes`
 (sql/init_campagnes.sql), éditable depuis le dashboard, et transmise à ce
-processus par l'API au moment du déclenchement via la variable
+processus (lancé en subprocess par le dashboard Streamlit) via la variable
 d'environnement OUTBOUND_CAMPAGNE_JSON (voir
-api/main.py::_construire_env_campagne). Ce fichier ne garde qu'un repli
-pour un lancement CLI autonome (sans passer par l'API) et les réglages
-techniques génériques (cadence, identifiants de services externes).
+dashboard/process_runner.py::construire_env_campagne). Ce fichier ne garde
+qu'un repli pour un lancement CLI autonome et les réglages techniques
+génériques (cadence, identifiants de services externes).
 
 Aucun script du département (sourcing, enrichissement, scoring, envoi) ne
 doit plus référencer un secteur, une ville ou un type d'acteur en dur : ce
@@ -161,10 +161,6 @@ def plafond_envoi_du_jour(jours_ecoules: int) -> int:
         if jours_ecoules >= seuil_jours:
             plafond = valeur
     return plafond
-
-# === API interne (réutilise l'API existante : /leads_pro, /campagnes, clé partagée) ===
-API_URL = os.getenv("API_URL", "http://localhost:8000")
-API_SECRET_KEY = os.getenv("API_SECRET_KEY", "")
 
 # === Sourcing SIRENE (module 1a) — pagination et objectif de nouveauté ===
 # Nombre d'acteurs INÉDITS (jamais vus en base pour cette campagne) visés

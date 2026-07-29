@@ -33,7 +33,7 @@ from email.mime.text import MIMEText
 import requests
 
 from email_blacklist import emails_blacklistes
-from email_tracking import demarrer_tracking, habiller_html_avec_tracking
+from email_tracking import demarrer_tracking
 from outbound_chantiers.config import (
     AGENCY_NAME,
     CLIENT_FINAL,
@@ -93,9 +93,11 @@ def supabase_patch(acteur_id: str, changements: dict) -> None:
 
 
 def envoyer_email(destinataire: str, sujet: str, corps: str, lead_id: str | None = None) -> bool:
-    """Envoi SMTP Zoho inchangé. Si lead_id est fourni, une version HTML
-    trackée (pixel d'ouverture + liens redirigés, voir email_tracking.py) est
-    jointe en plus du texte brut."""
+    """Envoi SMTP Zoho en texte brut. Si lead_id est fourni, journalise
+    l'événement 'envoye' (voir email_tracking.py::demarrer_tracking) —
+    nécessaire à statut_ramp_warmup() ci-dessous pour compter les envois du
+    jour. Le pixel/liens trackés ont été retirés (dépendaient du backend
+    FastAPI supprimé)."""
     if not ZOHO_USER or not ZOHO_PASSWORD:
         log.error("Identifiants Zoho manquants — envoi annulé.")
         return False
@@ -107,8 +109,7 @@ def envoyer_email(destinataire: str, sujet: str, corps: str, lead_id: str | None
         message.attach(MIMEText(corps, "plain", "utf-8"))
 
         if lead_id:
-            tracking_id = demarrer_tracking("lead_professionnel", lead_id, client_final=CLIENT_FINAL)
-            message.attach(MIMEText(habiller_html_avec_tracking(corps, tracking_id), "html", "utf-8"))
+            demarrer_tracking("lead_professionnel", lead_id, client_final=CLIENT_FINAL)
 
         with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as serveur:
             serveur.login(ZOHO_USER, ZOHO_PASSWORD)

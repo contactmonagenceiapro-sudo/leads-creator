@@ -13,7 +13,10 @@ from urllib.parse import quote
 import pandas as pd
 import streamlit as st
 
-from api_client import (
+import process_runner
+from common import afficher_suivi, executer_avec_spinner, safe_call, to_dataframe
+from contrats_signature import creer_et_envoyer_lien_paiement
+from data_access import (
     creer_remboursement,
     enrichir_lead_pro,
     executer_remboursement,
@@ -21,15 +24,14 @@ from api_client import (
     get_campagnes,
     get_contents,
     get_contracts,
-    get_email_events,
     get_leads,
     get_leads_pro,
     get_remboursements,
     get_stats,
+    marquer_contrat_paye,
+    marquer_contrat_signe,
     signaler_lead_pro_invalide,
-    trigger_agent_action,
 )
-from common import afficher_suivi, demarrer_suivi, executer_avec_spinner, safe_call, to_dataframe
 
 
 def construire_recap_leads_pro(leads_coches: pd.DataFrame, email_destinataire: str, campagne: str | None) -> str:
@@ -175,42 +177,6 @@ with tab_pro:
                     "depuis l'interface « Sourcing / Scraping »."
                 )
             else:
-                # --- Engagement e-mail (ouvertures/clics), lié à chaque lead ---
-                # Un appel par type d'événement plutôt qu'un seul mélangé : le
-                # plafond de 200 côté API (/email_events) s'applique alors par
-                # type (200 envois + 200 ouvertures + 200 clics), pas partagé
-                # entre les trois — sinon une campagne active verrait ses
-                # ouvertures anciennes évincées par les envois récents.
-                evts_envoye, _ = safe_call(get_email_events, "envoye", campagne_selectionnee, 200)
-                evts_ouvert, _ = safe_call(get_email_events, "ouvert", campagne_selectionnee, 200)
-                evts_clique, _ = safe_call(get_email_events, "clique", campagne_selectionnee, 200)
-
-                ids_envoyes = {e["lead_id"] for e in (evts_envoye or {}).get("email_events", [])}
-                liste_ids_ouverts = [e["lead_id"] for e in (evts_ouvert or {}).get("email_events", [])]
-                ids_ouverts = set(liste_ids_ouverts)
-                ids_cliques = {e["lead_id"] for e in (evts_clique or {}).get("email_events", [])}
-                nb_ouvertures_par_lead = pd.Series(liste_ids_ouverts).value_counts().to_dict()
-
-                if ids_envoyes:
-                    taux_ouverture = len(ids_ouverts & ids_envoyes) / len(ids_envoyes)
-                    taux_clic = len(ids_cliques & ids_envoyes) / len(ids_envoyes)
-                    col_m1, col_m2, col_m3 = st.columns(3)
-                    col_m1.metric("E-mails envoyés", len(ids_envoyes))
-                    col_m2.metric("Taux d'ouverture", f"{taux_ouverture:.0%}")
-                    col_m3.metric("Taux de clic", f"{taux_clic:.0%}")
-                    st.caption(
-                        "Taux calculés sur les 200 derniers événements de chaque type pour cette "
-                        "campagne (pixel invisible pour les ouvertures, redirection trackée pour "
-                        "les clics — voir email_tracking.py)."
-                    )
-
-                if "id" in df_pro.columns:
-                    df_pro["Ouvert"] = df_pro["id"].apply(
-                        lambda i: "👁️ Oui" if i in ids_ouverts else ("📤 Envoyé, non ouvert" if i in ids_envoyes else "—")
-                    )
-                    df_pro["Nb ouvertures"] = df_pro["id"].apply(lambda i: nb_ouvertures_par_lead.get(i, 0))
-                    df_pro["Cliqué"] = df_pro["id"].apply(lambda i: "🖱️ Oui" if i in ids_cliques else "—")
-
                 col_f1, col_f2 = st.columns(2)
                 with col_f1:
                     types_dispo = sorted(df_pro["type_acteur"].dropna().unique()) if "type_acteur" in df_pro else []
@@ -228,7 +194,7 @@ with tab_pro:
                 colonnes_utiles = [c for c in [
                     "nom_entreprise", "type_acteur", "commune", "score_final",
                     "statut", "email", "telephone", "site_web", "linkedin_url",
-                    "enrichissement_statut", "Ouvert", "Nb ouvertures", "Cliqué",
+                    "enrichissement_statut",
                 ] if c in df_filtre.columns]
 
                 df_affiche = df_filtre[colonnes_utiles]
@@ -364,21 +330,21 @@ st.subheader("📬 Campagnes & relances")
 col_a, col_b, col_c, col_d = st.columns(4)
 with col_a:
     if st.button("📨 Vérifier les réponses (IMAP)", use_container_width=True):
-        _, err = executer_avec_spinner("Vérification en cours...", trigger_agent_action, "mail_check")
+        _, err = executer_avec_spinner("Vérification en cours...", process_runner.lancer_mail_check)
         if err:
             st.error(err)
         else:
             st.success("Vérification des réponses lancée.")
 with col_b:
     if st.button("🚀 Campagne + rapport — artisans", use_container_width=True):
-        _, err = executer_avec_spinner("Déclenchement en cours...", trigger_agent_action, "ceo_report")
+        _, err = executer_avec_spinner("Déclenchement en cours...", process_runner.lancer_ceo_report)
         if err:
             st.error(err)
         else:
             st.success("Campagne d'e-mails + rapport CEO lancés.")
 with col_c:
     if st.button("🔁 Relancer les sans-réponse — artisans", use_container_width=True):
-        _, err = executer_avec_spinner("Déclenchement en cours...", trigger_agent_action, "relance")
+        _, err = executer_avec_spinner("Déclenchement en cours...", process_runner.lancer_relance)
         if err:
             st.error(err)
         else:
@@ -390,12 +356,10 @@ with col_d:
     if st.button(libelle_bouton_b2b, use_container_width=True, disabled=not campagne_selectionnee):
         _, err = executer_avec_spinner(
             "Déclenchement de la campagne B2B...",
-            trigger_agent_action, "envoi_pro", {"campagne": campagne_selectionnee},
+            process_runner.lancer_pipeline_b2b, "envoi_pro", campagne_selectionnee,
         )
         if err:
             st.error(err)
-        else:
-            demarrer_suivi("envoi_pro", campagne=campagne_selectionnee)
 
 # En dehors du `if st.button(...)` (voir sourcing.py pour la même logique) :
 # reste actif après un rerun déclenché par le bouton "Vérifier l'avancement"
@@ -560,6 +524,7 @@ with tab_remb_b2b:
                                 signaler_lead_pro_invalide,
                                 options_leads[choix_lead],
                                 motif_invalidite.strip(),
+                                True,  # est_admin : montant libre, validation immédiate
                                 int(montant_avoir_euros * 100),
                             )
                             if err:
@@ -608,36 +573,79 @@ st.divider()
 
 
 # ---------------------------------------------------------------------
-# 7. Activité e-mail (ouvertures / clics)
+# 7. Contrats — confirmation manuelle (signature Yousign / paiement Stripe)
 # ---------------------------------------------------------------------
 #
-# Le "temps réel" repose sur l'alerte Discord (déclenchée côté API dès
-# l'événement) — cette section montre l'historique au moment où la page est
-# chargée/rafraîchie, Streamlit n'ayant pas de mécanisme de mise à jour
-# poussée depuis le serveur.
+# Remplace les anciens webhooks Yousign/Stripe (supprimés avec le backend
+# FastAPI) : l'admin vérifie lui-même dans Yousign/Stripe, puis confirme ici.
 
-st.subheader("🔔 Activité e-mail récente")
+st.subheader("💼 Contrats — signature & paiement")
 st.caption(
-    "Ouvertures et clics détectés sur les e-mails envoyés (pixel + liens suivis). "
-    "Une alerte Discord est envoyée en temps réel à la première ouverture et à chaque clic."
+    "Plus de webhook automatique : vérifie toi-même dans Yousign qu'un contrat "
+    "est signé, ou dans Stripe qu'un paiement est passé, puis confirme ici."
 )
 
-evenements_data, evenements_error = safe_call(
-    get_email_events, None, campagne_selectionnee if campagne_selectionnee else None, 30
-)
-if evenements_error:
-    st.error(evenements_error)
+contrats_liste_data, contrats_liste_error = safe_call(get_contracts)
+if contrats_liste_error:
+    st.error(contrats_liste_error)
 else:
-    liste_evenements = (evenements_data or {}).get("email_events", []) if evenements_data else []
-    if not liste_evenements:
-        st.info("Aucun événement pour le moment.")
+    liste_contrats_tous = (contrats_liste_data or {}).get("contracts", []) if contrats_liste_data else []
+    if not liste_contrats_tous:
+        st.info("Aucun contrat pour le moment.")
     else:
-        EMOJI_EVENEMENT = {"envoye": "📤", "ouvert": "👁️", "clique": "🖱️"}
-        for evt in liste_evenements:
-            emoji = EMOJI_EVENEMENT.get(evt.get("type_evenement"), "•")
-            horodatage = (evt.get("created_at") or "")[:16].replace("T", " ")
-            segment = "artisan" if evt.get("lead_type") == "lead_artisan" else "B2B"
-            client = evt.get("client_final")
-            suffixe_client = f" — {client}" if client else ""
-            suffixe_url = f" → {evt['url_cible']}" if evt.get("url_cible") else ""
-            st.caption(f"{emoji} `{horodatage}` — {evt.get('type_evenement')} ({segment}){suffixe_client}{suffixe_url}")
+        for c in sorted(liste_contrats_tous, key=lambda x: x.get("created_at", ""), reverse=True):
+            entreprise = (c.get("leads") or {}).get("company", "—")
+            with st.container(border=True):
+                col_info, col_signe, col_paye = st.columns([2, 1, 1])
+                with col_info:
+                    st.markdown(
+                        f"**{entreprise}** — {(c.get('montant_centimes') or 0) / 100:.2f} € — "
+                        f"signature : `{c.get('yousign_status', '?')}` — "
+                        f"paiement : `{c.get('payment_status') or 'en_attente'}`"
+                    )
+                    st.caption(f"Créé le {c.get('created_at', '')[:16].replace('T', ' ')}")
+                with col_signe:
+                    if c.get("yousign_status") != "signe":
+                        if st.button("✅ Marquer signé", key=f"signe_{c['id']}", use_container_width=True):
+                            _, err = executer_avec_spinner("Mise à jour...", marquer_contrat_signe, c["id"])
+                            if err:
+                                st.error(err)
+                            else:
+                                st.success("Contrat marqué signé.")
+                                st.rerun()
+                    else:
+                        st.success("Signé ✅")
+                with col_paye:
+                    if c.get("payment_status") != "paye":
+                        if c.get("yousign_status") == "signe":
+                            with st.popover("💰 Marquer payé", use_container_width=True):
+                                st.caption(
+                                    "Renseigne le payment_intent_id affiché dans le dashboard "
+                                    "Stripe (indispensable pour un remboursement futur)."
+                                )
+                                pi_id = st.text_input("Stripe payment_intent_id", key=f"pi_{c['id']}")
+                                if st.button("Confirmer le paiement", key=f"confirmer_paye_{c['id']}"):
+                                    _, err = executer_avec_spinner(
+                                        "Mise à jour...", marquer_contrat_paye, c["id"], pi_id,
+                                    )
+                                    if err:
+                                        st.error(err)
+                                    else:
+                                        st.success("Contrat marqué payé.")
+                                        st.rerun()
+                        else:
+                            st.caption("Signez d'abord le contrat.")
+                    else:
+                        st.success("Payé ✅")
+
+                if c.get("yousign_status") == "signe" and not c.get("stripe_payment_link_id"):
+                    if st.button("🔗 Générer et envoyer le lien de paiement", key=f"lien_paiement_{c['id']}"):
+                        resultat, err = executer_avec_spinner(
+                            "Génération du lien de paiement Stripe...",
+                            creer_et_envoyer_lien_paiement, c["lead_id"], c["id"],
+                        )
+                        if err or not resultat:
+                            st.error(err or "Échec de la génération du lien de paiement (voir logs).")
+                        else:
+                            st.success("Lien de paiement généré et envoyé.")
+                            st.rerun()

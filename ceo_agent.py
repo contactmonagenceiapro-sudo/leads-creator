@@ -12,12 +12,10 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from email_blacklist import emails_blacklistes
-from email_tracking import demarrer_tracking, habiller_html_avec_tracking
 
 load_dotenv()
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-API_URL = os.getenv("API_URL", "http://localhost:8000")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -29,15 +27,6 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_MAIN", "qwen2.5:7b")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [CEO] %(message)s")
 log = logging.getLogger(__name__)
-
-
-def get_stats() -> dict:
-    try:
-        res = requests.get(f"{API_URL}/stats", timeout=10)
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        log.error(f"Erreur stats : {e}")
-        return {}
 
 
 SOURCES_EMAIL_VERIFIEES = ("email_verifie_site", "domaine_verifie_sans_email")
@@ -139,20 +128,15 @@ def save_report_to_supabase(rapport: str, stats: dict) -> bool:
 
 
 def send_email_prospect(to_email: str, subject: str, body: str, lead_id: str | None = None) -> bool:
-    """Envoi SMTP Zoho inchangé. Si lead_id est fourni, une version HTML
-    trackée (pixel d'ouverture + liens redirigés, voir email_tracking.py)
-    est jointe en plus du texte brut — "alternative" et non "mixed" : ce
-    sont deux représentations du MÊME contenu, pas une pièce jointe."""
+    """Envoi SMTP Zoho en texte brut. `lead_id` n'est plus utilisé pour du
+    tracking (pixel/liens redirigés retirés — dépendaient du backend FastAPI
+    supprimé) ; conservé dans la signature pour ne pas casser les appelants."""
     try:
         msg = MIMEMultipart("alternative")
         msg["From"] = ZOHO_USER
         msg["To"] = to_email
         msg["Subject"] = f"[{AGENCY_NAME}] {subject}"
         msg.attach(MIMEText(body, "plain", "utf-8"))
-
-        if lead_id:
-            tracking_id = demarrer_tracking("lead_artisan", lead_id)
-            msg.attach(MIMEText(habiller_html_avec_tracking(body, tracking_id), "html", "utf-8"))
 
         with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as s:
             s.login(ZOHO_USER, ZOHO_PASSWORD)

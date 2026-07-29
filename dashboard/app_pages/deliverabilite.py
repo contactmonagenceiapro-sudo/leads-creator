@@ -17,8 +17,8 @@ une dépendance du dashboard.
 import requests
 import streamlit as st
 
-from api_client import get_warmup_status
 from common import safe_call
+from data_access import get_warmup_status
 
 st.title("📶 Délivrabilité")
 st.caption("Montée en charge du domaine d'envoi (warmup) & enregistrements DNS SPF/DKIM/DMARC")

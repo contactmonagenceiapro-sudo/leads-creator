@@ -1,8 +1,0 @@
-# Contexte de build = ./dashboard (docker-compose.yml : build: ./dashboard).
-# Le dossier data/ n'existe qu'au runtime, monté via le volume dashboard_data
-# (voir docker-compose.yml) — jamais présent au moment du build.
-
-__pycache__/
-*.pyc
-data/
-*.log

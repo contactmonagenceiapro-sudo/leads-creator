@@ -12,14 +12,13 @@ Usage :
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 
 import requests
 
 from outbound_chantiers.config import (
-    API_SECRET_KEY,
-    API_URL,
     CLIENT_FINAL,
     COMMUNES_CIBLES,
     MAX_PAGES_PAR_SEGMENT,
@@ -30,6 +29,9 @@ from outbound_chantiers.config import (
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SOURCING-PRO] %(message)s")
 log = logging.getLogger(__name__)
+
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 FICHIER_SORTIE = Path(__file__).parent / "acteurs_pro_bruts.json"
 
@@ -96,13 +98,16 @@ def recuperer_sirens_deja_connus(client_final: str) -> set[str]:
     continue sans historique plutôt que d'échouer entièrement."""
     try:
         reponse = requests.get(
-            f"{API_URL}/leads_pro",
-            params={"client_final": client_final},
-            headers={"X-API-Key": API_SECRET_KEY},
+            f"{SUPABASE_URL}/rest/v1/leads_professionnels",
+            params={"select": "siren", "client_final": f"eq.{client_final}"},
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+            },
             timeout=10,
         )
         if reponse.status_code == 200:
-            return {a["siren"] for a in reponse.json().get("leads_pro", []) if a.get("siren")}
+            return {a["siren"] for a in reponse.json() if a.get("siren")}
         log.warning(f"Impossible de récupérer l'historique SIREN ({client_final}) : HTTP {reponse.status_code}")
     except requests.exceptions.RequestException as e:
         log.warning(f"Impossible de récupérer l'historique SIREN ({client_final}) : {e}")

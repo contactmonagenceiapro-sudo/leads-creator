@@ -1,16 +1,14 @@
+# Environnement unique pour tout le projet (scripts racine + dashboard
+# Streamlit) — c'est aussi le fichier utilisé par Streamlit Community Cloud
+# pour déployer dashboard/app.py (voir dashboard/SECRETS.md). Plus de backend
+# FastAPI séparé : tout tourne dans ce même environnement Python.
+
 # === Cœur du pipeline (scraper -> lead_worker -> ceo_agent) ===
 requests==2.32.3
 beautifulsoup4==4.14.3
 urllib3==2.2.3
 python-dotenv==1.0.0
 supabase==2.5.0
-
-# === API interne (api/main.py) ===
-fastapi==0.115.0
-uvicorn[standard]==0.30.0
-apscheduler==3.10.4
-python-multipart==0.0.9
-pydantic==2.8.2
 
 # === Dashboard (dashboard/app.py) ===
 streamlit==1.38.0
@@ -20,6 +18,5 @@ pandas==2.2.2
 stripe==10.12.0
 fpdf2==2.7.9
 
-# === Portail Client (authentification, api/main.py) ===
+# === Portail Client (authentification, dashboard/auth.py) ===
 bcrypt==4.2.0
-PyJWT==2.9.0

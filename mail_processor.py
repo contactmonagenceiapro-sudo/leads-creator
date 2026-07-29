@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from email_blacklist import blacklister_email
-from ngrok_url import obtenir_url_publique
 
 load_dotenv()
 
@@ -26,15 +25,12 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 # simplement marqués comme lus et restent dans "inbox" (comportement par
 # défaut, aucune config supplémentaire requise côté Zoho).
 ZOHO_DOSSIER_BOUNCES_TRAITES = os.getenv("ZOHO_DOSSIER_BOUNCES_TRAITES", "")
-# URL publique de repli (domaine réel, pas localhost/docker) sous laquelle
-# l'API est joignable par un artisan externe, utilisée seulement si l'agent
-# ngrok n'est pas joignable (voir ngrok_url.obtenir_url_publique, appelée
-# dans envoyer_suivi_positif — récupère l'URL ngrok ACTIVE dynamiquement pour
-# ne jamais dépendre d'une valeur figée qui change à chaque redémarrage du
-# tunnel). Tant qu'aucun domaine public n'est configuré ICI et qu'aucun
-# agent ngrok n'est joignable, les liens envoyés dans l'email de suivi ne
-# seront PAS accessibles depuis l'extérieur.
-PUBLIC_APP_URL = os.getenv("PUBLIC_APP_URL", os.getenv("API_URL", "http://127.0.0.1:8000"))
+# URL publique de l'app Streamlit (ex: https://mon-app.streamlit.app), sous
+# laquelle les pages "présentation"/"intake" (dashboard/pages_publiques.py)
+# sont joignables par un artisan externe, via des liens de la forme
+# "{PUBLIC_DASHBOARD_URL}/?vue=presentation&lead_id=..." (voir
+# envoyer_suivi_positif ci-dessous).
+PUBLIC_DASHBOARD_URL = os.getenv("PUBLIC_DASHBOARD_URL", "http://localhost:8501")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -153,11 +149,10 @@ def envoyer_suivi_positif(lead: dict) -> None:
     asynchrone + le lien du formulaire d'intake dès qu'une réponse positive
     est détectée — remplace l'étape jusqu'ici manuelle ("je lui balance...").
 
-    L'URL utilisée est récupérée dynamiquement (voir ngrok_url.obtenir_url_publique) :
-    l'URL ngrok active si l'agent ngrok tourne, sinon PUBLIC_APP_URL. Dans
-    tous les cas, elle doit rester réellement accessible depuis l'extérieur
-    (jamais http://127.0.0.1 ni un nom docker interne) pour que l'artisan
-    puisse cliquer les liens depuis son email."""
+    Les liens pointent vers l'app Streamlit (PUBLIC_DASHBOARD_URL), qui gère
+    ces deux vues publiques via un paramètre d'URL (voir
+    dashboard/app.py + dashboard/pages_publiques.py) plutôt que des routes
+    HTTP dédiées — il n'y a plus de backend API séparé."""
     from ceo_agent import send_email_prospect  # import différé : évite un cycle au chargement du module
 
     lead_id = lead.get("id")
@@ -168,9 +163,8 @@ def envoyer_suivi_positif(lead: dict) -> None:
         log.warning(f"Impossible d'envoyer le suivi automatique pour {company} : lead_id ou email manquant")
         return
 
-    url_publique = obtenir_url_publique(PUBLIC_APP_URL)
-    lien_presentation = f"{url_publique}/presentation/{lead_id}"
-    lien_intake = f"{url_publique}/intake/{lead_id}"
+    lien_presentation = f"{PUBLIC_DASHBOARD_URL}/?vue=presentation&lead_id={lead_id}"
+    lien_intake = f"{PUBLIC_DASHBOARD_URL}/?vue=intake&lead_id={lead_id}"
 
     corps = (
         f"Bonjour,\n\n"

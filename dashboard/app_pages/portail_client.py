@@ -1,33 +1,29 @@
 """
 Portail Client — vue en lecture seule, strictement limitée aux campagnes de
-l'utilisateur connecté (voir dashboard/auth.py + api/main.py::obtenir_identite_dashboard,
-qui applique le filtrage réel côté serveur — cette page ne fait que ne PAS
-proposer d'autres campagnes, elle n'est pas la seule barrière de sécurité).
+l'utilisateur connecté (voir dashboard/auth.py::campagnes_autorisees()).
 
 Seule action d'écriture autorisée : signaler un lead comme invalide. Le
-montant de l'avoir n'est jamais saisi ici (l'API l'ignore pour un compte
-client et crée la demande en 'en_attente' de revue par l'agence).
+montant de l'avoir n'est jamais saisi ici (data_access.signaler_lead_pro_invalide
+l'ignore pour un compte client et crée la demande en 'en_attente' de revue
+par l'agence — voir l'argument est_admin=False passé ci-dessous).
 
 Un compte admin accède aussi à cette page (voir dashboard/app.py), en
-aperçu/test : l'API n'impose déjà aucune restriction de campagne à un admin
-(obtenir_identite_dashboard ne filtre que le rôle 'client'), donc un
-sélecteur listant TOUTES les campagnes lui est proposé ci-dessous à la place
-de campagnes_autorisees() — sans rien changer à ce qu'un compte client peut
-lui-même voir.
+aperçu/test : un sélecteur listant TOUTES les campagnes lui est proposé
+ci-dessous à la place de campagnes_autorisees() — sans rien changer à ce
+qu'un compte client peut lui-même voir.
 """
 
 import streamlit as st
 
-from api_client import (
+from auth import campagnes_autorisees, est_admin
+from common import executer_avec_spinner, safe_call, to_dataframe
+from data_access import (
     get_campagne_stats,
     get_campagnes,
-    get_email_events,
     get_leads_pro,
     get_remboursements,
     signaler_lead_pro_invalide,
 )
-from auth import campagnes_autorisees, est_admin
-from common import executer_avec_spinner, safe_call, to_dataframe
 
 st.title("📊 Mon espace client")
 
@@ -122,7 +118,8 @@ else:
                 st.warning("Le motif est requis.")
             else:
                 _, err = executer_avec_spinner(
-                    "Envoi du signalement...", signaler_lead_pro_invalide, options_leads[choix_lead], motif.strip(),
+                    "Envoi du signalement...", signaler_lead_pro_invalide,
+                    options_leads[choix_lead], motif.strip(), False,  # est_admin=False : montant ignoré, revue humaine requise
                 )
                 if err:
                     st.error(err)
@@ -154,26 +151,3 @@ else:
             use_container_width=True,
             hide_index=True,
         )
-
-st.divider()
-
-
-# ---------------------------------------------------------------------
-# 4. Activité récente (ouvertures / clics de vos leads)
-# ---------------------------------------------------------------------
-
-st.subheader("🔔 Activité récente")
-
-evenements_data, evenements_error = safe_call(get_email_events, None, campagne_selectionnee, 20)
-if evenements_error:
-    st.error(evenements_error)
-else:
-    liste_evenements = (evenements_data or {}).get("email_events", []) if evenements_data else []
-    if not liste_evenements:
-        st.info("Aucune activité pour le moment.")
-    else:
-        EMOJI_EVENEMENT = {"envoye": "📤", "ouvert": "👁️", "clique": "🖱️"}
-        for evt in liste_evenements:
-            emoji = EMOJI_EVENEMENT.get(evt.get("type_evenement"), "•")
-            horodatage = (evt.get("created_at") or "")[:16].replace("T", " ")
-            st.caption(f"{emoji} `{horodatage}` — {evt.get('type_evenement')}")

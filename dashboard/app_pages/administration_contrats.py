@@ -31,7 +31,7 @@ import streamlit as st
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
-from api_client import get_campagnes
+from data_access import get_campagnes
 from common import safe_call
 
 # ---------------------------------------------------------------------

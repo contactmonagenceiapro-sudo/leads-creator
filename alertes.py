@@ -1,14 +1,9 @@
 """
-Alertes partagées entre les scripts du pipeline qui tournent DANS le même
-processus que l'API (importés directement par api/main.py — voir
-ceo_agent.py, mail_processor.py, relance_prospects.py) ou en subprocess
-(outbound_chantiers/).
-
-api/main.py a sa propre fonction alerter_discord() équivalente : ce module
-existe pour que les autres scripts n'aient pas besoin d'importer api.main
-(ce qui créerait un cycle, api/main.py les important déjà) et pour éviter de
-dupliquer une 4e/5e fois le même appel webhook (scraper_batiment.py et
-mail_processor.py en avaient chacun déjà une copie avant ce module).
+Alertes partagées entre les scripts du pipeline (ceo_agent.py,
+mail_processor.py, relance_prospects.py, outbound_chantiers/, dashboard/) —
+un seul module pour éviter de dupliquer le même appel webhook Discord dans
+chaque script (scraper_batiment.py et mail_processor.py en avaient chacun
+déjà une copie avant ce module).
 """
 
 import logging
