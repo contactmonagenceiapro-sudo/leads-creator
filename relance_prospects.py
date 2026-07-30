@@ -37,6 +37,7 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 from supabase import create_client
 
+from alertes import CompteZohoBloqueError
 from ceo_agent import send_email_prospect
 from email_blacklist import emails_blacklistes
 from email_validator import email_exploitable
@@ -173,7 +174,14 @@ def relancer_prospects() -> None:
 
         corps = MESSAGES_RELANCE[min(relance_count, len(MESSAGES_RELANCE) - 1)].format(company=company)
         sujet = f"Relance — {company}"
-        succes = send_email_prospect(email, sujet, corps, lead_id=lead["id"])
+        try:
+            succes = send_email_prospect(email, sujet, corps, lead_id=lead["id"])
+        except CompteZohoBloqueError:
+            # Déjà loggé + alerté dans send_email_prospect — inutile de
+            # tenter les relances restantes, elles échoueraient toutes de la
+            # même façon tant que le blocage n'est pas levé côté Zoho.
+            log.error(f"Relances interrompues après {i-1}/{len(prospects)} (compte Zoho bloqué).")
+            break
 
         nouveau_count = relance_count + 1
         maj = {

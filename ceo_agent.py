@@ -10,6 +10,7 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from supabase import create_client
 
+from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, est_blocage_compte_zoho
 from email_blacklist import emails_blacklistes
 from email_validator import email_exploitable
 
@@ -102,7 +103,13 @@ def save_report_to_supabase(rapport: str, stats: dict) -> bool:
 def send_email_prospect(to_email: str, subject: str, body: str, lead_id: str | None = None) -> bool:
     """Envoi SMTP Zoho en texte brut. `lead_id` n'est plus utilisé pour du
     tracking (pixel/liens redirigés retirés — dépendaient du backend FastAPI
-    supprimé) ; conservé dans la signature pour ne pas casser les appelants."""
+    supprimé) ; conservé dans la signature pour ne pas casser les appelants.
+
+    Lève CompteZohoBloqueError (au lieu de renvoyer False) si l'échec est un
+    blocage du COMPTE Zoho lui-même (voir alertes.py) — à catcher dans la
+    boucle appelante pour arrêter le run entier immédiatement, pas seulement
+    ce destinataire : tous les envois suivants échoueraient de la même
+    façon."""
     try:
         msg = MIMEMultipart("alternative")
         msg["From"] = ZOHO_USER
@@ -116,6 +123,9 @@ def send_email_prospect(to_email: str, subject: str, body: str, lead_id: str | N
         return True
     except Exception as e:
         log.error(f"Erreur envoi prospect vers {to_email} : {e}")
+        if est_blocage_compte_zoho(e):
+            alerter_blocage_compte_zoho(f"détecté lors d'un envoi vers {to_email}", e)
+            raise CompteZohoBloqueError(str(e)) from e
         return False
 
 
@@ -201,6 +211,12 @@ def run_ceo_analysis() -> None:
                 log.info(f"Pause de {sleep_time:.1f} secondes...")
                 time.sleep(sleep_time)
 
+        except CompteZohoBloqueError:
+            # Déjà loggé + alerté dans send_email_prospect — inutile de
+            # tenter les leads restants, ils échoueraient tous de la même
+            # façon tant que le blocage n'est pas levé côté Zoho.
+            log.error(f"Campagne interrompue après {emails_sent_count}/{total_processed} envois (compte Zoho bloqué).")
+            break
         except Exception as e:
             log.error(f"Erreur lors du traitement de {company} : {e}")
             with open("erreurs_envoi.log", "a", encoding="utf-8") as f:

@@ -32,6 +32,7 @@ from email.mime.text import MIMEText
 
 import requests
 
+from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, est_blocage_compte_zoho
 from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking
 from email_validator import email_exploitable
@@ -103,7 +104,12 @@ def envoyer_email(destinataire: str, sujet: str, corps: str, lead_id: str | None
     l'événement 'envoye' (voir email_tracking.py::demarrer_tracking) —
     nécessaire à statut_ramp_warmup() ci-dessous pour compter les envois du
     jour. Le pixel/liens trackés ont été retirés (dépendaient du backend
-    FastAPI supprimé)."""
+    FastAPI supprimé).
+
+    Lève CompteZohoBloqueError (au lieu de renvoyer False) si l'échec est un
+    blocage du COMPTE Zoho lui-même (voir alertes.py) — à catcher dans la
+    boucle appelante pour arrêter le run entier immédiatement, pas
+    seulement ce destinataire."""
     if not ZOHO_USER or not ZOHO_PASSWORD:
         log.error("Identifiants Zoho manquants — envoi annulé.")
         return False
@@ -123,6 +129,9 @@ def envoyer_email(destinataire: str, sujet: str, corps: str, lead_id: str | None
         return True
     except smtplib.SMTPException as e:
         log.error(f"Échec d'envoi à {destinataire} : {e}")
+        if est_blocage_compte_zoho(e):
+            alerter_blocage_compte_zoho(f"détecté lors d'un envoi B2B vers {destinataire}", e)
+            raise CompteZohoBloqueError(str(e)) from e
         return False
 
 
@@ -320,7 +329,15 @@ def lancer_campagne_initiale(limite: int = 20) -> None:
             log.warning(f"Premier contact annulé pour {acteur['nom_entreprise']} ({raison}) : {acteur['email']}")
             continue
         sujet, corps = message_premier_contact(acteur)
-        if envoyer_email(acteur["email"], sujet, corps, lead_id=acteur["id"]):
+        try:
+            envoi_reussi = envoyer_email(acteur["email"], sujet, corps, lead_id=acteur["id"])
+        except CompteZohoBloqueError:
+            # Déjà loggé + alerté dans envoyer_email — inutile de tenter les
+            # acteurs restants, ils échoueraient tous de la même façon tant
+            # que le blocage n'est pas levé côté Zoho.
+            log.error("Campagne B2B interrompue (compte Zoho bloqué).")
+            break
+        if envoi_reussi:
             supabase_patch(acteur["id"], {
                 "statut": "contacte_attente_reponse",
                 "contacted": True,
@@ -393,7 +410,13 @@ def lancer_relances() -> None:
             continue
 
         sujet, corps = message_relance(acteur, relance_count + 1)
-        if envoyer_email(acteur["email"], sujet, corps, lead_id=acteur["id"]):
+        try:
+            envoi_reussi = envoyer_email(acteur["email"], sujet, corps, lead_id=acteur["id"])
+        except CompteZohoBloqueError:
+            # Voir la même gestion dans lancer_campagne_initiale ci-dessus.
+            log.error("Relances B2B interrompues (compte Zoho bloqué).")
+            break
+        if envoi_reussi:
             supabase_patch(acteur["id"], {
                 "relance_count": relance_count + 1,
                 "last_relance_at": maintenant.isoformat(),

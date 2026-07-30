@@ -36,6 +36,7 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from alertes import CompteZohoBloqueError
 from ceo_agent import send_email_prospect
 from email_blacklist import emails_blacklistes
 from email_validator import email_blackliste_ou_a_risque
@@ -105,6 +106,7 @@ class ResultatTraitement:
     ignores: int = 0
     doublons: int = 0
     a_risque: int = 0
+    interrompu_bloque_compte: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +442,15 @@ def process_pipeline() -> ResultatTraitement:
             continue
 
         sujet = f"{lead['company_name']} — apport de clients qualifiés"
-        envoi_reussi = send_email_prospect(lead["email"], sujet, pitch)
+        try:
+            envoi_reussi = send_email_prospect(lead["email"], sujet, pitch)
+        except CompteZohoBloqueError:
+            # Déjà loggé + alerté dans send_email_prospect — inutile de
+            # tenter les leads restants, ils échoueraient tous de la même
+            # façon tant que le blocage n'est pas levé côté Zoho.
+            log.error(f"Traitement interrompu après [Lead {index}/{len(leads)}] (compte Zoho bloqué).")
+            resultat.interrompu_bloque_compte = True
+            break
         if envoi_reussi:
             log.info(f"Email envoyé avec succès à {lead['company_name']} <{lead['email']}>")
         else:
@@ -459,16 +469,18 @@ def process_pipeline() -> ResultatTraitement:
     if (
         resultat.succes == 0 and resultat.echecs == 0 and resultat.doublons == 0
         and resultat.a_risque == 0 and resultat.total > 0
+        and not resultat.interrompu_bloque_compte
     ):
         # Tous les leads chargés étaient déjà contactés (cas normal d'un run
         # répété sur le même leads.json, ex: bouton "Traitement IA des leads"
         # cliqué deux fois) — jamais un échec, rien de neuf à signaler.
         log.info("Aucun nouveau lead à traiter (tous déjà contactés).")
 
+    suffixe_interruption = " — INTERROMPU (compte Zoho bloqué)" if resultat.interrompu_bloque_compte else ""
     log.info(
         f"=== Terminé : {resultat.succes} succès / {resultat.echecs} échecs / "
         f"{resultat.doublons} doublon(s) / {resultat.a_risque} email(s) à risque écarté(s) / "
-        f"{resultat.ignores} déjà contacté(s) sur {resultat.total} leads ==="
+        f"{resultat.ignores} déjà contacté(s) sur {resultat.total} leads{suffixe_interruption} ==="
     )
     return resultat
 
@@ -482,7 +494,7 @@ def main() -> int:
     ce correctif, rapporté à tort comme une erreur bloquante dans le
     dashboard)."""
     resultat = process_pipeline()
-    return 0 if resultat.echecs == 0 else 1
+    return 0 if resultat.echecs == 0 and not resultat.interrompu_bloque_compte else 1
 
 
 if __name__ == "__main__":
