@@ -59,6 +59,15 @@ CLES_BLOC_ENV = ("ENV", "env")
 _MOTIF_CLE_DECOUPEE = re.compile(r"^(.+)_(\d+)$")
 
 
+def _nettoyer_valeur(valeur: str) -> str:
+    """Retire les retours à la ligne internes qu'un copier-coller d'une valeur
+    trop longue (JWT Supabase...) dans l'éditeur de secrets Streamlit Cloud
+    insère parfois au milieu de la valeur (multi-ligne triple-quoted) —
+    aucun secret de ce projet n'est censé contenir un vrai saut de ligne,
+    donc on le retire plutôt que de laisser une clé corrompue passer."""
+    return valeur.replace("\r\n", "").replace("\n", "").replace("\r", "").strip()
+
+
 def _reassembler_cles_decoupees(secrets_disponibles: dict) -> tuple[dict[str, str], list[str]]:
     """Reconstitue les valeurs découpées en plusieurs variables CLE_1, CLE_2,
     CLE_3... (voir docstring du module, format 3) — utile quand l'éditeur de
@@ -108,7 +117,11 @@ def _reassembler_cles_decoupees(secrets_disponibles: dict) -> tuple[dict[str, st
             # par erreur) — on ne reconstruit pas une valeur tronquée en
             # silence.
             continue
-        reconstituees[base] = "".join(parties[n] for n in numeros)
+        # Chaque partie est nettoyée AVANT concaténation (pas après) : un
+        # retour à la ligne automatique tombé au milieu d'une partie doit
+        # être retiré à sa place, jamais laissé recoller deux parties sans
+        # séparateur ni couper la valeur finale.
+        reconstituees[base] = "".join(_nettoyer_valeur(parties[n]) for n in numeros)
 
     return reconstituees, avertissements
 
@@ -168,7 +181,7 @@ def _charger_secrets_dans_environ() -> list[str]:
                     "valeur simple — voir dashboard/SECRETS.md (format plat attendu)."
                 )
                 continue
-            os.environ.setdefault(cle, str(valeur))
+            os.environ.setdefault(cle, _nettoyer_valeur(str(valeur)))
         except Exception as e:
             avertissements.append(f"Secret « {cle} » n'a pas pu être chargé : {e}")
 
