@@ -58,6 +58,43 @@ OLLAMA_HOST = "http://localhost:11434"
 OLLAMA_TIMEOUT = "5"
 ```
 
+## Alternative si l'éditeur de secrets Streamlit "casse" le format ci-dessus
+
+L'éditeur de secrets Streamlit Cloud est un simple champ de texte : sur
+mobile en particulier, l'autocorrection peut remplacer les guillemets droits
+`"` par des guillemets typographiques `"…"`, ou le collage peut perdre des
+retours à la ligne — dans les deux cas, le TOML multi-lignes ci-dessus
+devient illisible.
+
+Repli possible : une seule clé `ENV`, contenant TOUTES les variables au
+format `CLE=valeur` (une par ligne, **sans guillemets nécessaires** — pas du
+TOML, juste du texte façon `.env`) — un seul champ, une seule paire de
+guillemets, beaucoup moins de prise pour ce genre de bug. Deux façons
+équivalentes de l'écrire dans l'éditeur :
+
+**Multi-lignes** (TOML triple-guillemets) :
+```toml
+ENV = """
+SUPABASE_URL=https://xxxx.supabase.co
+SUPABASE_KEY=eyJ...
+ZOHO_USER=vous@votredomaine.fr
+ZOHO_PASSWORD=...
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+AGENCY_NAME=Expertise Digitale
+PUBLIC_DASHBOARD_URL=https://mon-app.streamlit.app
+"""
+```
+
+**Une seule ligne** (si même le multi-lignes pose problème — `\n` explicite,
+jamais un vrai retour à la ligne tapé) :
+```toml
+ENV = "SUPABASE_URL=https://xxxx.supabase.co\nSUPABASE_KEY=eyJ...\nZOHO_USER=vous@votredomaine.fr"
+```
+
+Les deux formats (variables individuelles `CLE = "valeur"` ET bloc `ENV`)
+peuvent coexister sans conflit — en cas de doublon, la variable individuelle
+est prioritaire. Voir `dashboard/secrets_loader.py` pour l'implémentation.
+
 ## Pas de webhook à configurer
 
 Les anciens webhooks Stripe/Yousign (backend FastAPI, supprimé) sont

@@ -16,6 +16,15 @@ bien de ces valeurs (subprocess.Popen(..., env=os.environ.copy()) dans
 process_runner.py). Sans effet en dev local (st.secrets vide si aucun
 fichier .streamlit/secrets.toml n'existe).
 
+Deux formats acceptés dans l'éditeur de secrets Streamlit Cloud (voir
+dashboard/SECRETS.md pour des exemples complets) :
+1. Format TOML standard, une variable par ligne : CLE = "valeur".
+2. Repli à plat, une seule clé « ENV » contenant TOUTES les variables au
+   format dotenv (CLE=valeur, une par ligne) — utile quand l'éditeur
+   Streamlit déforme un TOML multi-lignes (guillemets substitués,
+   retours à la ligne perdus au collage...) : un seul champ, une seule
+   paire de guillemets, beaucoup moins de surface pour ce genre de bug.
+
 À appeler UNE SEULE FOIS, en tout premier dans app.py — avant tout import de
 auth/data_access/supabase_client (qui échoueraient de façon bien moins
 lisible si SUPABASE_URL/SUPABASE_KEY manquent).
@@ -32,6 +41,31 @@ import streamlit as st
 # Yousign, Discord...) dégrade une fonctionnalité précise mais ne bloque
 # jamais le chargement de l'app elle-même.
 CLES_CRITIQUES = ("SUPABASE_URL", "SUPABASE_KEY")
+
+# Nom de la clé de repli "tout-en-un" (voir docstring du module et
+# dashboard/SECRETS.md) — acceptée en majuscule ou minuscule.
+CLES_BLOC_ENV = ("ENV", "env")
+
+
+def _parser_bloc_env(texte: str) -> dict[str, str]:
+    """Parse un bloc `CLE=valeur` façon dotenv (une paire par ligne) — PAS
+    du TOML : pas de guillemets requis, juste CLE=valeur. Tolère les lignes
+    vides, les commentaires (#...), et des guillemets optionnels autour de
+    la valeur (retirés s'ils encadrent exactement toute la valeur). Une
+    ligne illisible est simplement ignorée, jamais une erreur bloquante."""
+    valeurs: dict[str, str] = {}
+    for ligne in texte.splitlines():
+        ligne = ligne.strip()
+        if not ligne or ligne.startswith("#") or "=" not in ligne:
+            continue
+        cle, _, valeur = ligne.partition("=")
+        cle = cle.strip()
+        valeur = valeur.strip()
+        if len(valeur) >= 2 and valeur[0] == valeur[-1] and valeur[0] in "\"'":
+            valeur = valeur[1:-1]
+        if cle:
+            valeurs[cle] = valeur
+    return valeurs
 
 
 def _charger_secrets_dans_environ() -> list[str]:
@@ -53,6 +87,10 @@ def _charger_secrets_dans_environ() -> list[str]:
 
     for cle, valeur in secrets_disponibles.items():
         try:
+            if cle in CLES_BLOC_ENV:
+                # Traité séparément ci-dessous (après la boucle) : ce n'est
+                # pas une variable individuelle mais un bloc dotenv complet.
+                continue
             if isinstance(valeur, Mapping):
                 # Section TOML imbriquée ([section] plutôt que CLE = "valeur"
                 # à plat) — SECRETS.md documente le format plat attendu.
@@ -67,6 +105,25 @@ def _charger_secrets_dans_environ() -> list[str]:
             os.environ.setdefault(cle, str(valeur))
         except Exception as e:
             avertissements.append(f"Secret « {cle} » n'a pas pu être chargé : {e}")
+
+    # Bloc de repli "tout-en-un" (voir docstring du module) : traité APRÈS
+    # les clés individuelles ci-dessus, qui gardent la priorité via
+    # setdefault en cas de doublon volontaire des deux formats.
+    for cle_bloc in CLES_BLOC_ENV:
+        bloc = secrets_disponibles.get(cle_bloc)
+        if bloc is None:
+            continue
+        if not isinstance(bloc, str):
+            avertissements.append(
+                f"Secret « {cle_bloc} » ignoré : attendu comme un bloc de texte "
+                "(CLE=valeur, une par ligne), pas une section imbriquée."
+            )
+            continue
+        try:
+            for cle, valeur in _parser_bloc_env(bloc).items():
+                os.environ.setdefault(cle, valeur)
+        except Exception as e:
+            avertissements.append(f"Bloc « {cle_bloc} » illisible : {e}")
 
     return avertissements
 
