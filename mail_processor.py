@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import unicodedata
+from datetime import datetime, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -111,6 +112,18 @@ def recuperer_lead_par_email(email_address: str) -> dict | None:
         return reponse.data[0] if reponse.data else None
     except Exception as e:
         log.error(f"Erreur Supabase lors de la récupération du lead {email_address} : {e}")
+        return None
+
+
+def recuperer_lead_professionnel_par_email(email_address: str) -> dict | None:
+    """Même mécanisme que recuperer_lead_par_email, pour leads_professionnels
+    — nécessaire à enregistrer_delai_livraison (lecture avant incrément du
+    compteur nb_delais_livraison, pas d'opération atomique côté PostgREST)."""
+    try:
+        reponse = supabase.table("leads_professionnels").select("*").eq("email", email_address).limit(1).execute()
+        return reponse.data[0] if reponse.data else None
+    except Exception as e:
+        log.error(f"Erreur Supabase (leads_professionnels) lors de la récupération de {email_address} : {e}")
         return None
 
 
@@ -249,6 +262,38 @@ def est_message_bounce(sender_brut: str, subject: str) -> bool:
     return any(m in s for m in EXPEDITEURS_BOUNCE) or any(m in suj for m in SUJETS_BOUNCE)
 
 
+def _champs_delivery_status(part: email.message.Message) -> dict[str, str]:
+    """Extrait les champs Action:/Status:/Final-Recipient:/Original-Recipient:/
+    Diagnostic-Code: d'une partie MIME message/delivery-status.
+
+    Piège non documenté du module email standard : un Content-Type de la
+    famille "message/*" (message/delivery-status COMME message/rfc822) fait
+    que le parser traite le CORPS de la partie comme un sous-message RFC822 —
+    part.get_payload(decode=True) renvoie alors None (rien à décoder, ce
+    n'est structurellement pas une feuille), et part.get_payload() renvoie
+    une LISTE contenant ce sous-message. Les champs Action:/Status:/...
+    (syntaxe proche d'en-têtes RFC822, RFC 3464) se retrouvent alors dans les
+    EN-TÊTES de ce sous-message, jamais comme texte brut dans un payload —
+    un regex sur str(part.get_payload()) ne matche donc jamais rien de réel
+    (juste la repr Python d'une liste d'objets Message)."""
+    payload = part.get_payload()
+    if isinstance(payload, list) and payload and hasattr(payload[0], "items"):
+        sous_message = payload[0]
+        return {cle: valeur for cle, valeur in sous_message.items()}
+
+    # Repli : certaines sources (ou une reconstruction manuelle du message)
+    # peuvent malgré tout présenter un texte brut décodable — on retente
+    # alors un parsing ligne par ligne "Champ: valeur" classique.
+    brut = part.get_payload(decode=True)
+    texte = brut.decode(errors="ignore") if brut else (payload if isinstance(payload, str) else "")
+    champs: dict[str, str] = {}
+    for ligne in texte.splitlines():
+        cle, sep, valeur = ligne.partition(":")
+        if sep and cle.strip() and not cle[0].isspace():
+            champs.setdefault(cle.strip(), valeur.strip())
+    return champs
+
+
 def analyser_dsn(msg: email.message.Message) -> dict | None:
     """Parse un rapport de non-remise structuré (DSN, RFC 3464 — le format
     standard généré par la quasi-totalité des serveurs mail, dont Zoho).
@@ -264,26 +309,27 @@ def analyser_dsn(msg: email.message.Message) -> dict | None:
         if part.get_content_type() != "message/delivery-status":
             continue
 
-        brut = part.get_payload(decode=True)
-        texte = brut.decode(errors="ignore") if brut else str(part.get_payload())
+        champs = _champs_delivery_status(part)
 
-        action = re.search(r"^Action:\s*(\w+)", texte, re.MULTILINE | re.IGNORECASE)
-        statut = re.search(r"^Status:\s*([\d.]+)", texte, re.MULTILINE | re.IGNORECASE)
+        action = champs.get("Action")
         # Final-Recipient est obligatoire par la RFC, Original-Recipient
         # optionnel (peut différer en cas de redirection/alias) — on
-        # accepte les deux, Final-Recipient étant listé en premier donc
-        # prioritaire si les deux sont présents.
-        destinataire = re.search(
-            r"^(?:Final|Original)-Recipient:\s*(?:rfc822;)?\s*<?([^\s>]+@[^\s>]+)",
-            texte, re.MULTILINE | re.IGNORECASE,
-        )
-        diagnostic = re.search(r"^Diagnostic-Code:\s*(.+)$", texte, re.MULTILINE | re.IGNORECASE)
+        # accepte les deux, Final-Recipient étant prioritaire si présent.
+        destinataire_brut = champs.get("Final-Recipient") or champs.get("Original-Recipient")
+        destinataire = None
+        if destinataire_brut:
+            correspondance = re.search(r"(?:rfc822;)?\s*<?([^\s>]+@[^\s>]+)", destinataire_brut, re.IGNORECASE)
+            if correspondance:
+                destinataire = correspondance.group(1).strip().rstrip(".,;")
+
+        statut_brut = champs.get("Status")
+        correspondance_statut = re.match(r"[\d.]+", statut_brut) if statut_brut else None
 
         return {
-            "action": action.group(1).lower() if action else None,
-            "code_statut": statut.group(1) if statut else None,
-            "destinataire": destinataire.group(1).strip().rstrip(".,;") if destinataire else None,
-            "diagnostic": diagnostic.group(1).strip() if diagnostic else "",
+            "action": action.split()[0].lower() if action else None,
+            "code_statut": correspondance_statut.group(0) if correspondance_statut else None,
+            "destinataire": destinataire,
+            "diagnostic": (champs.get("Diagnostic-Code") or "").strip(),
         }
 
     return None
@@ -302,10 +348,30 @@ def _texte_complet_bounce(msg: email.message.Message) -> str:
     morceaux = [msg.get("Subject") or ""]
     if msg.is_multipart():
         for part in msg.walk():
-            if part.get_content_type() not in ("text/plain", "message/delivery-status", "message/rfc822"):
+            content_type = part.get_content_type()
+            if content_type not in ("text/plain", "message/delivery-status", "message/rfc822"):
                 continue
             brut = part.get_payload(decode=True)
-            morceaux.append(brut.decode(errors="ignore") if brut else str(part.get_payload()))
+            if brut:
+                morceaux.append(brut.decode(errors="ignore"))
+                continue
+            # message/delivery-status et message/rfc822 : voir
+            # _champs_delivery_status pour le pourquoi (sous-message imbriqué,
+            # rien à décoder directement) — on reconstitue un texte "Champ:
+            # valeur" lisible à partir des EN-TÊTES du sous-message (et son
+            # propre corps le cas échéant, utile pour message/rfc822 qui
+            # contient une copie complète de l'e-mail original en échec).
+            payload = part.get_payload()
+            if isinstance(payload, list):
+                for sous_message in payload:
+                    if not hasattr(sous_message, "items"):
+                        continue
+                    morceaux.append("\n".join(f"{cle}: {valeur}" for cle, valeur in sous_message.items()))
+                    corps_sous_message = sous_message.get_payload(decode=True)
+                    if corps_sous_message:
+                        morceaux.append(corps_sous_message.decode(errors="ignore"))
+            elif isinstance(payload, str):
+                morceaux.append(payload)
     else:
         brut = msg.get_payload(decode=True)
         if brut:
@@ -427,6 +493,41 @@ def invalider_lead(email_address: str) -> None:
     update_lead_professionnel_status(email_address, "invalide")
 
 
+def enregistrer_delai_livraison(email_address: str) -> None:
+    """Consigne un délai de livraison temporaire (4xx / 'Delay') SANS jamais
+    changer le statut du lead ni bloquer la campagne (voir traiter_bounce,
+    branche 'delayed') — juste un compteur et un horodatage (colonnes
+    nb_delais_livraison / dernier_delai_livraison_at, voir
+    sql/init_delais_livraison.sql), visibles dans le dashboard, pour repérer
+    un lead dont les emails échouent temporairement de façon répétée (boîte
+    pleine, greylisting persistant...) sans l'invalider à tort. Lecture puis
+    écriture (pas d'incrément atomique côté PostgREST) — même schéma que
+    relance_prospects.py pour relance_count."""
+    lead = recuperer_lead_par_email(email_address)
+    if lead:
+        try:
+            supabase.table("leads").update(
+                {
+                    "nb_delais_livraison": (lead.get("nb_delais_livraison") or 0) + 1,
+                    "dernier_delai_livraison_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).eq("email", email_address).execute()
+        except Exception as e:
+            log.error(f"Erreur Supabase (délai livraison) : {e}")
+
+    lead_pro = recuperer_lead_professionnel_par_email(email_address)
+    if lead_pro:
+        try:
+            supabase.table("leads_professionnels").update(
+                {
+                    "nb_delais_livraison": (lead_pro.get("nb_delais_livraison") or 0) + 1,
+                    "dernier_delai_livraison_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ).eq("email", email_address).execute()
+        except Exception as e:
+            log.error(f"Erreur Supabase (leads_professionnels, délai livraison) : {e}")
+
+
 def traiter_bounce(sender_brut: str, subject: str, msg: email.message.Message) -> str:
     """Traite un message identifié comme bounce (voir est_message_bounce) :
     seul un HARD bounce confirmé (Action: failed ou code 5.x.x, y compris
@@ -480,7 +581,8 @@ def traiter_bounce(sender_brut: str, subject: str, msg: email.message.Message) -
         )
         return "hard_bounce"
     elif action == "delayed" or code_statut.startswith("4"):
-        log.info(f"⏳ Délai de livraison pour {destinataire} (statut {code_statut or '?'}) — le serveur retente encore, aucune action métier.")
+        log.info(f"⏳ Délai de livraison pour {destinataire} (statut {code_statut or '?'}) — le serveur retente encore, aucune action bloquante.")
+        enregistrer_delai_livraison(destinataire)
         return "delayed"
     else:
         log.warning(f"Bounce de nature indéterminée pour {destinataire} (action={action}, statut={code_statut!r}) — aucune action métier automatique.")
