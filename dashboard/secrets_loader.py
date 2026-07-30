@@ -59,7 +59,7 @@ CLES_BLOC_ENV = ("ENV", "env")
 _MOTIF_CLE_DECOUPEE = re.compile(r"^(.+)_(\d+)$")
 
 
-def _reassembler_cles_decoupees(secrets_disponibles: dict) -> dict[str, str]:
+def _reassembler_cles_decoupees(secrets_disponibles: dict) -> tuple[dict[str, str], list[str]]:
     """Reconstitue les valeurs découpées en plusieurs variables CLE_1, CLE_2,
     CLE_3... (voir docstring du module, format 3) — utile quand l'éditeur de
     secrets Streamlit Cloud refuse ou tronque un champ trop long (cas vécu :
@@ -67,7 +67,9 @@ def _reassembler_cles_decoupees(secrets_disponibles: dict) -> dict[str, str]:
     les parties de 1 à N sont présentes et sont des chaînes (sinon ignorée en
     silence : ce n'est probablement pas un découpage volontaire, juste une
     variable qui se termine par un chiffre, ex. un nom se terminant par une
-    année)."""
+    année). Renvoie aussi la liste des avertissements rencontrés."""
+    avertissements: list[str] = []
+
     # Toutes les parties matchées sont groupées ici, QUEL QUE SOIT leur type
     # — une partie non-chaîne (ex: section imbriquée par erreur) doit faire
     # échouer la reconstitution du groupe entier, pas être silencieusement
@@ -83,8 +85,17 @@ def _reassembler_cles_decoupees(secrets_disponibles: dict) -> dict[str, str]:
     reconstituees: dict[str, str] = {}
     for base, parties in groupes.items():
         if base in secrets_disponibles:
-            # La clé complète existe aussi telle quelle : pas d'ambiguïté à
-            # lever, elle est déjà prioritaire via setdefault plus loin.
+            # La clé complète existe aussi telle quelle : elle est
+            # prioritaire via setdefault plus loin, donc CE groupe découpé
+            # est ignoré — cas piégeux (vécu : une ancienne clé anon laissée
+            # en place masque silencieusement une nouvelle clé service_role
+            # découpée en CLE_1/CLE_2/...) donc signalé explicitement plutôt
+            # que passé sous silence.
+            avertissements.append(
+                f"Découpage « {base}_1, {base}_2... » ignoré : la variable "
+                f"« {base} » existe déjà telle quelle et est prioritaire — "
+                f"supprime-la si tu veux que le découpage soit utilisé à la place."
+            )
             continue
         numeros = sorted(parties)
         if numeros != list(range(1, len(numeros) + 1)):
@@ -99,7 +110,7 @@ def _reassembler_cles_decoupees(secrets_disponibles: dict) -> dict[str, str]:
             continue
         reconstituees[base] = "".join(parties[n] for n in numeros)
 
-    return reconstituees
+    return reconstituees, avertissements
 
 
 def _parser_bloc_env(texte: str) -> dict[str, str]:
@@ -185,7 +196,9 @@ def _charger_secrets_dans_environ() -> list[str]:
     # formats : une variable déjà chargée (clé individuelle ou bloc ENV)
     # n'est jamais écrasée par une reconstitution.
     try:
-        for cle, valeur in _reassembler_cles_decoupees(secrets_disponibles).items():
+        reconstituees, avertissements_decoupage = _reassembler_cles_decoupees(secrets_disponibles)
+        avertissements.extend(avertissements_decoupage)
+        for cle, valeur in reconstituees.items():
             os.environ.setdefault(cle, valeur)
     except Exception as e:
         avertissements.append(f"Reconstitution des clés découpées (CLE_1, CLE_2...) impossible : {e}")
@@ -288,6 +301,10 @@ def initialiser_secrets() -> None:
         st.error("⚠️ Configuration Supabase incorrecte — l'application ne peut pas démarrer.")
         for e in erreurs_supabase:
             st.markdown(f"- {e}")
+        if avertissements:
+            with st.expander("Détails techniques"):
+                for a in avertissements:
+                    st.caption(f"• {a}")
         st.stop()
 
     if avertissements:
