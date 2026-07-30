@@ -13,7 +13,14 @@ supabase==2.5.0
 
 # === Dashboard (dashboard/app.py) ===
 streamlit==1.38.0
-pandas==2.2.2
+# Non pinné volontairement : pandas==2.2.2 n'a pas de roue pré-compilée
+# pour toutes les versions/plateformes Python rencontrées en pratique (ex:
+# Python plus récent que ce que 2.2.2 supporte) — pip retombe alors sur une
+# compilation depuis les sources, qui échoue sans toolchain C/C++ installée
+# (cas fréquent sur un environnement de build minimal). Laisser pip choisir
+# la version la plus récente lui garantit de toujours trouver une roue
+# binaire prête à l'emploi pour l'environnement réel.
+pandas
 
 # === Signature électronique + paiement (Yousign / Stripe) ===
 stripe==10.12.0

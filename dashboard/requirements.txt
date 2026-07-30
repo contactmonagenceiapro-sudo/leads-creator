@@ -12,7 +12,11 @@
 # en prod sans jamais avoir été testée en local — voir les pins exacts
 # maintenus à la racine du dépôt.
 streamlit==1.38.0
-pandas==2.2.2
+# Non pinné volontairement (voir requirements.txt racine) : pandas==2.2.2
+# n'a pas de roue pré-compilée pour toutes les versions/plateformes Python
+# rencontrées en pratique, ce qui forçait une compilation depuis les
+# sources — et donc un échec de build sans toolchain C/C++ installée.
+pandas
 requests==2.32.3
 python-dotenv==1.0.0
 fpdf2==2.7.9
