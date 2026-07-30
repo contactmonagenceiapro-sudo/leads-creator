@@ -55,11 +55,12 @@ MAX_RELANCES = int(os.getenv("MAX_RELANCES", "2"))
 
 # Pause anti-spam entre deux ENVOIS RÉELS (alignée sur lead_worker.py,
 # ceo_agent.py et outbound_pro_btp.py — tous partagent le même compte Zoho,
-# donc la même limite anti-spam). Portée de 20-45s à 45-90s par défaut suite
-# à un blocage Zoho réel ("Unusual sending activity detected") observé en
-# usage réel — configurable sans toucher au code si besoin de réajuster.
-PAUSE_MIN_SEC = int(os.getenv("PAUSE_ENVOI_MIN_SEC", "45"))
-PAUSE_MAX_SEC = int(os.getenv("PAUSE_ENVOI_MAX_SEC", "90"))
+# donc la même limite anti-spam). Portée à 45-90s suite à un premier
+# blocage Zoho ("Unusual sending activity detected"), puis à 60-120s après
+# un second blocage malgré ce premier ajustement — configurable sans
+# toucher au code si besoin de réajuster.
+PAUSE_MIN_SEC = int(os.getenv("PAUSE_ENVOI_MIN_SEC", "60"))
+PAUSE_MAX_SEC = int(os.getenv("PAUSE_ENVOI_MAX_SEC", "120"))
 
 # Un message différent par palier : la 1ère relance rappelle poliment, la
 # dernière prévient explicitement qu'on n'insistera plus (évite de harceler

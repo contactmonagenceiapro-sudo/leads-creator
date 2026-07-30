@@ -135,19 +135,26 @@ MAX_RELANCES = int(os.getenv("OUTBOUND_MAX_RELANCES", "2"))
 # ensemble, pas celle d'une seule campagne (voir
 # outbound_pro_btp.py::statut_ramp_warmup, qui agrège tous les
 # client_final). Paliers (jours écoulés depuis le tout premier envoi B2B
-# jamais effectué, plafond quotidien) — valeurs de départ raisonnables pour
-# un domaine encore jeune en prospection à froid, à ajuster selon les
-# retours de délivrabilité réels (taux de bounce/plainte, cf. dashboard
-# "Délivrabilité"). Complète un warmup tiers (Instantly/Lemwarm/...) — ne
-# le remplace pas : un warmup actif construit la réputation, ce plafond
-# évite d'envoyer un volume réel disproportionné pendant que cette
-# réputation se construit encore.
+# jamais effectué, plafond quotidien).
+#
+# Réduits DRASTIQUEMENT (5/j initial -> 2/j, plateau atteint en 3 semaines
+# -> 2 mois) suite à un blocage de sécurité Zoho réel ("Unusual sending
+# activity detected", SMTP 550 5.4.6) survenu avec les valeurs précédentes
+# — un rejet explicite au niveau du compte, pas un simple ralentissement à
+# prévoir. Complète un warmup tiers (Instantly/Lemwarm/...) — ne le
+# remplace pas : un warmup actif construit la réputation, ce plafond évite
+# d'envoyer un volume réel disproportionné pendant que cette réputation se
+# construit encore. À desserrer prudemment (paliers suivants seulement,
+# jamais en sautant en avant) une fois plusieurs semaines sans nouveau
+# blocage.
 PALIERS_RAMP_ENVOI_QUOTIDIEN = [
-    (0, 5),    # jours 1-3
-    (3, 10),   # jours 4-7
-    (7, 20),   # semaine 2
-    (14, 30),  # semaine 3
-    (21, 50),  # semaine 4 et au-delà (plateau)
+    (0, 2),    # jours 1-6 : 2 e-mails/jour max (grande prudence après blocage)
+    (7, 4),    # semaine 2
+    (14, 8),   # semaine 3
+    (21, 15),  # semaine 4
+    (30, 25),  # semaines 5-6
+    (45, 40),  # semaines 7-8
+    (60, 50),  # au-delà (plateau, atteint en ~2 mois au lieu de 3 semaines)
 ]
 
 

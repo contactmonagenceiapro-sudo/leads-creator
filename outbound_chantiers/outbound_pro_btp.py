@@ -60,10 +60,11 @@ log = logging.getLogger(__name__)
 
 TABLE = "leads_professionnels"
 # Anti-spam, alignée sur lead_worker.py/ceo_agent.py/relance_prospects.py
-# (même compte Zoho, même limite) — portée de 20-45s à 45-90s par défaut
-# suite à un blocage Zoho réel observé en usage réel.
-PAUSE_MIN_SECONDES = int(os.getenv("PAUSE_ENVOI_MIN_SEC", "45"))
-PAUSE_MAX_SECONDES = int(os.getenv("PAUSE_ENVOI_MAX_SEC", "90"))
+# (même compte Zoho, même limite) — portée à 45-90s suite à un premier
+# blocage Zoho, puis à 60-120s après un second blocage malgré ce premier
+# ajustement.
+PAUSE_MIN_SECONDES = int(os.getenv("PAUSE_ENVOI_MIN_SEC", "60"))
+PAUSE_MAX_SECONDES = int(os.getenv("PAUSE_ENVOI_MAX_SEC", "120"))
 
 
 def supabase_headers() -> dict:
