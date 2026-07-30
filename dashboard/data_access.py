@@ -78,8 +78,13 @@ def _erreur_upsert_campagne(e: Exception, slug: str, contexte: str = "enregistre
 @st.cache_data(ttl=CACHE_TTL_SECONDES)
 def get_stats() -> dict:
     try:
-        leads_count = supabase.table("leads").select("id", count="exact", head=True).execute().count or 0
-        articles_count = supabase.table("articles").select("id", count="exact", head=True).execute().count or 0
+        # Aucune colonne passée à select() (pas même "*") : la version
+        # installée de postgrest (voir requirements.txt, sans pin de version)
+        # en fait alors une requête HEAD automatiquement — c'est ce qui
+        # remplace l'ancien argument select(..., head=True), supprimé dans
+        # cette version (une colonne passée déclencherait un GET classique).
+        leads_count = supabase.table("leads").select(count="exact").execute().count or 0
+        articles_count = supabase.table("articles").select(count="exact").execute().count or 0
         reports = (
             supabase.table("ceo_reports")
             .select("*").order("created_at", desc=True).limit(1).execute().data
