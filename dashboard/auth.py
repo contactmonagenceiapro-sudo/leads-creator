@@ -145,6 +145,9 @@ def _afficher_formulaire_login() -> None:
         _connecter(email.strip().lower(), mot_de_passe)
     except DataAccessError as e:
         st.error(str(e))
+        if e.__cause__ is not None:
+            with st.expander("Détails techniques"):
+                st.caption(str(e.__cause__))
         return
     st.rerun()
 
