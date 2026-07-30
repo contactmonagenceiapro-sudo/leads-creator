@@ -124,6 +124,31 @@ def get_health() -> dict:
     import requests
 
     resultat = {}
+
+    # dnspython (email_validator.py::possede_enregistrement_mx) — vérifié
+    # EN PREMIER, isolé de tout le reste : si un souci imprévu ailleurs dans
+    # cette fonction (Supabase, Ollama...) devait un jour se produire hors
+    # des except déjà posés plus bas, ce contrôle ne doit jamais en pâtir en
+    # se retrouvant absent du résultat (symptôme vu en usage réel : la clé
+    # "dnspython" manquante affiche "?" côté sidebar, indiscernable d'un
+    # échec du contrôle lui-même — voir app.py). Sans accès direct aux logs
+    # de build Streamlit Cloud, c'est le seul moyen fiable de confirmer,
+    # depuis l'app RÉELLEMENT déployée (même environnement Python que
+    # lead_worker.py/ceo_agent.py/..., lancés en subprocess), que la
+    # dépendance a bien été installée. Si absente, la vérification MX est
+    # silencieusement ignorée (jamais bloquante, voir email_validator.py) —
+    # donc rien ne casse, mais ce filtre de qualité est alors incomplet.
+    # except Exception (pas seulement ImportError) : un souci d'installation
+    # partielle peut lever autre chose qu'ImportError (ex: erreur au niveau
+    # C d'une dépendance native) — dans tous les cas, un message clair vaut
+    # mieux qu'une exception qui ferait disparaître toute la fonction.
+    try:
+        import dns.resolver  # noqa: F401
+
+        resultat["dnspython"] = "ok"
+    except Exception as e:
+        resultat["dnspython"] = f"absent ou cassé ({e}) — vérification MX des emails désactivée"
+
     try:
         supabase.table("campagnes").select("id").limit(1).execute()
         resultat["supabase"] = "ok"
@@ -139,21 +164,6 @@ def get_health() -> dict:
 
     resultat["zoho_configure"] = bool(os.getenv("ZOHO_USER") and os.getenv("ZOHO_PASSWORD"))
     resultat["discord_configure"] = bool(os.getenv("DISCORD_WEBHOOK_URL"))
-
-    # dnspython (email_validator.py::possede_enregistrement_mx) — sans
-    # accès direct aux logs de build Streamlit Cloud, c'est le seul moyen
-    # fiable de confirmer, depuis l'app RÉELLEMENT déployée (même
-    # environnement Python que lead_worker.py/ceo_agent.py/..., lancés en
-    # subprocess), que la dépendance a bien été installée. Si absente, la
-    # vérification MX est silencieusement ignorée (jamais bloquante, voir
-    # email_validator.py) — donc rien ne casse, mais ce filtre de qualité
-    # est alors incomplet.
-    try:
-        import dns.resolver  # noqa: F401
-
-        resultat["dnspython"] = "ok"
-    except ImportError:
-        resultat["dnspython"] = "absent (vérification MX des emails désactivée)"
 
     return resultat
 

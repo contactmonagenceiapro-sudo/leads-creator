@@ -115,10 +115,17 @@ with st.sidebar:
                 st.caption(f"{emoji} {cle.capitalize()} : {valeur}")
             st.caption("🟢 Zoho configuré" if health.get("zoho_configure") else "⚪ Zoho non configuré")
             st.caption("🟢 Discord configuré" if health.get("discord_configure") else "⚪ Discord non configuré")
-            st.caption(
-                "🟢 dnspython installé" if health.get("dnspython") == "ok"
-                else f"🔴 dnspython : {health.get('dnspython', '?')}"
-            )
+            if health.get("dnspython") == "ok":
+                st.caption("🟢 dnspython installé")
+            elif "dnspython" in health:
+                st.caption(f"🔴 dnspython : {health['dnspython']}")
+            else:
+                # Clé absente (pas juste "échec du contrôle") : la plupart
+                # du temps signe un déploiement pas encore à jour avec le
+                # code de get_health() qui vérifie dnspython — un
+                # "Reboot app" depuis Streamlit Community Cloud force une
+                # réinstallation complète et un redémarrage propre.
+                st.caption("🟡 dnspython : app pas encore redéployée avec ce contrôle (reboot conseillé)")
         st.divider()
 
     st.caption("ai-company · dashboard")
