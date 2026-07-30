@@ -39,6 +39,7 @@ from pathlib import Path
 
 import requests
 
+from email_validator import email_exploitable
 from phone_enricher import enrichir_telephone_via_google_places
 
 LEADS_FILE = Path(__file__).resolve().parent / "leads.json"
@@ -343,13 +344,29 @@ def enrichir_lead(lead: dict) -> dict:
                 # différence de l'e-mail (jamais fabriqué, voir plus bas).
                 telephone = enrichir_telephone_via_google_places(lead["company_name"], ville or "")
             if email:
-                log.info(f"Email trouvé et validé pour {lead['company_name']} : {email}")
-                return {**lead, "email": email, "email_source": "email_verifie_site", "telephone": telephone}
-            log.info(f"Domaine {domaine} validé pour {lead['company_name']}, mais aucun email visible")
+                # Format + domaine jetable + MX (voir email_validator.py) :
+                # une adresse trouvée dans le HTML peut être syntaxiquement
+                # correcte mais pointer vers un domaine sans aucun serveur
+                # mail (typo, adresse d'un ancien prestataire jamais mise à
+                # jour...) — mieux vaut ne conserver aucun email que garder
+                # une adresse condamnée à un hard bounce à l'envoi.
+                exploitable, raison = email_exploitable(email)
+                if exploitable:
+                    log.info(f"Email trouvé et validé pour {lead['company_name']} : {email}")
+                    return {**lead, "email": email, "email_source": "email_verifie_site", "telephone": telephone}
+                log.warning(f"Email {email} trouvé pour {lead['company_name']} mais écarté ({raison})")
+                email = None
+            log.info(f"Domaine {domaine} validé pour {lead['company_name']}, mais aucun email exploitable")
+            # contact@{domaine} n'est qu'une convention plausible (le
+            # domaine, lui, est confirmé réel via la requête HTTP
+            # précédente) — vérifiée avant d'être retenue, pour la même
+            # raison que ci-dessus.
+            email_devine = f"contact@{domaine}"
+            exploitable, raison = email_exploitable(email_devine)
             return {
                 **lead,
-                "email": f"contact@{domaine}",
-                "email_source": "domaine_verifie_sans_email",
+                "email": email_devine if exploitable else None,
+                "email_source": "domaine_verifie_sans_email" if exploitable else "domaine_verifie_email_ecarte",
                 "telephone": telephone,
             }
 

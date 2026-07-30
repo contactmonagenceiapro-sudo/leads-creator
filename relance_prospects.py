@@ -39,6 +39,7 @@ from supabase import create_client
 
 from ceo_agent import send_email_prospect
 from email_blacklist import emails_blacklistes
+from email_validator import email_exploitable
 
 load_dotenv()
 
@@ -158,6 +159,14 @@ def relancer_prospects() -> None:
         relance_count = lead.get("relance_count") or 0
 
         if not email:
+            continue
+
+        # Filet de sécurité avant l'envoi (le filtrage blacklist a déjà eu
+        # lieu dans recuperer_prospects_a_relancer, voir email_validator.py) :
+        # couvre un lead entré en base avant ce correctif.
+        exploitable, raison = email_exploitable(email)
+        if not exploitable:
+            log.warning(f"Relance annulée pour {company} ({raison}) : {email}")
             continue
 
         log.info(f"--- [{i}/{len(prospects)}] Relance #{relance_count + 1} pour {company} <{email}> ---")

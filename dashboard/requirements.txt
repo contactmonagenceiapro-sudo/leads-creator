@@ -22,3 +22,4 @@ supabase
 beautifulsoup4
 stripe
 bcrypt
+dnspython

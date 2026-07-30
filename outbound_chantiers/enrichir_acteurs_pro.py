@@ -49,6 +49,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from email_validator import email_exploitable
 from outbound_chantiers.config import COMMUNES_CIBLES
 from phone_enricher import enrichir_telephone_via_google_places
 
@@ -144,9 +145,19 @@ def page_correspond_bien(html: str, nom_entreprise: str, commune: str) -> bool:
 
 
 def email_valide(adresse: str) -> bool:
+    """Filtre en deux temps : d'abord le bruit d'EXTRACTION propre à ce
+    scraper (placeholders de template, adresses techniques — voir
+    MOTIFS_EMAIL_INVALIDES), avant tout appel réseau ; puis, seulement pour
+    ce qui a passé ce premier filtre, la vérification structurelle
+    partagée (format strict, domaine jetable, enregistrement MX — voir
+    email_validator.py, réutilisée aussi par le pipeline artisans) — un
+    email sans MX ne peut PAS recevoir de message, quelle que soit sa forme."""
     if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", adresse or ""):
         return False
-    return not any(re.search(motif, adresse, re.IGNORECASE) for motif in MOTIFS_EMAIL_INVALIDES)
+    if any(re.search(motif, adresse, re.IGNORECASE) for motif in MOTIFS_EMAIL_INVALIDES):
+        return False
+    exploitable, _raison = email_exploitable(adresse)
+    return exploitable
 
 
 def telephone_valide(numero: str) -> bool:

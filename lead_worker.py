@@ -37,6 +37,8 @@ import requests
 from dotenv import load_dotenv
 
 from ceo_agent import send_email_prospect
+from email_blacklist import emails_blacklistes
+from email_validator import email_blackliste_ou_a_risque
 
 load_dotenv()
 
@@ -102,6 +104,7 @@ class ResultatTraitement:
     echecs: int = 0
     ignores: int = 0
     doublons: int = 0
+    a_risque: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -406,12 +409,28 @@ def process_pipeline() -> ResultatTraitement:
 
     log.info(f"{len(leads)} leads valides chargés, début du traitement...")
 
+    # Chargée UNE fois pour tout le run (pas par lead) : voir
+    # email_blacklist.py / email_validator.py, même principe que partout
+    # ailleurs dans ce projet.
+    blacklist = emails_blacklistes()
+
     for index, lead in enumerate(leads, 1):
         log.info(f"--- [Lead {index}/{len(leads)}] {lead['company_name']} ---")
 
         if deja_contacte(lead["company_name"]):
             log.info(f"'{lead['company_name']}' déjà contacté précédemment, ignoré.")
             resultat.ignores += 1
+            continue
+
+        # Filet de sécurité en plus du filtrage déjà fait en amont par
+        # email_enricher.py (qui écarte déjà les emails à risque avant même
+        # d'écrire leads.json) : couvre un leads.json généré par une version
+        # antérieure du pipeline, ou modifié manuellement. Ni un succès ni
+        # un échec métier — juste un lead qu'on refuse sciemment de risquer.
+        a_risque, raison = email_blackliste_ou_a_risque(lead["email"], blacklist=blacklist)
+        if a_risque:
+            log.warning(f"Email de '{lead['company_name']}' écarté ({raison}) : {lead['email']}")
+            resultat.a_risque += 1
             continue
 
         pitch = generer_pitch(lead)
@@ -437,7 +456,10 @@ def process_pipeline() -> ResultatTraitement:
 
         time.sleep(random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC))
 
-    if resultat.succes == 0 and resultat.echecs == 0 and resultat.doublons == 0 and resultat.total > 0:
+    if (
+        resultat.succes == 0 and resultat.echecs == 0 and resultat.doublons == 0
+        and resultat.a_risque == 0 and resultat.total > 0
+    ):
         # Tous les leads chargés étaient déjà contactés (cas normal d'un run
         # répété sur le même leads.json, ex: bouton "Traitement IA des leads"
         # cliqué deux fois) — jamais un échec, rien de neuf à signaler.
@@ -445,8 +467,8 @@ def process_pipeline() -> ResultatTraitement:
 
     log.info(
         f"=== Terminé : {resultat.succes} succès / {resultat.echecs} échecs / "
-        f"{resultat.doublons} doublon(s) / {resultat.ignores} déjà contacté(s) "
-        f"sur {resultat.total} leads ==="
+        f"{resultat.doublons} doublon(s) / {resultat.a_risque} email(s) à risque écarté(s) / "
+        f"{resultat.ignores} déjà contacté(s) sur {resultat.total} leads ==="
     )
     return resultat
 

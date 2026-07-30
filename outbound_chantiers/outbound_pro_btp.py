@@ -34,6 +34,7 @@ import requests
 
 from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking
+from email_validator import email_exploitable
 from outbound_chantiers.config import (
     AGENCY_NAME,
     CLIENT_FINAL,
@@ -310,6 +311,14 @@ def lancer_campagne_initiale(limite: int = 20) -> None:
     for acteur in acteurs:
         if not acteur.get("email"):
             continue
+        # Filet de sécurité avant l'envoi (le filtrage blacklist a déjà eu
+        # lieu ci-dessus) : couvre un acteur entré en base avant ce
+        # correctif, ou dont l'email n'a pas transité par
+        # enrichir_acteurs_pro.py::email_valide (voir email_validator.py).
+        exploitable, raison = email_exploitable(acteur["email"])
+        if not exploitable:
+            log.warning(f"Premier contact annulé pour {acteur['nom_entreprise']} ({raison}) : {acteur['email']}")
+            continue
         sujet, corps = message_premier_contact(acteur)
         if envoyer_email(acteur["email"], sujet, corps, lead_id=acteur["id"]):
             supabase_patch(acteur["id"], {
@@ -357,6 +366,12 @@ def lancer_relances() -> None:
 
     for acteur in acteurs:
         if blacklist and (acteur.get("email") or "").strip().lower() in blacklist:
+            continue
+
+        # Voir la même vérification dans lancer_campagne_initiale ci-dessus.
+        exploitable, raison = email_exploitable(acteur.get("email") or "")
+        if not exploitable:
+            log.warning(f"Relance annulée pour {acteur['nom_entreprise']} ({raison}) : {acteur.get('email')}")
             continue
 
         if budget_restant <= 0:

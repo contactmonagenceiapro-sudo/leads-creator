@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from supabase import create_client
 
 from email_blacklist import emails_blacklistes
+from email_validator import email_exploitable
 
 load_dotenv()
 
@@ -162,8 +163,13 @@ def run_ceo_analysis() -> None:
         company = lead.get("company") or "votre entreprise"
         target_email = lead.get("email")
 
-        if not target_email or "@" not in target_email or "." not in target_email:
-            log.warning(f"Email invalide ignoré pour {company} : {target_email}")
+        # Filet de sécurité avant l'envoi (en plus du filtrage blacklist déjà
+        # fait par get_leads_from_supabase, et de celui fait en amont par
+        # email_enricher.py/lead_worker.py) : couvre un lead entré en base
+        # avant ce correctif, ou par un autre chemin — voir email_validator.py.
+        exploitable, raison = email_exploitable(target_email)
+        if not exploitable:
+            log.warning(f"Email écarté pour {company} ({raison}) : {target_email}")
             continue
 
         try:
