@@ -13,8 +13,9 @@ dans st.secrets, jamais dans os.environ — mais tout le reste du projet
 (scripts lancés en subprocess : ceo_agent.py, mail_processor.py...) lit sa
 config via os.getenv(). Ce pont est nécessaire pour qu'un subprocess hérite
 bien de ces valeurs (subprocess.Popen(..., env=os.environ.copy()) dans
-process_runner.py). Sans effet en dev local (st.secrets vide si aucun
-fichier .streamlit/secrets.toml n'existe).
+process_runner.py). En dev local, st.secrets est vide (aucun fichier
+.streamlit/secrets.toml n'existe) : la config vient alors uniquement de
+.env, chargé plus bas dans ce module.
 
 Trois formats acceptés dans l'éditeur de secrets Streamlit Cloud (voir
 dashboard/SECRETS.md pour des exemples complets) :
@@ -39,8 +40,20 @@ import json
 import os
 import re
 from collections.abc import Mapping
+from pathlib import Path
 
 import streamlit as st
+from dotenv import load_dotenv
+
+# Charge .env AVANT toute vérification ci-dessous (et avant même l'import de
+# supabase_client, qui appelle aussi load_dotenv() mais bien trop tard : ce
+# module est importé et exécuté en premier depuis app.py). Chemin explicite
+# basé sur la racine du dépôt (parent de dashboard/) plutôt que la recherche
+# par défaut de python-dotenv (remonte depuis le cwd) : streamlit peut être
+# lancé depuis n'importe quel répertoire selon l'endroit d'où la commande
+# `streamlit run` est exécutée. setdefault implicite (override=False par
+# défaut) : n'écrase jamais une variable d'environnement déjà présente.
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 # Seules variables sans lesquelles l'app ne peut littéralement rien faire
 # (aucune donnée n'est accessible sans Supabase, pas de mode dégradé
