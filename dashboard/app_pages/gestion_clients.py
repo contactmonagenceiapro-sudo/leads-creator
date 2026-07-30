@@ -7,7 +7,7 @@ Espace volontairement séparé de "Sourcing / Scraping" (app_pages/sourcing.py) 
 ici on suit et on pilote, là-bas on configure et on lance la recherche.
 """
 
-from datetime import date
+from datetime import date, datetime, timezone
 from urllib.parse import quote
 
 import pandas as pd
@@ -17,6 +17,7 @@ import process_runner
 from common import afficher_suivi, executer_avec_spinner, liste_noms_campagnes, safe_call, to_dataframe
 from contrats_signature import creer_et_envoyer_lien_paiement
 from data_access import (
+    compter_relances_envoyees_depuis,
     creer_remboursement,
     enrichir_lead_pro,
     executer_remboursement,
@@ -358,6 +359,11 @@ with col_b:
 with col_c:
     relance_en_cours = process_runner.est_en_cours("relance")
     if st.button("🔁 Relancer les sans-réponse — artisans", use_container_width=True, disabled=relance_en_cours):
+        # Horodatage capturé AVANT le lancement (pas après) : sert de borne
+        # basse à compter_relances_envoyees_depuis() une fois le subprocess
+        # terminé (voir afficher_suivi ci-dessous) — ne compte que les
+        # relances de CE run, jamais celles d'un run précédent.
+        st.session_state["_relance_artisans_debut_at"] = datetime.now(timezone.utc).isoformat()
         _, err = executer_avec_spinner("Déclenchement en cours...", process_runner.lancer_relance)
         if err:
             st.error(err)
@@ -390,6 +396,17 @@ if campagne_selectionnee:
         libelle=f"Campagne + relances B2B ({campagne_selectionnee})",
         campagne=campagne_selectionnee,
     )
+
+afficher_suivi(
+    "relance",
+    estimation_secondes=90,
+    libelle="Relance des sans-réponse (artisans)",
+    resume_a_la_fin=lambda: (
+        f"{compter_relances_envoyees_depuis(st.session_state['_relance_artisans_debut_at'])} e-mail(s) de relance envoyé(s)."
+        if st.session_state.get("_relance_artisans_debut_at")
+        else None
+    ),
+)
 
 st.divider()
 

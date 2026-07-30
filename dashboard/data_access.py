@@ -99,6 +99,23 @@ def get_stats() -> dict:
     }
 
 
+def compter_relances_envoyees_depuis(depuis_iso: str) -> int:
+    """Nombre de leads (artisans) dont last_relance_at est postérieur à
+    `depuis_iso` — utilisé pour afficher le nombre réel d'e-mails de relance
+    envoyés après un run de relance_prospects.py (lancé en subprocess par
+    process_runner.lancer_relance(), qui ne remonte pas son résultat
+    directement, voir common.py::afficher_suivi). PAS de décorateur
+    @st.cache_data ici : appelé juste après la fin du subprocess, un résultat
+    caché de CACHE_TTL_SECONDES donnerait un compte obsolète ou vide."""
+    try:
+        # Aucune colonne passée à select() : requête HEAD (compte seul, voir
+        # get_stats() ci-dessus pour le pourquoi de cette syntaxe).
+        return supabase.table("leads").select(count="exact").gte("last_relance_at", depuis_iso).execute().count or 0
+    except Exception as e:
+        log.error(f"Erreur lecture du nombre de relances envoyées : {e}")
+        return 0
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDES)
 def get_health() -> dict:
     """État réel des dépendances externes (Supabase, Ollama, Zoho, Discord).

@@ -4,6 +4,7 @@ Fonctions partagées entre les pages du dashboard ai-company
 """
 
 import time
+from typing import Callable
 
 import pandas as pd
 import streamlit as st
@@ -50,7 +51,12 @@ def executer_avec_spinner(libelle_spinner: str, fn, *args, **kwargs):
 
 
 def afficher_suivi(
-    action: str, estimation_secondes: int, libelle: str, timeout_secondes: int = 600, campagne: str | None = None
+    action: str,
+    estimation_secondes: int,
+    libelle: str,
+    timeout_secondes: int = 600,
+    campagne: str | None = None,
+    resume_a_la_fin: Callable[[], str | None] | None = None,
 ) -> None:
     """Affiche une barre de progression + un statut mis à jour en direct
     tant qu'une tâche lancée via process_runner.lancer() (subprocess) est en
@@ -58,6 +64,16 @@ def afficher_suivi(
     action/campagne dans cette session (permet de placer cet appel de façon
     inconditionnelle dans le script, indépendamment du bloc `if
     st.button(...)` qui a pu déclencher la tâche).
+
+    resume_a_la_fin : callback optionnel appelé UNIQUEMENT une fois la
+    tâche terminée avec succès (jamais sur erreur/timeout), sa valeur de
+    retour (ex: "12 e-mail(s) de relance envoyé(s).") est ajoutée au message
+    de succès — utile pour afficher un résultat métier (nombre d'e-mails
+    envoyés...) que le subprocess lui-même ne renvoie pas directement (stdout
+    non capturé par process_runner.lancer(), voir sa docstring). Une
+    exception dans ce callback ne doit jamais empêcher d'afficher le succès
+    de la tâche elle-même — juste ignorée en silence (résultat secondaire,
+    pas la source de vérité sur la réussite du subprocess).
 
     La progression est une ESTIMATION (on ne connaît pas la durée exacte à
     l'avance) plafonnée à 95% tant que le processus n'est pas réellement
@@ -91,7 +107,15 @@ def afficher_suivi(
 
         if etat == "termine":
             barre.progress(100, text=f"{libelle} — terminé")
-            zone_statut.success(f"✅ {libelle} terminé avec succès en {int(ecoule)} secondes.")
+            message = f"✅ {libelle} terminé avec succès en {int(ecoule)} secondes."
+            if resume_a_la_fin:
+                try:
+                    resume = resume_a_la_fin()
+                except Exception:
+                    resume = None
+                if resume:
+                    message += f" {resume}"
+            zone_statut.success(message)
             process_runner.effacer_suivi(action, campagne)
             return
 
