@@ -139,6 +139,22 @@ def get_health() -> dict:
 
     resultat["zoho_configure"] = bool(os.getenv("ZOHO_USER") and os.getenv("ZOHO_PASSWORD"))
     resultat["discord_configure"] = bool(os.getenv("DISCORD_WEBHOOK_URL"))
+
+    # dnspython (email_validator.py::possede_enregistrement_mx) — sans
+    # accès direct aux logs de build Streamlit Cloud, c'est le seul moyen
+    # fiable de confirmer, depuis l'app RÉELLEMENT déployée (même
+    # environnement Python que lead_worker.py/ceo_agent.py/..., lancés en
+    # subprocess), que la dépendance a bien été installée. Si absente, la
+    # vérification MX est silencieusement ignorée (jamais bloquante, voir
+    # email_validator.py) — donc rien ne casse, mais ce filtre de qualité
+    # est alors incomplet.
+    try:
+        import dns.resolver  # noqa: F401
+
+        resultat["dnspython"] = "ok"
+    except ImportError:
+        resultat["dnspython"] = "absent (vérification MX des emails désactivée)"
+
     return resultat
 
 

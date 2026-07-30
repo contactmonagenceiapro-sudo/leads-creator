@@ -115,6 +115,10 @@ with st.sidebar:
                 st.caption(f"{emoji} {cle.capitalize()} : {valeur}")
             st.caption("🟢 Zoho configuré" if health.get("zoho_configure") else "⚪ Zoho non configuré")
             st.caption("🟢 Discord configuré" if health.get("discord_configure") else "⚪ Discord non configuré")
+            st.caption(
+                "🟢 dnspython installé" if health.get("dnspython") == "ok"
+                else f"🔴 dnspython : {health.get('dnspython', '?')}"
+            )
         st.divider()
 
     st.caption("ai-company · dashboard")
