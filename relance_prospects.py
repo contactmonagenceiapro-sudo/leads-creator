@@ -40,6 +40,7 @@ from supabase import create_client
 from alertes import CompteZohoBloqueError
 from ceo_agent import send_email_prospect
 from email_blacklist import emails_blacklistes
+from email_tracking import verifier_budget_quotidien
 from email_validator import email_exploitable
 
 load_dotenv()
@@ -154,6 +155,11 @@ def relancer_prospects() -> None:
 
     log.info(f"{len(prospects)} prospect(s) à relancer.")
 
+    # Budget quotidien PARTAGÉ avec le pipeline B2B (même boîte Zoho, même
+    # réputation à protéger) — voir email_tracking.py::verifier_budget_quotidien.
+    budget_restant = verifier_budget_quotidien()["budget_restant"]
+    log.info(f"Budget d'envoi quotidien restant (partagé avec le B2B) : {budget_restant}")
+
     for i, lead in enumerate(prospects, 1):
         company = lead.get("company") or "votre entreprise"
         email = lead.get("email")
@@ -161,6 +167,13 @@ def relancer_prospects() -> None:
 
         if not email:
             continue
+
+        if budget_restant <= 0:
+            log.warning(
+                f"Plafond de warmup quotidien atteint (partagé avec le B2B) — "
+                f"relances interrompues après {i-1}/{len(prospects)}, reprise possible demain."
+            )
+            break
 
         # Filet de sécurité avant l'envoi (le filtrage blacklist a déjà eu
         # lieu dans recuperer_prospects_a_relancer, voir email_validator.py) :
@@ -196,6 +209,7 @@ def relancer_prospects() -> None:
 
         if succes:
             log.info(f"Relance envoyée à {company}")
+            budget_restant -= 1
         else:
             log.error(f"Échec de la relance pour {company} <{email}>")
 

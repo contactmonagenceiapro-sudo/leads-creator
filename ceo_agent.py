@@ -12,6 +12,7 @@ from supabase import create_client
 
 from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, est_blocage_compte_zoho
 from email_blacklist import emails_blacklistes
+from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_exploitable
 
 load_dotenv()
@@ -101,9 +102,12 @@ def save_report_to_supabase(rapport: str, stats: dict) -> bool:
 
 
 def send_email_prospect(to_email: str, subject: str, body: str, lead_id: str | None = None) -> bool:
-    """Envoi SMTP Zoho en texte brut. `lead_id` n'est plus utilisé pour du
-    tracking (pixel/liens redirigés retirés — dépendaient du backend FastAPI
-    supprimé) ; conservé dans la signature pour ne pas casser les appelants.
+    """Envoi SMTP Zoho en texte brut. Si lead_id est fourni, journalise
+    l'événement 'envoye' (voir email_tracking.py::demarrer_tracking) —
+    nécessaire à verifier_budget_quotidien() pour compter les envois du
+    jour, TOUS pipelines confondus (le pixel/liens trackés à des fins
+    d'ouverture/clic, eux, ont été retirés : dépendaient du backend FastAPI
+    supprimé).
 
     Lève CompteZohoBloqueError (au lieu de renvoyer False) si l'échec est un
     blocage du COMPTE Zoho lui-même (voir alertes.py) — à catcher dans la
@@ -120,6 +124,8 @@ def send_email_prospect(to_email: str, subject: str, body: str, lead_id: str | N
         with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as s:
             s.login(ZOHO_USER, ZOHO_PASSWORD)
             s.sendmail(ZOHO_USER, to_email, msg.as_string())
+        if lead_id:
+            demarrer_tracking("lead_artisan", lead_id)
         return True
     except Exception as e:
         log.error(f"Erreur envoi prospect vers {to_email} : {e}")
@@ -169,9 +175,18 @@ def run_ceo_analysis() -> None:
     emails_sent_count = 0
     total_processed = len(leads)
 
+    # Budget quotidien PARTAGÉ avec le pipeline B2B (même boîte Zoho, même
+    # réputation à protéger) — voir email_tracking.py::verifier_budget_quotidien.
+    budget_restant = verifier_budget_quotidien()["budget_restant"]
+    log.info(f"Budget d'envoi quotidien restant (partagé avec le B2B) : {budget_restant}")
+
     for lead in leads:
         company = lead.get("company") or "votre entreprise"
         target_email = lead.get("email")
+
+        if budget_restant <= 0:
+            log.warning("Plafond de warmup quotidien atteint (partagé avec le B2B) — campagne interrompue, reprise possible demain.")
+            break
 
         # Filet de sécurité avant l'envoi (en plus du filtrage blacklist déjà
         # fait par get_leads_from_supabase, et de celui fait en amont par
@@ -192,6 +207,7 @@ def run_ceo_analysis() -> None:
 
             if success:
                 emails_sent_count += 1
+                budget_restant -= 1
                 log.info(f"Email envoyé avec succès à {company}")
 
                 # "status" doit refléter le même événement que "contacted" :

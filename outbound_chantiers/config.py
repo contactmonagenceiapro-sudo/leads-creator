@@ -130,44 +130,15 @@ DELAI_RELANCE_SUIVANTE_JOURS = int(os.getenv("OUTBOUND_DELAI_RELANCE_2", "7"))
 MAX_RELANCES = int(os.getenv("OUTBOUND_MAX_RELANCES", "2"))
 
 # === Montée en charge progressive du volume d'envoi (warmup, module 4) ===
-# La boîte d'envoi (ZOHO_USER) est PARTAGÉE par toutes les campagnes B2B —
-# ce plafond protège la réputation de cette boîte/ce domaine dans son
-# ensemble, pas celle d'une seule campagne (voir
-# outbound_pro_btp.py::statut_ramp_warmup, qui agrège tous les
-# client_final). Paliers (jours écoulés depuis le tout premier envoi B2B
-# jamais effectué, plafond quotidien).
-#
-# Réduits DRASTIQUEMENT (5/j initial -> 2/j, plateau atteint en 3 semaines
-# -> 2 mois) suite à un blocage de sécurité Zoho réel ("Unusual sending
-# activity detected", SMTP 550 5.4.6) survenu avec les valeurs précédentes
-# — un rejet explicite au niveau du compte, pas un simple ralentissement à
-# prévoir. Complète un warmup tiers (Instantly/Lemwarm/...) — ne le
-# remplace pas : un warmup actif construit la réputation, ce plafond évite
-# d'envoyer un volume réel disproportionné pendant que cette réputation se
-# construit encore. À desserrer prudemment (paliers suivants seulement,
-# jamais en sautant en avant) une fois plusieurs semaines sans nouveau
-# blocage.
-PALIERS_RAMP_ENVOI_QUOTIDIEN = [
-    (0, 2),    # jours 1-6 : 2 e-mails/jour max (grande prudence après blocage)
-    (7, 4),    # semaine 2
-    (14, 8),   # semaine 3
-    (21, 15),  # semaine 4
-    (30, 25),  # semaines 5-6
-    (45, 40),  # semaines 7-8
-    (60, 50),  # au-delà (plateau, atteint en ~2 mois au lieu de 3 semaines)
-]
-
-
-def plafond_envoi_du_jour(jours_ecoules: int) -> int:
-    """Plafond d'e-mails de prospection B2B (premier contact + relances
-    confondus) autorisé aujourd'hui, selon le palier de montée en charge
-    atteint. jours_ecoules=0 le jour du tout premier envoi B2B jamais
-    effectué (voir PALIERS_RAMP_ENVOI_QUOTIDIEN)."""
-    plafond = PALIERS_RAMP_ENVOI_QUOTIDIEN[0][1]
-    for seuil_jours, valeur in PALIERS_RAMP_ENVOI_QUOTIDIEN:
-        if jours_ecoules >= seuil_jours:
-            plafond = valeur
-    return plafond
+# Déplacé dans email_tracking.py (module racine, sans dépendance à ce
+# fichier) : la boîte d'envoi (ZOHO_USER) est partagée par TOUTES les
+# campagnes B2B ET par le pipeline artisans/B2C (ceo_agent.py/
+# lead_worker.py) — le budget quotidien doit donc être calculé au même
+# endroit pour les deux, pas seulement importable depuis ce module
+# B2B-spécifique. Réexporté ici pour ne pas casser les imports existants
+# (ex: outbound_pro_btp.py) — voir email_tracking.py pour le détail et
+# l'historique des paliers.
+from email_tracking import PALIERS_RAMP_ENVOI_QUOTIDIEN, plafond_envoi_du_jour  # noqa: E402,F401
 
 # === Sourcing SIRENE (module 1a) — pagination et objectif de nouveauté ===
 # Nombre d'acteurs INÉDITS (jamais vus en base pour cette campagne) visés

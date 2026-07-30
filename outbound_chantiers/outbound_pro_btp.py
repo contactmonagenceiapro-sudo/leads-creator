@@ -34,7 +34,7 @@ import requests
 
 from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, est_blocage_compte_zoho
 from email_blacklist import emails_blacklistes
-from email_tracking import demarrer_tracking
+from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_exploitable
 from outbound_chantiers.config import (
     AGENCY_NAME,
@@ -47,11 +47,9 @@ from outbound_chantiers.config import (
     OLLAMA_HOST,
     OLLAMA_MODEL_MAIN,
     OLLAMA_TIMEOUT,
-    PALIERS_RAMP_ENVOI_QUOTIDIEN,
     SECTEUR,
     ZOHO_PASSWORD,
     ZOHO_USER,
-    plafond_envoi_du_jour,
 )
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -227,60 +225,16 @@ def message_relance(acteur: dict, numero_relance: int) -> tuple[str, str]:
     return sujet, corps
 
 
-def _email_events_get(params: str) -> list[dict]:
-    """Lecture directe de la table email_events (pas de dédoublonnage avec
-    supabase_get() ci-dessus : celle-ci est verrouillée sur TABLE=
-    "leads_professionnels", email_events est une table distincte —
-    voir sql/init_email_tracking.sql)."""
-    try:
-        reponse = requests.get(
-            f"{SUPABASE_URL}/rest/v1/email_events?{params}", headers=supabase_headers(), timeout=10
-        )
-        return reponse.json() if reponse.status_code == 200 else []
-    except requests.exceptions.RequestException as e:
-        log.error(f"Erreur lecture email_events : {e}")
-        return []
-
-
 def statut_ramp_warmup() -> dict:
     """Où en est la montée en charge progressive du domaine d'envoi
-    (warmup) — voir PALIERS_RAMP_ENVOI_QUOTIDIEN dans config.py. Agrège
-    TOUTES les campagnes B2B (tous client_final confondus, lead_type=
-    'lead_professionnel') : la boîte d'envoi est partagée, sa réputation
-    ne se découpe pas par campagne. N'inclut PAS les envois B2C
-    (ceo_agent.py/lead_worker.py, lead_type='lead_artisan') qui partagent
-    pourtant la même boîte Zoho — limitation connue.
-
-    Utilisée à la fois pour VRAIMENT plafonner l'envoi (lancer_campagne_initiale/
-    lancer_relances ci-dessous) et pour l'afficher côté dashboard
-    (api/main.py::GET /outbound/warmup_status) — un seul calcul, deux usages,
-    jamais deux sources de vérité qui pourraient diverger."""
-    premiers = _email_events_get(
-        "select=created_at&type_evenement=eq.envoye&lead_type=eq.lead_professionnel"
-        "&order=created_at.asc&limit=1"
-    )
-    maintenant = datetime.now(timezone.utc)
-
-    if not premiers:
-        jour_ramp = 1  # tout premier envoi B2B jamais effectué : c'est aujourd'hui le jour 1
-    else:
-        premier_envoi = _parser_horodatage(premiers[0]["created_at"])
-        jour_ramp = (maintenant.date() - premier_envoi.date()).days + 1
-
-    plafond_jour = plafond_envoi_du_jour(jour_ramp - 1)
-
-    debut_jour_iso = maintenant.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    envoyes_aujourdhui = len(_email_events_get(
-        f"select=id&type_evenement=eq.envoye&lead_type=eq.lead_professionnel&created_at=gte.{debut_jour_iso}"
-    ))
-
-    return {
-        "jour_ramp": jour_ramp,
-        "plafond_jour": plafond_jour,
-        "envoyes_aujourdhui": envoyes_aujourdhui,
-        "budget_restant": max(0, plafond_jour - envoyes_aujourdhui),
-        "paliers": PALIERS_RAMP_ENVOI_QUOTIDIEN,
-    }
+    (warmup) — voir email_tracking.py::verifier_budget_quotidien(), dont
+    cette fonction n'est plus qu'un alias (conservé pour ne pas casser les
+    appelants existants, ex: dashboard/data_access.py::get_warmup_status).
+    Agrège maintenant TOUS les envois de prospection, B2B ET artisans/B2C
+    confondus — la boîte d'envoi est partagée, sa réputation ne se découpe
+    ni par campagne ni par pipeline (ancienne limitation : le B2C n'était
+    pas compté alors qu'il partage la même boîte Zoho)."""
+    return verifier_budget_quotidien()
 
 
 def lancer_campagne_initiale(limite: int = 20) -> None:

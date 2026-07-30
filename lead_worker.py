@@ -39,6 +39,7 @@ from dotenv import load_dotenv
 from alertes import CompteZohoBloqueError
 from ceo_agent import send_email_prospect
 from email_blacklist import emails_blacklistes
+from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_blackliste_ou_a_risque
 
 load_dotenv()
@@ -107,6 +108,7 @@ class ResultatTraitement:
     doublons: int = 0
     a_risque: int = 0
     interrompu_bloque_compte: bool = False
+    interrompu_budget_quotidien: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +382,16 @@ def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool | None:
 
     if reponse.status_code in (200, 201):
         log.info(f"Lead '{lead['company_name']}' upserté avec succès dans Supabase (code {reponse.status_code})")
+        if envoi_reussi:
+            # Journalise l'envoi pour le budget quotidien partagé (voir
+            # email_tracking.py::verifier_budget_quotidien) — l'id Supabase
+            # n'est connu qu'après cet upsert (leads.json n'en a pas).
+            try:
+                lignes = reponse.json()
+                if lignes:
+                    demarrer_tracking("lead_artisan", lignes[0]["id"])
+            except (ValueError, KeyError, IndexError):
+                pass
         return True
 
     if _conflit_email_deja_existant(reponse):
@@ -416,6 +428,12 @@ def process_pipeline() -> ResultatTraitement:
     # ailleurs dans ce projet.
     blacklist = emails_blacklistes()
 
+    # Budget quotidien PARTAGÉ avec le pipeline B2B (même boîte Zoho, même
+    # réputation à protéger) — voir email_tracking.py::verifier_budget_quotidien.
+    # Décrémenté localement à chaque envoi réussi, jamais recalculé par lead.
+    budget_restant = verifier_budget_quotidien()["budget_restant"]
+    log.info(f"Budget d'envoi quotidien restant (partagé avec le B2B) : {budget_restant}")
+
     for index, lead in enumerate(leads, 1):
         log.info(f"--- [Lead {index}/{len(leads)}] {lead['company_name']} ---")
 
@@ -423,6 +441,14 @@ def process_pipeline() -> ResultatTraitement:
             log.info(f"'{lead['company_name']}' déjà contacté précédemment, ignoré.")
             resultat.ignores += 1
             continue
+
+        if budget_restant <= 0:
+            log.warning(
+                f"Plafond de warmup quotidien atteint (partagé avec le B2B) — "
+                f"traitement interrompu après [Lead {index}/{len(leads)}], reprise possible demain."
+            )
+            resultat.interrompu_budget_quotidien = True
+            break
 
         # Filet de sécurité en plus du filtrage déjà fait en amont par
         # email_enricher.py (qui écarte déjà les emails à risque avant même
@@ -464,19 +490,27 @@ def process_pipeline() -> ResultatTraitement:
         else:
             resultat.echecs += 1
 
+        if envoi_reussi:
+            budget_restant -= 1
+
         time.sleep(random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC))
 
     if (
         resultat.succes == 0 and resultat.echecs == 0 and resultat.doublons == 0
         and resultat.a_risque == 0 and resultat.total > 0
-        and not resultat.interrompu_bloque_compte
+        and not resultat.interrompu_bloque_compte and not resultat.interrompu_budget_quotidien
     ):
         # Tous les leads chargés étaient déjà contactés (cas normal d'un run
         # répété sur le même leads.json, ex: bouton "Traitement IA des leads"
         # cliqué deux fois) — jamais un échec, rien de neuf à signaler.
         log.info("Aucun nouveau lead à traiter (tous déjà contactés).")
 
-    suffixe_interruption = " — INTERROMPU (compte Zoho bloqué)" if resultat.interrompu_bloque_compte else ""
+    if resultat.interrompu_bloque_compte:
+        suffixe_interruption = " — INTERROMPU (compte Zoho bloqué)"
+    elif resultat.interrompu_budget_quotidien:
+        suffixe_interruption = " — INTERROMPU (plafond de warmup quotidien atteint, reprise demain)"
+    else:
+        suffixe_interruption = ""
     log.info(
         f"=== Terminé : {resultat.succes} succès / {resultat.echecs} échecs / "
         f"{resultat.doublons} doublon(s) / {resultat.a_risque} email(s) à risque écarté(s) / "
