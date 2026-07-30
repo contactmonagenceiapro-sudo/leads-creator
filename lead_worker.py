@@ -130,6 +130,7 @@ def charger_leads(chemin: Path = LEADS_FILE) -> list[dict]:
         return []
 
     leads_valides = []
+    emails_vus: dict[str, str] = {}  # email normalisé -> company_name déjà retenu
     champs_requis = ("company_name", "industry", "weakness", "email")
     for i, lead in enumerate(data):
         if not isinstance(lead, dict) or not all(champ in lead for champ in champs_requis):
@@ -141,11 +142,28 @@ def charger_leads(chemin: Path = LEADS_FILE) -> list[dict]:
         # cf. email_source posé par scraper_batiment.py/email_enricher.py).
         # Sans email, aucun envoi n'est possible : inutile de conserver ces
         # leads dans ce pipeline de prospection immédiate.
-        if not lead.get("email"):
+        email = (lead.get("email") or "").strip().lower()
+        if not email:
             continue
+        # Deux entreprises DIFFÉRENTES (SIREN distincts) peuvent partager la
+        # même adresse email (accueil commun, franchise...) — cas vécu :
+        # 'ICONE' et '[ICONE]', deux SIREN différents, même
+        # contact@icone.fr. Un seul email = une seule boîte de réception :
+        # inutile (et source d'échec permanent sur idx_leads_email_unique,
+        # voir inserer_lead) de tenter d'insérer/contacter les deux. On ne
+        # garde que la première occurrence, jamais un choix arbitraire côté
+        # base — le doublon est filtré ICI, une fois pour toutes, plutôt que
+        # de retenter et échouer à chaque run.
+        if email in emails_vus:
+            log.warning(
+                f"Lead '{lead['company_name']}' ignoré : email {email} déjà utilisé par "
+                f"'{emails_vus[email]}' — une seule boîte mail, un seul lead contacté."
+            )
+            continue
+        emails_vus[email] = lead["company_name"]
         leads_valides.append(lead)
 
-    log.info(f"{len(leads_valides)}/{len(data)} leads retenus après filtre qualité (email requis)")
+    log.info(f"{len(leads_valides)}/{len(data)} leads retenus après filtre qualité (email requis, sans doublon d'email)")
     return leads_valides
 
 
