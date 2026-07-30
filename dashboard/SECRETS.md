@@ -95,6 +95,33 @@ Les deux formats (variables individuelles `CLE = "valeur"` ET bloc `ENV`)
 peuvent coexister sans conflit — en cas de doublon, la variable individuelle
 est prioritaire. Voir `dashboard/secrets_loader.py` pour l'implémentation.
 
+## Autre alternative : découper une valeur trop longue (`SUPABASE_KEY_1`, `SUPABASE_KEY_2`...)
+
+Si même le format `ENV` sur une seule ligne est rejeté ou tronqué par
+l'éditeur (certaines valeurs, comme la clé `SUPABASE_KEY`, sont un très long
+JWT — l'éditeur de secrets Streamlit Cloud a déjà montré des limites sur les
+champs très longs), il est possible de découper n'importe quelle variable en
+plusieurs, numérotées à partir de `1`, en gardant le format TOML standard :
+
+```toml
+SUPABASE_URL = "https://xxxx.supabase.co"
+
+# SUPABASE_KEY sera reconstituée automatiquement par simple concaténation,
+# dans l'ordre des numéros — coupez la valeur n'importe où, du moment que les
+# morceaux mis bout à bout redonnent la clé complète.
+SUPABASE_KEY_1 = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIs"
+SUPABASE_KEY_2 = "InJlZiI6Inh4eHgiLCJyb2xlIjoic2VydmljZV9yb2xlIiwiaWF0IjoxN..."
+SUPABASE_KEY_3 = "...reste de la signature..."
+```
+
+Règles : la séquence doit commencer à `1` et ne pas avoir de trou
+(`CLE_1`, `CLE_2`, `CLE_3`, jamais `CLE_1`/`CLE_3` seuls) ; si `SUPABASE_KEY`
+existe aussi telle quelle en plus des `SUPABASE_KEY_N`, c'est elle qui est
+utilisée (aucun conflit, juste une priorité). Ce mécanisme fonctionne pour
+n'importe quelle variable, pas seulement `SUPABASE_KEY`. Voir
+`dashboard/secrets_loader.py::_reassembler_cles_decoupees` pour
+l'implémentation.
+
 ## Pas de webhook à configurer
 
 Les anciens webhooks Stripe/Yousign (backend FastAPI, supprimé) sont

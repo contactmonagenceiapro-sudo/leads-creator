@@ -16,7 +16,7 @@ bien de ces valeurs (subprocess.Popen(..., env=os.environ.copy()) dans
 process_runner.py). Sans effet en dev local (st.secrets vide si aucun
 fichier .streamlit/secrets.toml n'existe).
 
-Deux formats acceptés dans l'éditeur de secrets Streamlit Cloud (voir
+Trois formats acceptés dans l'éditeur de secrets Streamlit Cloud (voir
 dashboard/SECRETS.md pour des exemples complets) :
 1. Format TOML standard, une variable par ligne : CLE = "valeur".
 2. Repli à plat, une seule clé « ENV » contenant TOUTES les variables au
@@ -24,6 +24,10 @@ dashboard/SECRETS.md pour des exemples complets) :
    Streamlit déforme un TOML multi-lignes (guillemets substitués,
    retours à la ligne perdus au collage...) : un seul champ, une seule
    paire de guillemets, beaucoup moins de surface pour ce genre de bug.
+3. Découpage d'une valeur trop longue pour un champ de l'éditeur (typique
+   des clés Supabase, des JWT très longs) en plusieurs variables
+   CLE_1, CLE_2, CLE_3... reconstituées ici par concaténation dans l'ordre —
+   voir _reassembler_cles_decoupees().
 
 À appeler UNE SEULE FOIS, en tout premier dans app.py — avant tout import de
 auth/data_access/supabase_client (qui échoueraient de façon bien moins
@@ -33,6 +37,7 @@ lisible si SUPABASE_URL/SUPABASE_KEY manquent).
 import base64
 import json
 import os
+import re
 from collections.abc import Mapping
 
 import streamlit as st
@@ -47,6 +52,54 @@ CLES_CRITIQUES = ("SUPABASE_URL", "SUPABASE_KEY")
 # Nom de la clé de repli "tout-en-un" (voir docstring du module et
 # dashboard/SECRETS.md) — acceptée en majuscule ou minuscule.
 CLES_BLOC_ENV = ("ENV", "env")
+
+# Reconnaît CLE_1, CLE_2... (découpage d'une valeur trop longue pour un
+# champ de l'éditeur Streamlit, voir _reassembler_cles_decoupees) — le
+# numéro doit être en toute fin de nom, précédé d'un underscore.
+_MOTIF_CLE_DECOUPEE = re.compile(r"^(.+)_(\d+)$")
+
+
+def _reassembler_cles_decoupees(secrets_disponibles: dict) -> dict[str, str]:
+    """Reconstitue les valeurs découpées en plusieurs variables CLE_1, CLE_2,
+    CLE_3... (voir docstring du module, format 3) — utile quand l'éditeur de
+    secrets Streamlit Cloud refuse ou tronque un champ trop long (cas vécu :
+    un JWT Supabase). Une valeur découpée n'est reconstituée que si TOUTES
+    les parties de 1 à N sont présentes et sont des chaînes (sinon ignorée en
+    silence : ce n'est probablement pas un découpage volontaire, juste une
+    variable qui se termine par un chiffre, ex. un nom se terminant par une
+    année)."""
+    # Toutes les parties matchées sont groupées ici, QUEL QUE SOIT leur type
+    # — une partie non-chaîne (ex: section imbriquée par erreur) doit faire
+    # échouer la reconstitution du groupe entier, pas être silencieusement
+    # sautée (ce qui produirait sinon une valeur tronquée sans avertissement).
+    groupes: dict[str, dict[int, object]] = {}
+    for cle, valeur in secrets_disponibles.items():
+        correspondance = _MOTIF_CLE_DECOUPEE.match(cle)
+        if not correspondance:
+            continue
+        base, numero = correspondance.group(1), int(correspondance.group(2))
+        groupes.setdefault(base, {})[numero] = valeur
+
+    reconstituees: dict[str, str] = {}
+    for base, parties in groupes.items():
+        if base in secrets_disponibles:
+            # La clé complète existe aussi telle quelle : pas d'ambiguïté à
+            # lever, elle est déjà prioritaire via setdefault plus loin.
+            continue
+        numeros = sorted(parties)
+        if numeros != list(range(1, len(numeros) + 1)):
+            # Séquence non contiguë à partir de 1 (ex: CLE_2 sans CLE_1, ou
+            # un trou) — probablement pas un découpage volontaire, on
+            # n'invente pas de valeur à moitié reconstruite.
+            continue
+        if not all(isinstance(parties[n], str) for n in numeros):
+            # Une des parties n'est pas une chaîne simple (section imbriquée
+            # par erreur) — on ne reconstruit pas une valeur tronquée en
+            # silence.
+            continue
+        reconstituees[base] = "".join(parties[n] for n in numeros)
+
+    return reconstituees
 
 
 def _parser_bloc_env(texte: str) -> dict[str, str]:
@@ -126,6 +179,16 @@ def _charger_secrets_dans_environ() -> list[str]:
                 os.environ.setdefault(cle, valeur)
         except Exception as e:
             avertissements.append(f"Bloc « {cle_bloc} » illisible : {e}")
+
+    # Découpage CLE_1/CLE_2/... (voir docstring du module, format 3) —
+    # traité en dernier, avec la même priorité "setdefault" que les autres
+    # formats : une variable déjà chargée (clé individuelle ou bloc ENV)
+    # n'est jamais écrasée par une reconstitution.
+    try:
+        for cle, valeur in _reassembler_cles_decoupees(secrets_disponibles).items():
+            os.environ.setdefault(cle, valeur)
+    except Exception as e:
+        avertissements.append(f"Reconstitution des clés découpées (CLE_1, CLE_2...) impossible : {e}")
 
     return avertissements
 
