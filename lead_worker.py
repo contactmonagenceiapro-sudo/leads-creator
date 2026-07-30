@@ -98,6 +98,8 @@ class ResultatTraitement:
     total: int = 0
     succes: int = 0
     echecs: int = 0
+    ignores: int = 0
+    doublons: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +263,23 @@ def deja_contacte(company_name: str) -> bool:
 # PERSISTANCE (upsert Supabase direct)
 # ---------------------------------------------------------------------------
 
-def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool:
+def _conflit_email_deja_existant(reponse: requests.Response) -> bool:
+    """Vrai si l'échec Supabase est UNIQUEMENT dû à idx_leads_email_unique
+    (code Postgres 23505, contrainte email) — voir inserer_lead. Un email
+    peut légitimement déjà exister sur une AUTRE ligne (nom d'entreprise
+    scrapé différemment d'un run à l'autre pour la même société) : ce n'est
+    pas un problème d'infra/API à traiter comme un échec, juste un doublon
+    de données à ignorer."""
+    if reponse.status_code != 409:
+        return False
+    try:
+        corps = reponse.json()
+    except ValueError:
+        return False
+    return corps.get("code") == "23505" and "email" in (corps.get("message") or "").lower()
+
+
+def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool | None:
     """Upsert le lead dans Supabase directement, avec anti-doublon sur
     l'entreprise (on_conflict=company + resolution=merge-duplicates).
 
@@ -273,6 +291,21 @@ def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool:
     l'entreprise (company), lui, est toujours renseigné et constitue la clé
     d'identité stable côté Supabase (contrainte idx_leads_company_unique,
     cf. sql/init.sql).
+
+    MAIS idx_leads_email_unique (contrainte historique, jamais retirée)
+    existe TOUJOURS en parallèle : Postgres ne résout un conflit ON CONFLICT
+    que sur la contrainte explicitement ciblée (company) — un email déjà
+    présent sur une AUTRE ligne (même entreprise scrapée sous un nom
+    légèrement différent d'un run à l'autre) fait donc toujours échouer cet
+    upsert avec un 409, même si l'entreprise elle-même n'est pas en doublon.
+    Sans distinction, ce cas — un simple doublon de données, pas un problème
+    d'infra — comptait comme un échec métier à part entière (cf. code retour
+    ci-dessous, cas vécu : lead_worker.py sorti en code 1 pour cette seule
+    raison alors qu'aucune tentative n'avait réellement échoué).
+
+    Renvoie True (upsert réussi), False (échec réel : réseau, autre
+    contrainte...), ou None (doublon d'email bénin, voir ci-dessus — ni un
+    succès ni un échec).
 
     envoi_reussi reflète si l'email de prospection a réellement été envoyé
     (cf. process_pipeline) : si oui, contacted/status/contacted_at sont mis à
@@ -324,6 +357,14 @@ def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool:
         log.info(f"Lead '{lead['company_name']}' upserté avec succès dans Supabase (code {reponse.status_code})")
         return True
 
+    if _conflit_email_deja_existant(reponse):
+        log.warning(
+            f"Lead '{lead['company_name']}' non inséré : l'email {lead['email']} existe déjà "
+            "sur une autre fiche — doublon probable (même entreprise scrapée sous un nom "
+            "différent), pas une erreur à traiter."
+        )
+        return None
+
     log.error(f"Échec Supabase pour '{lead['company_name']}' (code {reponse.status_code}) : {reponse.text}")
     return False
 
@@ -340,7 +381,7 @@ def process_pipeline() -> ResultatTraitement:
     resultat = ResultatTraitement(total=len(leads))
 
     if not leads:
-        log.warning("Aucun lead valide à traiter, arrêt.")
+        log.info("Aucun nouveau lead à traiter (leads.json vide ou sans lead exploitable).")
         return resultat
 
     log.info(f"{len(leads)} leads valides chargés, début du traitement...")
@@ -350,6 +391,7 @@ def process_pipeline() -> ResultatTraitement:
 
         if deja_contacte(lead["company_name"]):
             log.info(f"'{lead['company_name']}' déjà contacté précédemment, ignoré.")
+            resultat.ignores += 1
             continue
 
         pitch = generer_pitch(lead)
@@ -365,24 +407,39 @@ def process_pipeline() -> ResultatTraitement:
         else:
             log.error(f"Échec d'envoi à {lead['company_name']} <{lead['email']}>")
 
-        if inserer_lead(lead, pitch, envoi_reussi):
+        resultat_insert = inserer_lead(lead, pitch, envoi_reussi)
+        if resultat_insert is True:
             resultat.succes += 1
+        elif resultat_insert is None:
+            resultat.doublons += 1
         else:
             resultat.echecs += 1
 
         time.sleep(random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC))
 
+    if resultat.succes == 0 and resultat.echecs == 0 and resultat.doublons == 0 and resultat.total > 0:
+        # Tous les leads chargés étaient déjà contactés (cas normal d'un run
+        # répété sur le même leads.json, ex: bouton "Traitement IA des leads"
+        # cliqué deux fois) — jamais un échec, rien de neuf à signaler.
+        log.info("Aucun nouveau lead à traiter (tous déjà contactés).")
+
     log.info(
-        f"=== Terminé : {resultat.succes} succès / {resultat.echecs} échecs "
+        f"=== Terminé : {resultat.succes} succès / {resultat.echecs} échecs / "
+        f"{resultat.doublons} doublon(s) / {resultat.ignores} déjà contacté(s) "
         f"sur {resultat.total} leads ==="
     )
     return resultat
 
 
 def main() -> int:
+    """Code retour : 0 tant qu'aucune tentative n'a RÉELLEMENT échoué
+    (échec Ollama, envoi ou écriture Supabase), y compris quand il n'y avait
+    rien à faire (leads.json vide, ou tous les leads déjà contactés) — ce
+    n'est pas une erreur, juste un run sans action nécessaire (cas vécu :
+    172 leads tous déjà contactés faisait sortir ce script en code 1 avant
+    ce correctif, rapporté à tort comme une erreur bloquante dans le
+    dashboard)."""
     resultat = process_pipeline()
-    if resultat.total == 0:
-        return 1
     return 0 if resultat.echecs == 0 else 1
 
 
