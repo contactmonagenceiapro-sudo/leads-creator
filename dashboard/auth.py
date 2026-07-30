@@ -26,6 +26,26 @@ _CLES_SESSION = ("auth_connecte", "auth_role", "auth_campagnes", "auth_email")
 _MOTIF_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
+def _lecture_supabase_protegee(requete):
+    """Exécute une lecture Supabase (.execute().data) en transformant toute
+    erreur (réseau — httpx.ConnectError/TimeoutException si Supabase ou le
+    réseau est momentanément indisponible — ou autre) en DataAccessError
+    lisible. Nécessaire ici en particulier : auth.py est le tout premier
+    code métier exécuté à chaque connexion, avant que quoi que ce soit
+    d'autre n'ait eu l'occasion de vérifier que Supabase répond (data_access.py
+    protège déjà ses propres lectures de la même façon, mais auth.py a sa
+    propre logique Supabase indépendante — voir _connecter/_creer_compte)."""
+    try:
+        return requete.execute().data
+    except DataAccessError:
+        raise
+    except Exception as e:
+        raise DataAccessError(
+            "Connexion à la base de données impossible pour le moment (réseau "
+            "ou service Supabase indisponible) — réessaie dans quelques instants."
+        ) from e
+
+
 def utilisateur_connecte() -> bool:
     return bool(st.session_state.get("auth_connecte"))
 
@@ -49,9 +69,8 @@ def deconnexion() -> None:
 def _connecter(email: str, mot_de_passe: str) -> None:
     """Reprend la logique exacte de l'ancien POST /auth/login (api/main.py),
     sans émission de jeton : le résultat est stocké directement en session."""
-    utilisateurs = (
-        supabase.table("utilisateurs_dashboard")
-        .select("*").eq("email", email).eq("actif", True).execute().data
+    utilisateurs = _lecture_supabase_protegee(
+        supabase.table("utilisateurs_dashboard").select("*").eq("email", email).eq("actif", True)
     )
     if not utilisateurs:
         raise DataAccessError("Identifiants invalides")
@@ -68,9 +87,8 @@ def _connecter(email: str, mot_de_passe: str) -> None:
     if not mot_de_passe_valide:
         raise DataAccessError("Identifiants invalides")
 
-    liens = (
-        supabase.table("utilisateur_campagnes")
-        .select("client_final").eq("utilisateur_id", utilisateur["id"]).execute().data
+    liens = _lecture_supabase_protegee(
+        supabase.table("utilisateur_campagnes").select("client_final").eq("utilisateur_id", utilisateur["id"])
     )
     campagnes_autorisees_ = [l["client_final"] for l in liens]
 
@@ -94,7 +112,9 @@ def _creer_compte(email: str, mot_de_passe: str) -> str:
     if len(mot_de_passe.encode("utf-8")) > 72:
         raise DataAccessError("Le mot de passe ne doit pas dépasser 72 caractères")
 
-    existants = supabase.table("utilisateurs_dashboard").select("id").eq("email", email).execute().data
+    existants = _lecture_supabase_protegee(
+        supabase.table("utilisateurs_dashboard").select("id").eq("email", email)
+    )
     if existants:
         raise DataAccessError("Un compte existe déjà avec cet e-mail")
 
