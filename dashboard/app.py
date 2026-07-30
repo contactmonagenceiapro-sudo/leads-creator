@@ -133,12 +133,13 @@ if est_admin():
         "app_pages/administration_contrats.py", title="Administration & Contrats", icon="📑"
     )
     page_deliverabilite = st.Page("app_pages/deliverabilite.py", title="Délivrabilité", icon="📶")
+    page_suivi = st.Page("app_pages/suivi_resultats.py", title="Suivi & Résultats", icon="📈")
     # Portail Client accessible en aperçu à l'admin (choix de la campagne à
     # prévisualiser géré dans portail_client.py) — pour pouvoir tester
     # directement depuis l'interface ce que voit un compte client.
     page_portail_client = st.Page("app_pages/portail_client.py", title="Portail Client (aperçu)", icon="📊")
     pg = st.navigation(
-        [page_sourcing, page_gestion, page_administration, page_deliverabilite, page_portail_client]
+        [page_sourcing, page_gestion, page_administration, page_deliverabilite, page_suivi, page_portail_client]
     )
 else:
     page_client = st.Page("app_pages/portail_client.py", title="Mon espace", icon="📊")

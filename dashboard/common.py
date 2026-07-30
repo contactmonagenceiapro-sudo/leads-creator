@@ -3,7 +3,9 @@ Fonctions partagées entre les pages du dashboard ai-company
 (app.py, app_pages/sourcing.py, app_pages/gestion_clients.py).
 """
 
+import re
 import time
+from datetime import datetime, timezone
 from typing import Callable
 
 import pandas as pd
@@ -48,6 +50,29 @@ def executer_avec_spinner(libelle_spinner: str, fn, *args, **kwargs):
             return safe_call(fn, *args, **kwargs)
     except Exception as e:
         return None, f"Erreur inattendue : {e}"
+
+
+_MOTIF_LIGNE_RESUME = re.compile(r"=== .+ ===")
+
+
+def _resume_depuis_log(action: str, campagne: str | None) -> str | None:
+    """Repli quand aucun `resume_a_la_fin` n'est fourni à afficher_suivi() :
+    la plupart des scripts (lead_worker.py, mail_processor.py,
+    scraper_batiment.py, outbound_chantiers/pipeline...) journalisent une
+    ligne récapitulative de la forme « === Terminé : ... === » juste avant
+    de s'arrêter — on la retrouve en cherchant la DERNIÈRE ligne du log qui
+    contient ce motif, plutôt que d'exiger que chaque appelant fournisse
+    explicitement un callback. Recherché n'importe où dans la ligne (pas
+    ancré en début) : le formatteur de certains scripts (lead_worker.py)
+    préfixe chaque ligne d'un tag ('[+] ', '[x] '...). Renvoie None si
+    aucune ligne de ce format n'est trouvée (silencieux, jamais une erreur —
+    un résumé absent n'empêche jamais d'afficher le succès/échec du run
+    lui-même)."""
+    for ligne in reversed(process_runner.dernieres_lignes_log(action, campagne).splitlines()):
+        correspondance = _MOTIF_LIGNE_RESUME.search(ligne)
+        if correspondance:
+            return correspondance.group(0)
+    return None
 
 
 def afficher_suivi(
@@ -107,15 +132,25 @@ def afficher_suivi(
 
         if etat == "termine":
             barre.progress(100, text=f"{libelle} — terminé")
-            message = f"✅ {libelle} terminé avec succès en {int(ecoule)} secondes."
+            resume = None
             if resume_a_la_fin:
                 try:
                     resume = resume_a_la_fin()
                 except Exception:
                     resume = None
-                if resume:
-                    message += f" {resume}"
+            if not resume:
+                resume = _resume_depuis_log(action, campagne)
+            message = f"✅ {libelle} terminé avec succès en {int(ecoule)} secondes."
+            if resume:
+                message += f" {resume}"
             zone_statut.success(message)
+            process_runner.enregistrer_historique(action, campagne, {
+                "termine_a": datetime.now(timezone.utc).isoformat(),
+                "statut": "succes",
+                "duree_secondes": int(ecoule),
+                "returncode": info.get("returncode", 0),
+                "resume": resume,
+            })
             process_runner.effacer_suivi(action, campagne)
             return
 
@@ -129,6 +164,13 @@ def afficher_suivi(
             if log_tail:
                 with st.expander("Détails techniques (fin des logs)"):
                     st.code(log_tail, language=None)
+            process_runner.enregistrer_historique(action, campagne, {
+                "termine_a": datetime.now(timezone.utc).isoformat(),
+                "statut": "erreur",
+                "duree_secondes": int(ecoule),
+                "returncode": info.get("returncode"),
+                "resume": _resume_depuis_log(action, campagne),
+            })
             process_runner.effacer_suivi(action, campagne)
             return
 

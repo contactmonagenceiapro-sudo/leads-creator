@@ -703,6 +703,15 @@ def check_for_replies() -> None:
         log.error("Identifiants Zoho manquants dans .env")
         return
 
+    # Compteurs purement informatifs (dashboard "Suivi et Résultats des
+    # Actions") : ce scan n'a pas de notion de succès/échec par message
+    # (voir la boucle plus bas, chaque branche gère déjà ses propres erreurs
+    # individuellement) — juste un résumé de ce qui a été rencontré, affiché
+    # dans le log final ci-dessous.
+    compteurs = {
+        "bounces": 0, "absences": 0, "negatifs": 0, "positifs": 0, "sans_mot_cle": 0,
+    }
+
     try:
         mail = imaplib.IMAP4_SSL("imap.zoho.eu", 993)
         mail.login(ZOHO_USER, ZOHO_PASSWORD)
@@ -713,6 +722,7 @@ def check_for_replies() -> None:
 
         if not email_ids:
             log.info("📬 Aucun nouveau message non lu.")
+            log.info("=== Scan terminé : 0 message ===")
             mail.logout()
             return
 
@@ -737,6 +747,7 @@ def check_for_replies() -> None:
                 # objectif : ne plus le voir s'accumuler par centaines.
                 marquer_message_traite(mail, num, ZOHO_DOSSIER_BOUNCES_TRAITES)
                 log.info(f"📭 Bounce ({statut_bounce}) marqué comme lu.")
+                compteurs["bounces"] += 1
                 continue
 
             body = ""
@@ -759,6 +770,7 @@ def check_for_replies() -> None:
                 log.info(f"🌴 Réponse automatique d'absence détectée de {sender}{suffixe}")
                 update_lead_absence(sender, contact_alternatif)
                 update_lead_professionnel_absence(sender, contact_alternatif)
+                compteurs["absences"] += 1
                 continue
 
             mot_negatif = contient_un_mot(texte_normalise, MOTS_NEGATIFS)
@@ -766,6 +778,7 @@ def check_for_replies() -> None:
                 log.info(f"🛑 Refus/désinscription détecté de {sender} (mot-clé : {mot_negatif!r})")
                 update_lead_status(sender, "decline")
                 update_lead_professionnel_status(sender, "decline")
+                compteurs["negatifs"] += 1
                 continue
 
             mot_positif = contient_un_mot(texte_normalise, MOTS_POSITIFS)
@@ -774,6 +787,7 @@ def check_for_replies() -> None:
                 update_lead_status(sender, "interested")
                 update_lead_professionnel_status(sender, "interested")
                 send_discord_alert(f"Le prospect {sender} est intéressé par vos services !")
+                compteurs["positifs"] += 1
 
                 lead = recuperer_lead_par_email(sender)
                 if lead:
@@ -782,6 +796,7 @@ def check_for_replies() -> None:
                     log.warning(f"Lead introuvable en base pour {sender}, suivi automatique non envoyé")
             else:
                 log.info(f"Message de {sender} reçu (aucun mot-clé détecté).")
+                compteurs["sans_mot_cle"] += 1
 
         # EXPUNGE unique après la boucle (et non message par message) :
         # supprimer un message en cours d'itération décalerait les numéros
@@ -790,6 +805,12 @@ def check_for_replies() -> None:
             mail.expunge()
 
         mail.logout()
+        log.info(
+            f"=== Scan terminé : {len(email_ids)} message(s) — "
+            f"{compteurs['positifs']} positif(s), {compteurs['negatifs']} négatif(s)/désinscription(s), "
+            f"{compteurs['absences']} absence(s), {compteurs['bounces']} bounce(s), "
+            f"{compteurs['sans_mot_cle']} sans mot-clé ==="
+        )
     except Exception as e:
         log.error(f"Erreur lors du scan : {e}")
 

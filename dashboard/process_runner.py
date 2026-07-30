@@ -82,6 +82,58 @@ def dernieres_lignes_log(action: str, campagne: str | None = None, n: int = 40) 
     return "\n".join(lignes[-n:])
 
 
+HISTORIQUE_MAX_ENTREES = 20
+
+
+def _fichier_historique(action: str, campagne: str | None) -> Path:
+    nom = f"historique_{action}{('_' + campagne) if campagne else ''}.json"
+    return DOSSIER_LOGS / nom
+
+
+def enregistrer_historique(action: str, campagne: str | None, entree: dict) -> None:
+    """Ajoute une entrée à l'historique PERSISTANT (fichier JSON dans
+    logs/) des runs de cette action/campagne — contrairement à
+    statut()/est_en_cours() (st.session_state, invisible d'un autre onglet
+    ou après un redémarrage du serveur), ce fichier survit à tout ça : c'est
+    la seule source fiable pour la page "Suivi et Résultats des Actions"
+    (historique des derniers runs, consultable depuis n'importe quelle
+    session). Conserve au plus HISTORIQUE_MAX_ENTREES entrées (les plus
+    récentes) — jamais un historique illimité qui grossirait indéfiniment.
+    Best-effort : un souci d'écriture ici ne doit jamais faire échouer
+    l'affichage du résultat d'un run (juste un confort d'affichage, pas une
+    donnée métier critique)."""
+    DOSSIER_LOGS.mkdir(exist_ok=True)
+    chemin = _fichier_historique(action, campagne)
+    try:
+        historique = json.loads(chemin.read_text(encoding="utf-8")) if chemin.exists() else []
+        if not isinstance(historique, list):
+            historique = []
+    except (OSError, json.JSONDecodeError):
+        historique = []
+    historique.append(entree)
+    historique = historique[-HISTORIQUE_MAX_ENTREES:]
+    try:
+        chemin.write_text(json.dumps(historique, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def lire_historique(action: str, campagne: str | None = None, limite: int = 10) -> list[dict]:
+    """Dernières entrées de l'historique (voir enregistrer_historique),
+    les plus récentes en premier. Liste vide si rien n'a encore jamais été
+    enregistré pour cette action/campagne (jamais une exception)."""
+    chemin = _fichier_historique(action, campagne)
+    if not chemin.exists():
+        return []
+    try:
+        historique = json.loads(chemin.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(historique, list):
+        return []
+    return list(reversed(historique))[:limite]
+
+
 def construire_env_campagne(
     nom_client: str | None, communes: list[str] | None = None, types_acteur: list[str] | None = None
 ) -> dict:
