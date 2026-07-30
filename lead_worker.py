@@ -149,9 +149,22 @@ def charger_leads(chemin: Path = LEADS_FILE) -> list[dict]:
 # GÉNÉRATION IA (OLLAMA)
 # ---------------------------------------------------------------------------
 
+# Nombre de tentatives (1 essai + N reprises) avant d'abandonner
+# définitivement un lead — un premier appel qui échoue par timeout est
+# SOUVENT dû au chargement à froid du modèle en mémoire par Ollama (plusieurs
+# dizaines de secondes pour un modèle 7B la toute première fois, ou après une
+# période d'inactivité où Ollama l'a déchargé) plutôt qu'à un vrai problème :
+# sans reprise, ce lead échouait définitivement pour une lenteur ponctuelle,
+# alors qu'un deuxième essai juste après (modèle déjà chargé) réussit
+# généralement en quelques secondes.
+TENTATIVES_OLLAMA = int(os.getenv("OLLAMA_TENTATIVES", "2"))
+PAUSE_RETRY_OLLAMA_SEC = 5
+
+
 def generer_pitch(lead: dict) -> str | None:
     """Génère un pitch commercial personnalisé via Ollama. Retourne None en
-    cas d'échec réseau, timeout ou réponse invalide (aucune exception levée).
+    cas d'échec réseau, timeout ou réponse invalide après épuisement des
+    tentatives (aucune exception levée).
 
     Angle commercial : apport de clients qualifiés (génération de leads en
     tant que service), et non plus la refonte de site web des versions
@@ -173,31 +186,49 @@ def generer_pitch(lead: dict) -> str | None:
         f"'Cordialement,' suivi de '{AGENCY_NAME}', rien d'autre après."
     )
 
-    try:
-        reponse = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=OLLAMA_TIMEOUT,
-        )
-        reponse.raise_for_status()
-    except requests.exceptions.Timeout:
-        log.error(f"Timeout Ollama ({OLLAMA_TIMEOUT}s) pour {lead['company_name']}")
-        return None
-    except requests.exceptions.RequestException as erreur:
-        log.error(f"Échec appel Ollama ({OLLAMA_HOST}) pour {lead['company_name']} : {erreur}")
-        return None
+    for tentative in range(1, TENTATIVES_OLLAMA + 1):
+        derniere_tentative = tentative == TENTATIVES_OLLAMA
+        try:
+            reponse = requests.post(
+                f"{OLLAMA_HOST}/api/generate",
+                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
+                timeout=OLLAMA_TIMEOUT,
+            )
+            reponse.raise_for_status()
+        except requests.exceptions.Timeout:
+            niveau = log.error if derniere_tentative else log.warning
+            niveau(
+                f"Timeout Ollama ({OLLAMA_TIMEOUT}s) pour {lead['company_name']} "
+                f"(tentative {tentative}/{TENTATIVES_OLLAMA})"
+            )
+            if derniere_tentative:
+                return None
+            time.sleep(PAUSE_RETRY_OLLAMA_SEC)
+            continue
+        except requests.exceptions.RequestException as erreur:
+            niveau = log.error if derniere_tentative else log.warning
+            niveau(
+                f"Échec appel Ollama ({OLLAMA_HOST}) pour {lead['company_name']} : {erreur} "
+                f"(tentative {tentative}/{TENTATIVES_OLLAMA})"
+            )
+            if derniere_tentative:
+                return None
+            time.sleep(PAUSE_RETRY_OLLAMA_SEC)
+            continue
 
-    try:
-        pitch = reponse.json().get("response", "").strip()
-    except ValueError:
-        log.error(f"Réponse Ollama non-JSON pour {lead['company_name']}")
-        return None
+        try:
+            pitch = reponse.json().get("response", "").strip()
+        except ValueError:
+            log.error(f"Réponse Ollama non-JSON pour {lead['company_name']}")
+            return None
 
-    if not pitch:
-        log.warning(f"Pitch vide généré pour {lead['company_name']}")
-        return None
+        if not pitch:
+            log.warning(f"Pitch vide généré pour {lead['company_name']}")
+            return None
 
-    return pitch
+        return pitch
+
+    return None
 
 
 # ---------------------------------------------------------------------------

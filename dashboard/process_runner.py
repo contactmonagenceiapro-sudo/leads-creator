@@ -34,6 +34,7 @@ from supabase_client import supabase
 
 RACINE_REPO = Path(__file__).resolve().parent.parent
 LEADS_JSON = RACINE_REPO / "leads.json"
+DOSSIER_LOGS = RACINE_REPO / "logs"
 
 
 def leads_json_disponible() -> bool:
@@ -51,6 +52,34 @@ def leads_json_disponible() -> bool:
 
 def _cle_session(action: str, campagne: str | None) -> str:
     return f"_processus_en_cours::{action}::{campagne or '_default_'}"
+
+
+def _fichier_log(action: str, campagne: str | None) -> Path:
+    """Un seul fichier par action/campagne, écrasé à chaque nouveau lancement
+    (voir lancer()) — pas besoin d'historique, juste le run le plus récent
+    (celui qu'afficher_suivi() peut avoir besoin d'inspecter en cas
+    d'erreur)."""
+    nom = f"{action}{('_' + campagne) if campagne else ''}.log"
+    return DOSSIER_LOGS / nom
+
+
+def dernieres_lignes_log(action: str, campagne: str | None = None, n: int = 40) -> str:
+    """Dernières lignes de la sortie (stdout+stderr confondus) du run le plus
+    récent — voir lancer() pour la capture. Nécessaire car
+    subprocess.Popen(...) sans redirection hérite du stdout du process
+    Streamlit lui-même, invisible depuis l'interface (et perdu purement et
+    simplement sur Streamlit Community Cloud) : sans cette capture, un run
+    qui échoue en subprocess (code retour != 0) ne donne AUCUN indice sur la
+    cause depuis le dashboard — seulement rejouable en local, en excluant
+    d'office quiconque n'a pas accès direct au serveur."""
+    chemin = _fichier_log(action, campagne)
+    if not chemin.exists():
+        return ""
+    try:
+        lignes = chemin.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except OSError:
+        return ""
+    return "\n".join(lignes[-n:])
 
 
 def construire_env_campagne(
@@ -98,7 +127,16 @@ def lancer(action: str, campagne: str | None, commande: list[str], env: dict | N
             f"Une tâche « {action} » est déjà en cours{f' pour {campagne}' if campagne else ''} "
             "— attends qu'elle se termine avant d'en relancer une."
         )
-    processus = subprocess.Popen(commande, cwd=str(RACINE_REPO), env=env)
+    DOSSIER_LOGS.mkdir(exist_ok=True)
+    # "w" (pas "a") : un seul run à la fois par action/campagne (voir
+    # est_en_cours ci-dessus), donc ce fichier ne représente jamais qu'UN
+    # SEUL run — celui en cours / le plus récent, jamais un mélange de
+    # plusieurs exécutions passées à trier.
+    fichier_log = open(_fichier_log(action, campagne), "w", encoding="utf-8")
+    processus = subprocess.Popen(
+        commande, cwd=str(RACINE_REPO), env=env, stdout=fichier_log, stderr=subprocess.STDOUT
+    )
+    fichier_log.close()  # le FD dupliqué par Popen dans l'enfant suffit ; inutile de le garder ouvert ici
     st.session_state[_cle_session(action, campagne)] = {
         "processus": processus,
         "demarre_a": datetime.now(timezone.utc),

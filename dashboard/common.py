@@ -125,6 +125,10 @@ def afficher_suivi(
                 f"❌ {libelle} s'est arrêté avec une erreur (code {info.get('returncode')}) "
                 f"après {int(ecoule)} secondes."
             )
+            log_tail = process_runner.dernieres_lignes_log(action, campagne)
+            if log_tail:
+                with st.expander("Détails techniques (fin des logs)"):
+                    st.code(log_tail, language=None)
             process_runner.effacer_suivi(action, campagne)
             return
 
