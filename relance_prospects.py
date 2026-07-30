@@ -53,6 +53,14 @@ DELAI_PREMIERE_RELANCE_JOURS = int(os.getenv("DELAI_PREMIERE_RELANCE_JOURS", "4"
 DELAI_RELANCE_SUIVANTE_JOURS = int(os.getenv("DELAI_RELANCE_SUIVANTE_JOURS", "4"))
 MAX_RELANCES = int(os.getenv("MAX_RELANCES", "2"))
 
+# Pause anti-spam entre deux ENVOIS RÉELS (alignée sur lead_worker.py,
+# ceo_agent.py et outbound_pro_btp.py — tous partagent le même compte Zoho,
+# donc la même limite anti-spam). Portée de 20-45s à 45-90s par défaut suite
+# à un blocage Zoho réel ("Unusual sending activity detected") observé en
+# usage réel — configurable sans toucher au code si besoin de réajuster.
+PAUSE_MIN_SEC = int(os.getenv("PAUSE_ENVOI_MIN_SEC", "45"))
+PAUSE_MAX_SEC = int(os.getenv("PAUSE_ENVOI_MAX_SEC", "90"))
+
 # Un message différent par palier : la 1ère relance rappelle poliment, la
 # dernière prévient explicitement qu'on n'insistera plus (évite de harceler
 # indéfiniment un prospect qui ne souhaite simplement pas répondre).
@@ -176,7 +184,7 @@ def relancer_prospects() -> None:
         supabase.table("leads").update(maj).eq("id", lead["id"]).execute()
 
         if i < len(prospects):
-            pause = random.uniform(20, 45)
+            pause = random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC)
             time.sleep(pause)
 
 

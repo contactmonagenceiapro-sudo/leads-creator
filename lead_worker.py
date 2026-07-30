@@ -55,12 +55,14 @@ OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
 
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
 
-# Pause anti-spam entre deux ENVOIS RÉELS (alignée sur ceo_agent.py) : depuis
-# que ce script envoie l'email immédiatement au lieu de simplement préparer
-# la donnée, une pause de quelques secondes ne suffit plus à éviter de
-# déclencher les filtres anti-spam de Zoho sur des envois en rafale.
-PAUSE_MIN_SEC = 20
-PAUSE_MAX_SEC = 45
+# Pause anti-spam entre deux ENVOIS RÉELS (alignée sur ceo_agent.py,
+# relance_prospects.py et outbound_pro_btp.py — tous partagent le même
+# compte Zoho, donc la même limite anti-spam). Portée de 20-45s à 45-90s par
+# défaut suite à un blocage Zoho réel ("Unusual sending activity detected")
+# observé en usage réel sur un run de ~170 leads — configurable sans
+# toucher au code si besoin de réajuster.
+PAUSE_MIN_SEC = int(os.getenv("PAUSE_ENVOI_MIN_SEC", "45"))
+PAUSE_MAX_SEC = int(os.getenv("PAUSE_ENVOI_MAX_SEC", "90"))
 
 
 # ---------------------------------------------------------------------------

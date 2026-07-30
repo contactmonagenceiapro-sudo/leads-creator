@@ -25,6 +25,15 @@ AGENCY_NAME = os.getenv("AGENCY_NAME", "AI Company")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [CEO] %(message)s")
 log = logging.getLogger(__name__)
 
+# Pause anti-spam entre deux ENVOIS RÉELS (alignée sur lead_worker.py,
+# relance_prospects.py et outbound_pro_btp.py — tous partagent le même
+# compte Zoho, donc la même limite anti-spam). Portée de 20-45s à 45-90s par
+# défaut suite à un blocage Zoho réel ("Unusual sending activity detected")
+# observé en usage réel — configurable sans toucher au code si besoin de
+# réajuster.
+PAUSE_MIN_SEC = int(os.getenv("PAUSE_ENVOI_MIN_SEC", "45"))
+PAUSE_MAX_SEC = int(os.getenv("PAUSE_ENVOI_MAX_SEC", "90"))
+
 
 SOURCES_EMAIL_VERIFIEES = ("email_verifie_site", "domaine_verifie_sans_email")
 
@@ -182,7 +191,7 @@ def run_ceo_analysis() -> None:
                     "contacted_at": datetime.now(timezone.utc).isoformat(),
                 }).eq("id", lead["id"]).execute()
 
-                sleep_time = random.uniform(20, 45)
+                sleep_time = random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC)
                 log.info(f"Pause de {sleep_time:.1f} secondes...")
                 time.sleep(sleep_time)
 
