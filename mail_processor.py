@@ -144,6 +144,58 @@ def update_lead_professionnel_status(email_address: str, new_status: str) -> Non
         log.error(f"Erreur Supabase (leads_professionnels) : {e}")
 
 
+# Statut posé sur un lead dont la réponse est une notification automatique
+# d'absence (OOF) — voir est_reponse_automatique_absence. Volontairement
+# DIFFÉRENT de 'contacte_attente_reponse' : relance_prospects.py filtre
+# strictement sur ce dernier statut, donc un lead 'absent_a_recontacter'
+# n'est plus jamais relancé automatiquement tant qu'il n'a pas été repris
+# manuellement — on ne sait pas quand la personne sera de retour, la
+# relancer au hasard pendant son absence n'a aucun sens.
+STATUT_ABSENCE = "absent_a_recontacter"
+
+
+def update_lead_absence(email_address: str, email_alternatif: str | None) -> None:
+    """Marque le lead 'absent_a_recontacter' suite à une réponse automatique
+    d'absence, et remplace son adresse de contact par l'adresse de repli
+    trouvée dans le message (le cas échéant) — les prochains envois
+    (ceo_agent.py, relance_prospects.py) lisent lead['email'] directement,
+    donc ce remplacement suffit à les rediriger vers le bon contact.
+    email_alternatif est conservé en plus dans sa propre colonne, pour
+    traçabilité (savoir que l'email a été substitué et à partir de quoi)."""
+    maj: dict = {"status": STATUT_ABSENCE}
+    if email_alternatif:
+        maj["email_alternatif"] = email_alternatif
+        maj["email"] = email_alternatif
+    try:
+        response = supabase.table("leads").update(maj).eq("email", email_address).execute()
+        if response.data:
+            suffixe = f" — email remplacé par {email_alternatif}" if email_alternatif else ""
+            log.info(f"🌴 Lead {email_address} marqué absent / à recontacter{suffixe}")
+    except Exception as e:
+        log.error(f"Erreur Supabase (absence) : {e}")
+
+
+def update_lead_professionnel_absence(email_address: str, email_alternatif: str | None) -> None:
+    """Même mécanisme que update_lead_absence, pour la table
+    leads_professionnels (voir update_lead_professionnel_status pour le
+    pourquoi de la double mise à jour)."""
+    maj: dict = {"statut": STATUT_ABSENCE}
+    if email_alternatif:
+        maj["email_alternatif"] = email_alternatif
+        maj["email"] = email_alternatif
+    try:
+        response = (
+            supabase.table("leads_professionnels")
+            .update(maj)
+            .eq("email", email_address)
+            .execute()
+        )
+        if response.data:
+            log.info(f"🌴 Acteur pro {email_address} marqué absent / à recontacter")
+    except Exception as e:
+        log.error(f"Erreur Supabase (leads_professionnels, absence) : {e}")
+
+
 def envoyer_suivi_positif(lead: dict) -> None:
     """Envoie automatiquement (sans intervention manuelle) la présentation
     asynchrone + le lien du formulaire d'intake dès qu'une réponse positive
@@ -435,6 +487,88 @@ def traiter_bounce(sender_brut: str, subject: str, msg: email.message.Message) -
         return "indetermine"
 
 
+# ---------------------------------------------------------------------
+# Réponse automatique d'absence (OOF — "Out Of Office")
+# ---------------------------------------------------------------------
+# Ni un refus ni un intérêt : une notification "je suis actuellement
+# absent(e)" générée automatiquement par le client mail du destinataire.
+# À détecter AVANT les mots-clés positifs/négatifs (comme un bounce) — un
+# message automatique peut contenir accidentellement un mot de ces listes
+# (ex: une signature mentionnant "à bientôt") sans être une vraie réponse.
+
+# Mots-clés couvrant les formulations FR et EN les plus courantes. Recherche
+# en début de mot via contient_un_mot (voir sa docstring) — accepte les
+# variantes conjuguées ("absent"/"absente") sans faux positif sur un mot plus
+# long sans rapport.
+MOTS_ABSENCE = [
+    "reponse automatique", "réponse automatique", "automatic reply", "auto-reply",
+    "autoreply", "absence du bureau", "out of office", "out-of-office",
+    "actuellement absent", "actuellement absente", "actuellement en conges",
+    "actuellement en congés", "je suis en conges", "je suis en congés",
+    "je suis actuellement", "de retour le", "de retour a partir",
+    "de retour à partir", "will be back", "away from the office", "away until",
+    "hors du bureau", "conges annuels", "congés annuels", "on annual leave",
+    "on vacation", "en vacances",
+]
+
+# En-tête standard (RFC 3834) posé par la plupart des autorépondeurs
+# (Outlook, Gmail, Zoho...) — signal le PLUS fiable quand présent (comme
+# Action:/Status: pour un DSN, voir analyser_dsn), donc vérifié en premier
+# dans est_reponse_automatique_absence ; les mots-clés ne servent qu'en
+# repli, quand ce header est absent.
+VALEURS_AUTO_SUBMITTED_ABSENCE = ("auto-replied", "auto-generated")
+
+
+def est_reponse_automatique_absence(msg: email.message.Message, subject: str, texte_normalise: str) -> bool:
+    """Vrai si ce message est une notification automatique d'absence (OOF),
+    jamais une vraie réponse humaine. Vérifie d'abord l'en-tête
+    Auto-Submitted (RFC 3834, le signal le plus fiable), puis retombe sur une
+    recherche de mots-clés dans le sujet + le corps si l'en-tête est absent
+    (tous les clients mail ne le posent pas)."""
+    entete = normaliser(msg.get("Auto-Submitted") or "")
+    if any(entete.startswith(v) for v in VALEURS_AUTO_SUBMITTED_ABSENCE):
+        return True
+    return contient_un_mot(normaliser(subject) + " " + texte_normalise, MOTS_ABSENCE) is not None
+
+
+# Motifs introduisant explicitement un contact de repli ("veuillez prendre
+# contact via X", "merci de contacter X", "please contact X") — vérifiés en
+# PREMIER (signal fiable) avant le repli générique ci-dessous.
+MOTIF_CONTACT_ALTERNATIF = re.compile(
+    r"(?:contacter|contactez|joindre|adressez[- ]vous(?:\s+à)?|"
+    r"ecrivez|écrivez|please\s+contact|reach\s+out\s+to)\s*"
+    r"(?:directement\s*)?(?:via|au|à|a|:)?\s*<?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})>?",
+    re.IGNORECASE,
+)
+
+
+def extraire_contact_alternatif(texte: str, adresse_sender: str, adresse_envoi: str) -> str | None:
+    """Cherche une adresse de repli explicitement mentionnée dans un message
+    d'absence ('veuillez prendre contact via X@y.com'). Repli sur la première
+    adresse du texte qui n'est ni celle de l'expéditeur du message (l'absent
+    lui-même — apparaît quasi systématiquement dans sa propre signature), ni
+    la nôtre, ni une adresse technique connue (voir PREFIXES_ADRESSES_TECHNIQUES,
+    déjà utilisé par extraire_destinataire_repli). Renvoie None si rien de
+    plausible n'est trouvé — jamais une adresse inventée."""
+    match = MOTIF_CONTACT_ALTERNATIF.search(texte)
+    if match:
+        candidate = match.group(1).strip().rstrip(".,;")
+        if candidate.lower() != (adresse_sender or "").strip().lower():
+            return candidate
+
+    adresse_sender_normalisee = (adresse_sender or "").strip().lower()
+    adresse_envoi_normalisee = (adresse_envoi or "").strip().lower()
+    for candidate in MOTIF_EMAIL_GENERIQUE.findall(texte):
+        c = candidate.strip().lower()
+        if c in (adresse_sender_normalisee, adresse_envoi_normalisee):
+            continue
+        if any(c.startswith(p) for p in PREFIXES_ADRESSES_TECHNIQUES):
+            continue
+        return candidate.strip().rstrip(".,;")
+
+    return None
+
+
 def marquer_message_traite(mail: imaplib.IMAP4_SSL, num: bytes, dossier_archive: str = "") -> None:
     """Marque un message IMAP comme lu (\\Seen) une fois son traitement
     métier terminé, pour ne pas laisser les notifications 100% automatiques
@@ -513,6 +647,17 @@ def check_for_replies() -> None:
                 body = msg.get_payload(decode=True).decode(errors="ignore")
 
             texte_normalise = normaliser(body)
+
+            # Vérifié avant les mots-clés positifs/négatifs (comme un bounce,
+            # cf. plus haut) : une notification d'absence est 100%
+            # automatique, jamais une vraie réponse humaine.
+            if est_reponse_automatique_absence(msg, subject, texte_normalise):
+                contact_alternatif = extraire_contact_alternatif(body, sender, ZOHO_USER)
+                suffixe = f" — contact alternatif trouvé : {contact_alternatif}" if contact_alternatif else ""
+                log.info(f"🌴 Réponse automatique d'absence détectée de {sender}{suffixe}")
+                update_lead_absence(sender, contact_alternatif)
+                update_lead_professionnel_absence(sender, contact_alternatif)
+                continue
 
             mot_negatif = contient_un_mot(texte_normalise, MOTS_NEGATIFS)
             if mot_negatif:
