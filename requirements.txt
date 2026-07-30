@@ -1,30 +1,34 @@
 # Environnement pour le développement LOCAL (scripts racine + dashboard).
 # En production, Streamlit Community Cloud utilise dashboard/requirements.txt
 # (co-localisé avec le "main file path" dashboard/app.py, prioritaire sur
-# celui-ci) — les deux fichiers doivent rester synchronisés (mêmes pins).
+# celui-ci) — les deux fichiers doivent rester synchronisés (mêmes paquets).
 # Voir dashboard/SECRETS.md pour la configuration des secrets côté Cloud.
+#
+# Volontairement SANS version épinglée (== ) : un pin exact (ex:
+# pandas==2.2.2, bcrypt==4.2.0) n'a pas forcément de roue pré-compilée pour
+# la version de Python/plateforme réellement utilisée par l'environnement de
+# build (Streamlit Cloud notamment) — pip retombe alors sur une compilation
+# depuis les sources, qui échoue sans toolchain C/C++/Rust installée. Laisser
+# pip choisir la dernière version compatible garantit une roue binaire
+# disponible. Contrepartie assumée : une mise à jour amont peut un jour
+# changer un comportement (notamment stripe/supabase, dont l'API a déjà
+# connu des évolutions par le passé) — à surveiller si un module se met à
+# planter après un redéploiement sans changement de code de notre côté.
 
 # === Cœur du pipeline (scraper -> lead_worker -> ceo_agent) ===
-requests==2.32.3
-beautifulsoup4==4.14.3
-urllib3==2.2.3
-python-dotenv==1.0.0
-supabase==2.5.0
+requests
+beautifulsoup4
+urllib3
+python-dotenv
+supabase
 
 # === Dashboard (dashboard/app.py) ===
-streamlit==1.38.0
-# Non pinné volontairement : pandas==2.2.2 n'a pas de roue pré-compilée
-# pour toutes les versions/plateformes Python rencontrées en pratique (ex:
-# Python plus récent que ce que 2.2.2 supporte) — pip retombe alors sur une
-# compilation depuis les sources, qui échoue sans toolchain C/C++ installée
-# (cas fréquent sur un environnement de build minimal). Laisser pip choisir
-# la version la plus récente lui garantit de toujours trouver une roue
-# binaire prête à l'emploi pour l'environnement réel.
+streamlit
 pandas
 
 # === Signature électronique + paiement (Yousign / Stripe) ===
-stripe==10.12.0
-fpdf2==2.7.9
+stripe
+fpdf2
 
 # === Portail Client (authentification, dashboard/auth.py) ===
-bcrypt==4.2.0
+bcrypt

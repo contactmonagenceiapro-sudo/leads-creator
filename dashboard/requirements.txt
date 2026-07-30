@@ -6,21 +6,19 @@
 # environnement Python, voir dashboard/process_runner.py) — supabase,
 # beautifulsoup4 (scraper), stripe/bcrypt (contrats_signature.py, auth.py).
 #
-# Versions pinnées à l'identique du requirements.txt racine (dev local) :
-# une divergence de version entre les deux (ex: un simple changement majeur
-# de stripe-python ou de postgrest-py/.or_()) peut casser silencieusement
-# en prod sans jamais avoir été testée en local — voir les pins exacts
-# maintenus à la racine du dépôt.
-streamlit==1.38.0
-# Non pinné volontairement (voir requirements.txt racine) : pandas==2.2.2
-# n'a pas de roue pré-compilée pour toutes les versions/plateformes Python
-# rencontrées en pratique, ce qui forçait une compilation depuis les
-# sources — et donc un échec de build sans toolchain C/C++ installée.
+# Mêmes paquets que le requirements.txt racine (dev local) — les deux
+# fichiers doivent rester synchronisés.
+#
+# Volontairement SANS version épinglée (voir requirements.txt racine pour
+# le détail) : un pin exact peut n'avoir aucune roue pré-compilée pour
+# l'environnement de build Streamlit Cloud, forçant une compilation depuis
+# les sources qui échoue sans toolchain C/C++/Rust installée.
+streamlit
 pandas
-requests==2.32.3
-python-dotenv==1.0.0
-fpdf2==2.7.9
-supabase==2.5.0
-beautifulsoup4==4.14.3
-stripe==10.12.0
-bcrypt==4.2.0
+requests
+python-dotenv
+fpdf2
+supabase
+beautifulsoup4
+stripe
+bcrypt
