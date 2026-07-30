@@ -30,6 +30,8 @@ auth/data_access/supabase_client (qui échoueraient de façon bien moins
 lisible si SUPABASE_URL/SUPABASE_KEY manquent).
 """
 
+import base64
+import json
 import os
 from collections.abc import Mapping
 
@@ -132,11 +134,73 @@ def _cles_critiques_manquantes() -> list[str]:
     return [cle for cle in CLES_CRITIQUES if not (os.getenv(cle) or "").strip()]
 
 
+def _role_jwt_supabase(jwt: str) -> str | None:
+    """Décode (SANS vérifier la signature — inutile ici, ce n'est qu'un
+    diagnostic de configuration, jamais utilisé pour une décision de
+    sécurité) le claim "role" d'une clé Supabase, qui est un JWT standard.
+    Renvoie "anon", "service_role", ou None si la valeur ne ressemble pas à
+    un JWT lisible (clé tronquée au copier-coller, guillemets non retirés,
+    autre type de clé...)."""
+    try:
+        segments = jwt.split(".")
+        if len(segments) != 3:
+            return None
+        payload_b64 = segments[1]
+        payload_b64 += "=" * (-len(payload_b64) % 4)  # complète le padding base64url manquant
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
+        return payload.get("role")
+    except Exception:
+        return None
+
+
+def _url_supabase_plausible(url: str) -> bool:
+    return url.startswith("https://") and ".supabase.co" in url
+
+
+def _diagnostiquer_cles_supabase() -> list[str]:
+    """Vérifications de CONTENU (pas seulement de présence) sur
+    SUPABASE_URL/SUPABASE_KEY — spécifiquement pensées pour deux erreurs de
+    copier-coller très fréquentes : coller la clé "anon" (publique) au lieu
+    de "service_role" (l'app a besoin d'un accès complet en lecture/écriture,
+    aucune politique RLS n'est configurée sur ces tables), ou une URL
+    tronquée/mal collée. Renvoie une liste de messages BLOQUANTS (pas de
+    simples avertissements) : si non vide, l'app ne doit pas continuer."""
+    erreurs: list[str] = []
+
+    url = (os.getenv("SUPABASE_URL") or "").strip()
+    if url and not _url_supabase_plausible(url):
+        erreurs.append(
+            f"`SUPABASE_URL` ne ressemble pas à une URL Supabase valide (obtenu : `{url}`) — "
+            "attendu un format `https://xxxxxxxx.supabase.co`, sans guillemets ni espace autour. "
+            "Vérifie qu'elle a été copiée en entier."
+        )
+
+    cle = (os.getenv("SUPABASE_KEY") or "").strip()
+    if cle:
+        role = _role_jwt_supabase(cle)
+        if role == "anon":
+            erreurs.append(
+                "`SUPABASE_KEY` contient la clé **anon** (publique), pas la clé **service_role** "
+                "requise par cette app (accès complet en lecture/écriture, aucune politique RLS "
+                "configurée sur les tables). Sur Supabase : Project Settings → API → copie la clé "
+                "**`service_role`** (surtout pas `anon`/`public`)."
+            )
+        elif role is None:
+            erreurs.append(
+                "`SUPABASE_KEY` ne ressemble pas à une clé Supabase valide (pas un JWT lisible) — "
+                "vérifie qu'elle a été copiée en entier, sans guillemets ni espace autour."
+            )
+
+    return erreurs
+
+
 def initialiser_secrets() -> None:
     """À appeler en tout premier dans app.py. Charge st.secrets dans
-    os.environ puis vérifie les clés critiques : si l'une d'elles manque,
-    affiche un message clair (au lieu du crash cryptique qui suivrait sinon
-    dans supabase_client.py) et arrête proprement le script (st.stop())."""
+    os.environ, vérifie que les clés critiques sont présentes ET
+    plausibles (bonne forme d'URL, bon TYPE de clé Supabase), et arrête
+    proprement le script (st.stop()) avec un message clair au moindre souci
+    — au lieu du crash cryptique (httpx.ConnectError, 401...) qui suivrait
+    sinon dans supabase_client.py, bien plus dur à diagnostiquer."""
     avertissements = _charger_secrets_dans_environ()
     manquantes = _cles_critiques_manquantes()
 
@@ -154,6 +218,13 @@ def initialiser_secrets() -> None:
             with st.expander("Détails techniques"):
                 for a in avertissements:
                     st.caption(f"• {a}")
+        st.stop()
+
+    erreurs_supabase = _diagnostiquer_cles_supabase()
+    if erreurs_supabase:
+        st.error("⚠️ Configuration Supabase incorrecte — l'application ne peut pas démarrer.")
+        for e in erreurs_supabase:
+            st.markdown(f"- {e}")
         st.stop()
 
     if avertissements:
