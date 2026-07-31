@@ -213,7 +213,15 @@ def relancer_prospects() -> None:
         else:
             log.error(f"Échec de la relance pour {company} <{email}>")
 
-        supabase.table("leads").update(maj).eq("id", lead["id"]).execute()
+        try:
+            supabase.table("leads").update(maj).eq("id", lead["id"]).execute()
+        except Exception as e:
+            # Ne doit jamais interrompre les relances suivantes : une panne
+            # réseau/Supabase ici ne remet pas en cause l'envoi déjà effectué,
+            # elle empêche seulement sa comptabilisation (relance_count /
+            # last_relance_at pas à jour pour ce lead — au pire une relance
+            # en double au prochain run, jamais un crash du process).
+            log.error(f"Échec de la mise à jour Supabase pour {company} <{email}> après relance : {e}")
 
         if i < len(prospects):
             pause = random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC)

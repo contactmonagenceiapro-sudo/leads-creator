@@ -151,14 +151,19 @@ def scorer_et_publier() -> None:
             ignores += 1
             continue
 
-        est_nouveau = acteur["nom_entreprise"] not in noms_existants
-        acteur["score_activite_chantiers"] = score_pour_commune(acteur.get("commune") or "", activite_par_commune)
-        acteur["score_final"] = calculer_score(acteur, activite_par_commune)
+        try:
+            est_nouveau = acteur.get("nom_entreprise") not in noms_existants
+            acteur["score_activite_chantiers"] = score_pour_commune(acteur.get("commune") or "", activite_par_commune)
+            acteur["score_final"] = calculer_score(acteur, activite_par_commune)
 
-        if publier_en_base(acteur):
-            publies += 1
-            if est_nouveau:
-                _alerter_si_ultra_qualifie(acteur)
+            if publier_en_base(acteur):
+                publies += 1
+                if est_nouveau:
+                    _alerter_si_ultra_qualifie(acteur)
+        except Exception as e:
+            # Ne doit jamais interrompre la publication des acteurs restants
+            # (ex: champ manquant/malformé sur cet acteur précis).
+            log.error(f"Publication ignorée pour {acteur.get('nom_entreprise') or acteur.get('email') or '?'} : {e}")
 
     log.info(f"Publication terminée : {publies} acteurs publiés, {ignores} ignorés (aucun contact exploitable)")
     if not acteurs:

@@ -750,14 +750,24 @@ def check_for_replies() -> None:
                 compteurs["bounces"] += 1
                 continue
 
+            # get_payload(decode=True) peut renvoyer None (payload vide ou
+            # malformé) : sans ce garde, un message ainsi formé lève
+            # AttributeError sur .decode(), non catché ici, ce qui arrête le
+            # scan pour tous les messages suivants — et comme il reste
+            # UNSEEN, il rebloquerait de la même façon à chaque run suivant
+            # (poison message). Voir le même garde ligne ~354 plus haut.
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
                     if part.get_content_type() == "text/plain":
-                        body = part.get_payload(decode=True).decode(errors="ignore")
+                        brut = part.get_payload(decode=True)
+                        if brut:
+                            body = brut.decode(errors="ignore")
                         break
             else:
-                body = msg.get_payload(decode=True).decode(errors="ignore")
+                brut = msg.get_payload(decode=True)
+                if brut:
+                    body = brut.decode(errors="ignore")
 
             texte_normalise = normaliser(body)
 

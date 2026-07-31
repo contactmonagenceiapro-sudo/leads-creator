@@ -280,10 +280,10 @@ def lancer_campagne_initiale(limite: int = 20) -> None:
         # enrichir_acteurs_pro.py::email_valide (voir email_validator.py).
         exploitable, raison = email_exploitable(acteur["email"])
         if not exploitable:
-            log.warning(f"Premier contact annulé pour {acteur['nom_entreprise']} ({raison}) : {acteur['email']}")
+            log.warning(f"Premier contact annulé pour {acteur.get('nom_entreprise', '?')} ({raison}) : {acteur['email']}")
             continue
-        sujet, corps = message_premier_contact(acteur)
         try:
+            sujet, corps = message_premier_contact(acteur)
             envoi_reussi = envoyer_email(acteur["email"], sujet, corps, lead_id=acteur["id"])
         except CompteZohoBloqueError:
             # Déjà loggé + alerté dans envoyer_email — inutile de tenter les
@@ -291,6 +291,11 @@ def lancer_campagne_initiale(limite: int = 20) -> None:
             # que le blocage n'est pas levé côté Zoho.
             log.error("Campagne B2B interrompue (compte Zoho bloqué).")
             break
+        except Exception as e:
+            # Filet générique (ex: champ manquant sur cet acteur) : ne doit
+            # jamais interrompre la campagne pour les acteurs restants.
+            log.error(f"Premier contact ignoré pour {acteur.get('nom_entreprise') or acteur.get('email')} (erreur inattendue) : {e}")
+            continue
         if envoi_reussi:
             supabase_patch(acteur["id"], {
                 "statut": "contacte_attente_reponse",
@@ -342,7 +347,7 @@ def lancer_relances() -> None:
         # Voir la même vérification dans lancer_campagne_initiale ci-dessus.
         exploitable, raison = email_exploitable(acteur.get("email") or "")
         if not exploitable:
-            log.warning(f"Relance annulée pour {acteur['nom_entreprise']} ({raison}) : {acteur.get('email')}")
+            log.warning(f"Relance annulée pour {acteur.get('nom_entreprise', '?')} ({raison}) : {acteur.get('email')}")
             continue
 
         if budget_restant <= 0:
@@ -363,13 +368,17 @@ def lancer_relances() -> None:
         if maintenant - reference_dt < timedelta(days=delai_requis):
             continue
 
-        sujet, corps = message_relance(acteur, relance_count + 1)
         try:
+            sujet, corps = message_relance(acteur, relance_count + 1)
             envoi_reussi = envoyer_email(acteur["email"], sujet, corps, lead_id=acteur["id"])
         except CompteZohoBloqueError:
             # Voir la même gestion dans lancer_campagne_initiale ci-dessus.
             log.error("Relances B2B interrompues (compte Zoho bloqué).")
             break
+        except Exception as e:
+            # Filet générique, voir lancer_campagne_initiale ci-dessus.
+            log.error(f"Relance ignorée pour {acteur.get('nom_entreprise') or acteur.get('email')} (erreur inattendue) : {e}")
+            continue
         if envoi_reussi:
             supabase_patch(acteur["id"], {
                 "relance_count": relance_count + 1,

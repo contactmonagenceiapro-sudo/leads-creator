@@ -235,8 +235,13 @@ def run_ceo_analysis() -> None:
             break
         except Exception as e:
             log.error(f"Erreur lors du traitement de {company} : {e}")
-            with open("erreurs_envoi.log", "a", encoding="utf-8") as f:
-                f.write(f"Échec envoi vers {target_email} : {e}\n")
+            try:
+                with open("erreurs_envoi.log", "a", encoding="utf-8") as f:
+                    f.write(f"Échec envoi vers {target_email} : {e}\n")
+            except OSError as e_log:
+                # Une erreur disque/permission sur ce log ne doit pas, en
+                # plus de l'échec déjà géré, faire planter toute la boucle.
+                log.error(f"Impossible d'écrire dans erreurs_envoi.log : {e_log}")
 
     duration = round((time.time() - start_time) / 60, 2)
     stats = {

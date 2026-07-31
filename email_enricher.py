@@ -408,8 +408,12 @@ def main() -> int:
         log.error(f"Fichier introuvable : {LEADS_FILE}")
         return 1
 
-    with open(LEADS_FILE, "r", encoding="utf-8") as f:
-        leads = json.load(f)
+    try:
+        with open(LEADS_FILE, "r", encoding="utf-8") as f:
+            leads = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        log.error(f"{LEADS_FILE} illisible ou corrompu — enrichissement annulé : {e}")
+        return 1
 
     log.info(f"{len(leads)} leads chargés, début de l'enrichissement (domaines réels)...")
 
