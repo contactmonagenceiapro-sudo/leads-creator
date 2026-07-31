@@ -41,6 +41,7 @@ from ceo_agent import send_email_prospect
 from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_blackliste_ou_a_risque
+from llm_config import LLM_API_URL, LLM_MODEL_MAIN, LLM_TIMEOUT, generer_texte
 
 load_dotenv()
 
@@ -52,10 +53,6 @@ LEADS_FILE = Path(__file__).resolve().parent / "leads.json"
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434").rstrip("/")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL_MAIN", "qwen2.5:7b")
-OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
 
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
 
@@ -190,10 +187,31 @@ TENTATIVES_OLLAMA = int(os.getenv("OLLAMA_TENTATIVES", "2"))
 PAUSE_RETRY_OLLAMA_SEC = 5
 
 
-def generer_pitch(lead: dict) -> str | None:
-    """Génère un pitch commercial personnalisé via Ollama. Retourne None en
-    cas d'échec réseau, timeout ou réponse invalide après épuisement des
-    tentatives (aucune exception levée).
+def _pitch_generique_repli(lead: dict) -> str:
+    """Modèle de secours si le LLM (local ou cloud, voir llm_config.py) est
+    indisponible — un lead qualifié ne doit jamais rester sans email juste
+    parce que la génération IA a échoué (même repli que
+    outbound_chantiers/outbound_pro_btp.py::_pitch_generique_repli)."""
+    return (
+        f"Bonjour,\n\n"
+        f"{AGENCY_NAME} accompagne des entreprises du secteur "
+        f"« {lead['industry']} » en leur apportant régulièrement des "
+        f"demandes de devis de particuliers/professionnels réellement "
+        f"intéressés par leurs prestations, dans leur zone d'activité — sans "
+        f"prospection ni compétence technique de leur côté.\n\n"
+        f"Seriez-vous ouvert à un premier échange pour évaluer si cela peut "
+        f"être utile à {lead['company_name']} ?\n\n"
+        f"Cordialement,\n{AGENCY_NAME}"
+    )
+
+
+def generer_pitch(lead: dict) -> str:
+    """Génère un pitch commercial personnalisé via le LLM configuré (voir
+    llm_config.py — local en dev, cloud en prod selon LLM_API_URL/
+    OLLAMA_HOST). Retombe sur un modèle générique (_pitch_generique_repli)
+    en cas d'échec réseau, timeout ou réponse vide après épuisement des
+    tentatives : ne retourne jamais None et ne lève jamais d'exception, pour
+    ne jamais bloquer ni vider la boucle d'envoi faute d'IA disponible.
 
     Angle commercial : apport de clients qualifiés (génération de leads en
     tant que service), et non plus la refonte de site web des versions
@@ -215,49 +233,21 @@ def generer_pitch(lead: dict) -> str | None:
         f"'Cordialement,' suivi de '{AGENCY_NAME}', rien d'autre après."
     )
 
-    for tentative in range(1, TENTATIVES_OLLAMA + 1):
-        derniere_tentative = tentative == TENTATIVES_OLLAMA
-        try:
-            reponse = requests.post(
-                f"{OLLAMA_HOST}/api/generate",
-                json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-                timeout=OLLAMA_TIMEOUT,
-            )
-            reponse.raise_for_status()
-        except requests.exceptions.Timeout:
-            niveau = log.error if derniere_tentative else log.warning
-            niveau(
-                f"Timeout Ollama ({OLLAMA_TIMEOUT}s) pour {lead['company_name']} "
-                f"(tentative {tentative}/{TENTATIVES_OLLAMA})"
-            )
-            if derniere_tentative:
-                return None
-            time.sleep(PAUSE_RETRY_OLLAMA_SEC)
-            continue
-        except requests.exceptions.RequestException as erreur:
-            niveau = log.error if derniere_tentative else log.warning
-            niveau(
-                f"Échec appel Ollama ({OLLAMA_HOST}) pour {lead['company_name']} : {erreur} "
-                f"(tentative {tentative}/{TENTATIVES_OLLAMA})"
-            )
-            if derniere_tentative:
-                return None
-            time.sleep(PAUSE_RETRY_OLLAMA_SEC)
-            continue
-
-        try:
-            pitch = reponse.json().get("response", "").strip()
-        except ValueError:
-            log.error(f"Réponse Ollama non-JSON pour {lead['company_name']}")
-            return None
-
-        if not pitch:
-            log.warning(f"Pitch vide généré pour {lead['company_name']}")
-            return None
-
+    pitch = generer_texte(
+        prompt,
+        model=LLM_MODEL_MAIN,
+        timeout=LLM_TIMEOUT,
+        tentatives=TENTATIVES_OLLAMA,
+        pause_retry_sec=PAUSE_RETRY_OLLAMA_SEC,
+    )
+    if pitch:
         return pitch
 
-    return None
+    log.warning(
+        f"IA indisponible ({LLM_API_URL}) pour {lead['company_name']} — "
+        f"utilisation du pitch générique de repli."
+    )
+    return _pitch_generique_repli(lead)
 
 
 # ---------------------------------------------------------------------------
@@ -462,10 +452,6 @@ def process_pipeline() -> ResultatTraitement:
             continue
 
         pitch = generer_pitch(lead)
-        if pitch is None:
-            resultat.echecs += 1
-            time.sleep(random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC))
-            continue
 
         sujet = f"{lead['company_name']} — apport de clients qualifiés"
         try:

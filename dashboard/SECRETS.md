@@ -51,9 +51,17 @@ DELAI_PREMIERE_RELANCE_JOURS = "4"
 DELAI_RELANCE_SUIVANTE_JOURS = "4"
 MAX_RELANCES = "2"
 
-# Ollama probablement injoignable depuis Streamlit Cloud (mode dégradé
-# accepté : la génération de pitch IA échoue proprement, repli sur un pitch
-# générique). Baisser le timeout évite d'attendre inutilement 90s par lead.
+# Ollama local (http://localhost:11434) injoignable depuis Streamlit Cloud —
+# voir llm_config.py (racine du dépôt) : si LLM_API_URL est vide, tout appel
+# à l'IA échoue proprement et repli automatiquement sur un pitch générique
+# (jamais de blocage de la boucle d'envoi), mais AUCUN pitch n'est plus
+# personnalisé. Pour une vraie génération IA en prod, pointer LLM_API_URL
+# vers un LLM accessible publiquement (ex : un Ollama hébergé sur Render,
+# ou toute API exposant POST {url}/api/generate) — LLM_API_KEY optionnel
+# si cet endpoint est protégé par un jeton. Baisser OLLAMA_TIMEOUT évite
+# d'attendre inutilement 90s par lead si aucune IA n'est joignable.
+LLM_API_URL = ""
+LLM_API_KEY = ""
 OLLAMA_HOST = "http://localhost:11434"
 OLLAMA_TIMEOUT = "5"
 ```

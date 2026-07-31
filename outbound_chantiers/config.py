@@ -158,8 +158,9 @@ ZOHO_USER = os.getenv("ZOHO_USER", "")
 ZOHO_PASSWORD = os.getenv("ZOHO_PASSWORD", "")
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
 
-# === IA locale (réutilise Ollama, cf. lead_worker.py/ceo_agent.py) — pour la
-# génération de pitch personnalisé par secteur (module 4) ===
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ai_ollama:11434")
-OLLAMA_MODEL_MAIN = os.getenv("OLLAMA_MODEL_MAIN", "qwen2.5:7b")
-OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "90"))
+# === IA (génération de pitch personnalisé par secteur, module 4) ===
+# Configuration centralisée dans llm_config.py (racine du dépôt, importé
+# directement par outbound_pro_btp.py) — bascule local/cloud commune à
+# lead_worker.py, plutôt qu'un OLLAMA_HOST redéfini ici avec un défaut
+# différent (http://ai_ollama:11434, spécifique docker-compose) qui pouvait
+# diverger silencieusement de celui utilisé par le reste du pipeline.

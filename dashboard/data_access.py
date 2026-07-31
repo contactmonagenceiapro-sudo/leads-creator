@@ -36,7 +36,6 @@ log = logging.getLogger(__name__)
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
 SEUIL_LEAD_ULTRA_QUALIFIE = float(os.getenv("SEUIL_LEAD_ULTRA_QUALIFIE", "0.85"))
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 RACINE_REPO = Path(__file__).resolve().parent.parent
 
@@ -156,7 +155,17 @@ def get_health() -> dict:
         resultat["supabase"] = f"down ({e})"
 
     try:
-        r = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
+        # Teste la MÊME URL que celle effectivement utilisée par les scripts
+        # de prospection (lead_worker.py/outbound_pro_btp.py) — voir
+        # llm_config.py, racine du dépôt, pour la résolution local/cloud
+        # (LLM_API_URL en prod, OLLAMA_HOST en dev/docker-compose). Un
+        # OLLAMA_HOST redéfini séparément ici pouvait faire afficher "ok"
+        # sur un Ollama local jamais utilisé par les scripts réels si
+        # LLM_API_URL pointait ailleurs (ou l'inverse).
+        from llm_config import LLM_API_KEY, LLM_API_URL
+
+        headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
+        r = requests.get(f"{LLM_API_URL}/api/tags", headers=headers, timeout=5)
         modeles = [m["name"] for m in r.json().get("models", [])] if r.status_code == 200 else []
         resultat["ollama"] = "ok" if r.status_code == 200 and modeles else "degraded (aucun modèle installé)"
     except requests.exceptions.RequestException as e:

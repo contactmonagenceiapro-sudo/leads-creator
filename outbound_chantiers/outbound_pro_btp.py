@@ -36,6 +36,7 @@ from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, est_bloc
 from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_exploitable
+from llm_config import LLM_API_URL, LLM_MODEL_MAIN, LLM_TIMEOUT, generer_texte
 from outbound_chantiers.config import (
     AGENCY_NAME,
     CLIENT_FINAL,
@@ -44,9 +45,6 @@ from outbound_chantiers.config import (
     DESCRIPTION_SERVICES,
     LIBELLES_TYPE_ACTEUR,
     MAX_RELANCES,
-    OLLAMA_HOST,
-    OLLAMA_MODEL_MAIN,
-    OLLAMA_TIMEOUT,
     SECTEUR,
     ZOHO_PASSWORD,
     ZOHO_USER,
@@ -179,22 +177,11 @@ def generer_pitch_ia(acteur: dict) -> str:
         f"termine simplement par 'Cordialement,' suivi de '{CLIENT_FINAL}', rien d'autre après."
     )
 
-    try:
-        reponse = requests.post(
-            f"{OLLAMA_HOST}/api/generate",
-            json={"model": OLLAMA_MODEL_MAIN, "prompt": prompt, "stream": False},
-            timeout=OLLAMA_TIMEOUT,
-        )
-        reponse.raise_for_status()
-        texte = reponse.json().get("response", "").strip()
-        if texte:
-            return texte
-        log.warning(f"Réponse IA vide pour {acteur['nom_entreprise']} — repli sur le modèle générique.")
-    except requests.exceptions.Timeout:
-        log.error(f"Timeout Ollama ({OLLAMA_TIMEOUT}s) pour {acteur['nom_entreprise']} — repli sur le modèle générique.")
-    except requests.exceptions.RequestException as e:
-        log.error(f"Échec appel Ollama pour {acteur['nom_entreprise']} : {e} — repli sur le modèle générique.")
+    texte = generer_texte(prompt, model=LLM_MODEL_MAIN, timeout=LLM_TIMEOUT)
+    if texte:
+        return texte
 
+    log.warning(f"IA indisponible ({LLM_API_URL}) pour {acteur['nom_entreprise']} — repli sur le modèle générique.")
     return _pitch_generique_repli(acteur, commune)
 
 
