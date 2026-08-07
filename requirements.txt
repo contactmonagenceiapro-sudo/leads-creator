@@ -26,6 +26,7 @@ dnspython
 # === Dashboard (dashboard/app.py) ===
 streamlit
 pandas
+starlette<1.4.0  # Pin temporaire : bug Streamlit avec GZipResponder (Starlette >=1.4 exige l'argument thread_minimum_size, que Streamlit ne fournit pas encore) -> crash au démarrage. À retirer une fois Streamlit corrigé.
 
 # === Signature électronique + paiement (Yousign / Stripe) ===
 stripe
