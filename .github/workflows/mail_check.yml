@@ -1,0 +1,50 @@
+name: Relève automatique des mails (bounces / réponses)
+
+# Exécute mail_processor.py à intervalle régulier, indépendamment du
+# dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de
+# rester éveillé) — voir mail_processor.py::check_for_replies pour le
+# verrou partagé (table Supabase mail_check_lock) qui empêche ce run
+# automatique de se chevaucher avec un clic simultané sur le bouton manuel
+# "Vérifier mails" du dashboard.
+#
+# Le bouton manuel du dashboard (dashboard/process_runner.py::lancer_mail_check)
+# n'est pas modifié : il continue de fonctionner exactement comme avant, en
+# plus de ce déclenchement automatique.
+
+on:
+  schedule:
+    - cron: "0 * * * *"  # toutes les heures, à l'heure pile (UTC)
+  workflow_dispatch: {}   # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: mail-check
+  cancel-in-progress: false  # jamais annuler un run en cours, seulement en éviter un doublon en attente
+
+jobs:
+  mail-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Relever les mails (bounces + réponses)
+        env:
+          MAIL_CHECK_SOURCE: auto
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          ZOHO_DOSSIER_BOUNCES_TRAITES: ${{ secrets.ZOHO_DOSSIER_BOUNCES_TRAITES }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PUBLIC_DASHBOARD_URL: ${{ secrets.PUBLIC_DASHBOARD_URL }}
+          AGENCY_NAME: ${{ secrets.AGENCY_NAME }}
+          CEO_EMAIL: ${{ secrets.CEO_EMAIL }}
+        run: python3 mail_processor.py

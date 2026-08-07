@@ -4,7 +4,7 @@ import logging
 import os
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 from dotenv import load_dotenv
@@ -32,6 +32,22 @@ ZOHO_DOSSIER_BOUNCES_TRAITES = os.getenv("ZOHO_DOSSIER_BOUNCES_TRAITES", "")
 # "{PUBLIC_DASHBOARD_URL}/?vue=presentation&lead_id=..." (voir
 # envoyer_suivi_positif ci-dessous).
 PUBLIC_DASHBOARD_URL = os.getenv("PUBLIC_DASHBOARD_URL", "http://localhost:8501")
+
+# 'manuel' (bouton dashboard, valeur par défaut) ou 'auto' (voir
+# .github/workflows/mail_check.yml, seul appelant à positionner cette
+# variable explicitement) — sert uniquement de traçabilité dans
+# mail_check_runs (voir sql/init_mail_check.sql), aucun impact sur le scan
+# lui-même.
+MAIL_CHECK_SOURCE = os.getenv("MAIL_CHECK_SOURCE", "manuel")
+
+# Un run bloqué au-delà de cette durée est considéré planté (crash sans
+# passer par le "finally" qui libère le verrou normalement, ex: kill -9,
+# coupure réseau au milieu d'IMAP4_SSL) — le verrou est alors considéré
+# périmé et une nouvelle exécution peut démarrer. Largement au-dessus de la
+# durée réelle d'un scan (quelques secondes à peu de minutes, borné par le
+# nombre de messages UNSEEN) pour ne jamais court-circuiter un run
+# simplement lent.
+VERROU_STALE_MINUTES = 15
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -698,10 +714,83 @@ def marquer_message_traite(mail: imaplib.IMAP4_SSL, num: bytes, dossier_archive:
         log.error(f"Erreur lors du déplacement du message {num!r} vers '{dossier_archive}' : {e}")
 
 
+def _acquerir_verrou() -> bool:
+    """Tentative d'acquisition atomique du verrou partagé (voir
+    sql/init_mail_check.sql) : un UPDATE conditionnel (WHERE locked_at IS
+    NULL OR périmé) est la façon standard d'obtenir un "compare-and-set" en
+    SQL — Postgres sérialise les UPDATE concurrents au niveau de la ligne,
+    donc un seul appelant peut voir sa condition satisfaite même en cas de
+    double déclenchement simultané (bouton manuel + run GitHub Actions).
+    True si le verrou est acquis (scan à faire), False s'il est déjà tenu
+    par un run en cours et non périmé (rien à faire, voir check_for_replies)."""
+    seuil_perime = (datetime.now(timezone.utc) - timedelta(minutes=VERROU_STALE_MINUTES)).isoformat()
+    try:
+        reponse = (
+            supabase.table("mail_check_lock")
+            .update({"locked_at": datetime.now(timezone.utc).isoformat(), "locked_by": MAIL_CHECK_SOURCE})
+            .eq("id", 1)
+            .or_(f"locked_at.is.null,locked_at.lt.{seuil_perime}")
+            .execute()
+        )
+        return bool(reponse.data)
+    except Exception as e:
+        # Panne Supabase au moment d'acquérir le verrou : on préfère laisser
+        # passer le scan (comportement d'avant l'introduction du verrou)
+        # plutôt que de bloquer indéfiniment la relève des bounces pour une
+        # simple indisponibilité de la table de verrouillage.
+        log.warning(f"Verrou mail_check indisponible, scan lancé sans coordination : {e}")
+        return True
+
+
+def _liberer_verrou() -> None:
+    try:
+        supabase.table("mail_check_lock").update({"locked_at": None, "locked_by": None}).eq("id", 1).execute()
+    except Exception as e:
+        log.warning(f"Impossible de libérer le verrou mail_check (se libérera de lui-même après {VERROU_STALE_MINUTES} min) : {e}")
+
+
+def _enregistrer_run(statut: str, compteurs: dict, messages_scannes: int, erreur: str | None = None) -> None:
+    """Best-effort (voir email_blacklist.py pour le même principe) : un
+    échec d'écriture de la trace ne doit jamais faire échouer le scan
+    lui-même, qui a déjà fait son travail à ce stade."""
+    try:
+        supabase.table("mail_check_runs").insert({
+            "source": MAIL_CHECK_SOURCE,
+            "statut": statut,
+            "messages_scannes": messages_scannes,
+            "bounces_total": compteurs.get("bounces", 0),
+            "bounces_blackliste": compteurs.get("bounces_hard", 0),
+            "erreur": erreur,
+        }).execute()
+    except Exception as e:
+        log.warning(f"Impossible d'enregistrer la trace du run mail_check : {e}")
+
+
 def check_for_replies() -> None:
+    """Point d'entrée (bouton dashboard ET .github/workflows/mail_check.yml,
+    voir MAIL_CHECK_SOURCE) : acquiert le verrou partagé, délègue le scan
+    lui-même à _scanner_boite() (logique inchangée), puis journalise le
+    résultat dans mail_check_runs — que le scan ait réussi, échoué, ou n'ait
+    même pas démarré (chevauchement détecté)."""
+    if not _acquerir_verrou():
+        log.warning("Une relève des mails est déjà en cours (bouton manuel ou run automatique) — scan ignoré.")
+        _enregistrer_run("ignore_chevauchement", {}, 0)
+        return
+    try:
+        compteurs, messages_scannes, erreur = _scanner_boite()
+        _enregistrer_run("erreur" if erreur else "ok", compteurs, messages_scannes, erreur)
+    finally:
+        _liberer_verrou()
+
+
+def _scanner_boite() -> tuple[dict, int, str | None]:
+    """Cœur du scan IMAP — logique inchangée depuis avant l'introduction du
+    verrou/de la traçabilité (voir check_for_replies, seul appelant).
+    Renvoie (compteurs, nombre de messages scannés, message d'erreur ou
+    None)."""
     if not ZOHO_USER or not ZOHO_PASSWORD:
         log.error("Identifiants Zoho manquants dans .env")
-        return
+        return {}, 0, "Identifiants Zoho manquants"
 
     # Compteurs purement informatifs (dashboard "Suivi et Résultats des
     # Actions") : ce scan n'a pas de notion de succès/échec par message
@@ -709,7 +798,7 @@ def check_for_replies() -> None:
     # individuellement) — juste un résumé de ce qui a été rencontré, affiché
     # dans le log final ci-dessous.
     compteurs = {
-        "bounces": 0, "absences": 0, "negatifs": 0, "positifs": 0, "sans_mot_cle": 0,
+        "bounces": 0, "bounces_hard": 0, "absences": 0, "negatifs": 0, "positifs": 0, "sans_mot_cle": 0,
     }
 
     try:
@@ -724,7 +813,7 @@ def check_for_replies() -> None:
             log.info("📬 Aucun nouveau message non lu.")
             log.info("=== Scan terminé : 0 message ===")
             mail.logout()
-            return
+            return compteurs, 0, None
 
         for num in email_ids:
             _, msg_data = mail.fetch(num, "(RFC822)")
@@ -748,6 +837,8 @@ def check_for_replies() -> None:
                 marquer_message_traite(mail, num, ZOHO_DOSSIER_BOUNCES_TRAITES)
                 log.info(f"📭 Bounce ({statut_bounce}) marqué comme lu.")
                 compteurs["bounces"] += 1
+                if statut_bounce == "hard_bounce":
+                    compteurs["bounces_hard"] += 1
                 continue
 
             # get_payload(decode=True) peut renvoyer None (payload vide ou
@@ -821,8 +912,10 @@ def check_for_replies() -> None:
             f"{compteurs['absences']} absence(s), {compteurs['bounces']} bounce(s), "
             f"{compteurs['sans_mot_cle']} sans mot-clé ==="
         )
+        return compteurs, len(email_ids), None
     except Exception as e:
         log.error(f"Erreur lors du scan : {e}")
+        return compteurs, 0, str(e)
 
 
 if __name__ == "__main__":
