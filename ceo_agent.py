@@ -63,6 +63,10 @@ def get_leads_from_supabase() -> list:
             supabase.table("leads")
             .select("*")
             .eq("contacted", False)
+            # Exclut les leads déjà flaggés invalides (email structurellement
+            # invalide ou déjà blacklisté — voir lead_worker.py::inserer_lead)
+            # : jamais renvoyés à une campagne, mais conservés en base.
+            .neq("status", "invalide")
             .or_(filtre_or)
             .execute()
         )

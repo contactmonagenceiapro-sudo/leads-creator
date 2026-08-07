@@ -40,7 +40,7 @@ from alertes import CompteZohoBloqueError
 from ceo_agent import send_email_prospect
 from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, verifier_budget_quotidien
-from email_validator import email_blackliste_ou_a_risque
+from email_validator import email_blackliste_ou_a_risque, email_status
 from llm_config import LLM_API_URL, LLM_MODEL_MAIN, LLM_TIMEOUT, generer_texte
 
 load_dotenv()
@@ -149,6 +149,14 @@ def charger_leads(chemin: Path = LEADS_FILE) -> list[dict]:
         email = (lead.get("email") or "").strip().lower()
         if not email:
             continue
+        lead["email"] = email
+        # Calculé UNE fois ici (point de passage unique de tous les leads
+        # avant Supabase, que l'email vienne de scraper_batiment.py ou
+        # d'email_enricher.py) et persisté via inserer_lead — voir
+        # sql/init_email_status.sql. Un email structurellement invalide
+        # n'est plus supprimé silencieusement (voir process_pipeline) mais
+        # conservé et flaggé en base.
+        lead["email_status"] = email_status(email)
         # Deux entreprises DIFFÉRENTES (SIREN distincts) peuvent partager la
         # même adresse email (accueil commun, franchise...) — cas vécu :
         # 'ICONE' et '[ICONE]', deux SIREN différents, même
@@ -296,7 +304,7 @@ def _conflit_email_deja_existant(reponse: requests.Response) -> bool:
     return corps.get("code") == "23505" and "email" in (corps.get("message") or "").lower()
 
 
-def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool | None:
+def inserer_lead(lead: dict, pitch: str | None, envoi_reussi: bool, marquer_invalide: bool = False) -> bool | None:
     """Upsert le lead dans Supabase directement, avec anti-doublon sur
     l'entreprise (on_conflict=company + resolution=merge-duplicates).
 
@@ -328,7 +336,13 @@ def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool | None:
     (cf. process_pipeline) : si oui, contacted/status/contacted_at sont mis à
     jour pour refléter l'envoi (cohérent avec ceo_agent.py) ; sinon le lead
     est simplement préparé (pitch stocké) pour un nouvel essai au run
-    suivant, sans jamais marquer un envoi qui n'a pas eu lieu."""
+    suivant, sans jamais marquer un envoi qui n'a pas eu lieu.
+
+    marquer_invalide=True (email structurellement invalide ou déjà
+    blacklisté, voir process_pipeline) force status='invalide' — jamais
+    resélectionné par ceo_agent.py::get_leads_from_supabase, mais la ligne
+    reste en base (pas supprimée) avec email_status renseigné pour
+    traçabilité."""
     email_source = lead.get("email_source", "inconnu")
     ville = lead.get("ville", "")
     db_payload = {
@@ -336,6 +350,7 @@ def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool | None:
         "industry": lead["industry"],
         "weakness": lead["weakness"],
         "email": lead["email"],
+        "email_status": lead.get("email_status", "unknown"),
         "telephone": lead.get("telephone"),
         "siren": lead.get("siren"),
         "adresse": lead.get("adresse"),
@@ -350,6 +365,8 @@ def inserer_lead(lead: dict, pitch: str, envoi_reussi: bool) -> bool | None:
         db_payload["status"] = "contacte_attente_reponse"
         db_payload["contacted"] = True
         db_payload["contacted_at"] = datetime.now(timezone.utc).isoformat()
+    elif marquer_invalide:
+        db_payload["status"] = "invalide"
     else:
         db_payload["status"] = "a_contacter"
 
@@ -440,6 +457,19 @@ def process_pipeline() -> ResultatTraitement:
             resultat.interrompu_budget_quotidien = True
             break
 
+        # Email structurellement invalide (voir charger_leads) : ni pitch IA
+        # ni tentative d'envoi, mais conservé et flaggé en base plutôt que
+        # silencieusement écarté — voir inserer_lead(marquer_invalide=True).
+        # 'unknown' (vérification MX indisponible) n'est volontairement PAS
+        # bloqué ici, même principe que email_validator.possede_enregistrement_mx :
+        # on ne pénalise jamais un lead pour une panne d'infra qui nous est
+        # propre.
+        if lead["email_status"] in ("invalid_syntax", "invalid_domain"):
+            log.warning(f"Email de '{lead['company_name']}' structurellement invalide ({lead['email_status']}) : {lead['email']}")
+            resultat.a_risque += 1
+            inserer_lead(lead, pitch=None, envoi_reussi=False, marquer_invalide=True)
+            continue
+
         # Filet de sécurité en plus du filtrage déjà fait en amont par
         # email_enricher.py (qui écarte déjà les emails à risque avant même
         # d'écrire leads.json) : couvre un leads.json généré par une version
@@ -449,6 +479,7 @@ def process_pipeline() -> ResultatTraitement:
         if a_risque:
             log.warning(f"Email de '{lead['company_name']}' écarté ({raison}) : {lead['email']}")
             resultat.a_risque += 1
+            inserer_lead(lead, pitch=None, envoi_reussi=False, marquer_invalide=True)
             continue
 
         pitch = generer_pitch(lead)

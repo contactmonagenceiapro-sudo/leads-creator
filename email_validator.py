@@ -150,6 +150,36 @@ def email_exploitable(email: str, verifier_mx: bool = True) -> tuple[bool, str |
     return True, None
 
 
+def email_status(email: str, verifier_mx: bool = True) -> str:
+    """Statut structurel d'un email, pour PERSISTANCE en base (colonne
+    email_status — voir sql/init_email_status.sql) — distinct de
+    email_exploitable/email_blackliste_ou_a_risque ci-dessus, qui ne
+    renvoient qu'un booléen "à risque" pour décider d'un envoi : ici on
+    distingue aussi le cas OK et le cas indéterminé, pour ne jamais
+    supprimer un lead silencieusement (voir lead_worker.py::inserer_lead et
+    outbound_chantiers/scorer_et_publier.py::publier_en_base).
+
+    Renvoie 'invalid_syntax', 'invalid_domain' (jetable ou sans MX
+    confirmé), 'unknown' (aucun email fourni, ou vérification MX
+    indisponible — jamais traité comme un échec, même principe que
+    possede_enregistrement_mx), ou 'valid'."""
+    email = (email or "").strip()
+    if not email:
+        return "unknown"
+    if not format_valide(email):
+        return "invalid_syntax"
+    if domaine_jetable(email):
+        return "invalid_domain"
+    if not verifier_mx:
+        return "valid"
+    a_mx = possede_enregistrement_mx(_domaine(email))
+    if a_mx is False:
+        return "invalid_domain"
+    if a_mx is None:
+        return "unknown"
+    return "valid"
+
+
 def email_blackliste_ou_a_risque(
     email: str, blacklist: set[str] | None = None, verifier_mx: bool = True
 ) -> tuple[bool, str | None]:

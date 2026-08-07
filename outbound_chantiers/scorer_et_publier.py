@@ -33,6 +33,7 @@ from pathlib import Path
 import requests
 
 from alertes import alerter_discord, envoyer_alerte_email
+from email_validator import email_status
 from outbound_chantiers.config import (
     CLIENT_FINAL,
     POIDS_ACTIVITE_CHANTIERS,
@@ -60,7 +61,15 @@ def calculer_score(acteur: dict, activite_par_commune: dict[str, float]) -> floa
     return round(min(score, 1.0), 3)
 
 
-def publier_en_base(acteur: dict) -> bool:
+def publier_en_base(acteur: dict, est_nouveau: bool = True) -> bool:
+    # Statut structurel de l'email (voir email_validator.py, sql/init_email_status.sql) :
+    # toujours mis à jour (utile pour le reporting), mais ne force
+    # statut='invalide' QUE pour un acteur encore jamais publié (est_nouveau) —
+    # jamais sur un republish (le sourcing quotidien retrouve les mêmes
+    # acteurs plusieurs jours de suite), pour ne jamais écraser la
+    # progression réelle d'un acteur déjà engagé (contacte_attente_reponse,
+    # interested...) si son domaine s'avère invalide après coup.
+    statut_email = email_status(acteur.get("email") or "")
     payload = {
         "client_final": CLIENT_FINAL,
         "type_acteur": acteur["type_acteur"],
@@ -71,6 +80,7 @@ def publier_en_base(acteur: dict) -> bool:
         "adresse": acteur.get("adresse"),
         "site_web": acteur.get("site_web"),
         "email": acteur.get("email"),
+        "email_status": statut_email,
         "telephone": acteur.get("telephone"),
         "linkedin_url": acteur.get("linkedin_url"),
         "reseaux_sociaux": acteur.get("reseaux_sociaux") or {},
@@ -79,6 +89,8 @@ def publier_en_base(acteur: dict) -> bool:
         "score_activite_chantiers": acteur["score_activite_chantiers"],
         "score_final": acteur["score_final"],
     }
+    if est_nouveau and statut_email in ("invalid_syntax", "invalid_domain"):
+        payload["statut"] = "invalide"
     try:
         reponse = requests.post(
             f"{SUPABASE_URL}/rest/v1/leads_professionnels",
@@ -156,7 +168,7 @@ def scorer_et_publier() -> None:
             acteur["score_activite_chantiers"] = score_pour_commune(acteur.get("commune") or "", activite_par_commune)
             acteur["score_final"] = calculer_score(acteur, activite_par_commune)
 
-            if publier_en_base(acteur):
+            if publier_en_base(acteur, est_nouveau=est_nouveau):
                 publies += 1
                 if est_nouveau:
                     _alerter_si_ultra_qualifie(acteur)
