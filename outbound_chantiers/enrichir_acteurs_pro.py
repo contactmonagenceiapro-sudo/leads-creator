@@ -49,6 +49,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 from bs4 import BeautifulSoup
 
+from email_enricher import MOTIF_EMAIL_INVALIDE
 from email_validator import email_exploitable
 from outbound_chantiers.config import COMMUNES_CIBLES
 from phone_enricher import enrichir_telephone_via_google_places
@@ -80,6 +81,18 @@ DOMAINES_A_IGNORER = (
     "instagram.com", "annuaire-entreprises.data.gouv.fr", "verif.com",
     "infogreffe.fr", "kompass.com", "pappers.fr", "wikipedia.org",
     "indeed.com", "google.",
+    # Annuaires spécifiques BTP/architecture, absents de la liste générale
+    # ci-dessus : passaient page_correspond_bien() (la fiche mentionne bien
+    # le nom et la commune de l'acteur, ce qui EST vrai pour un annuaire),
+    # donc étaient retenus comme "le site de l'entreprise" — alors que ces
+    # fiches ne publient quasiment jamais d'email direct (juste un
+    # téléphone), contrairement à un vrai site propre. Constaté sur 39/39
+    # acteurs pro sans email : 100% avaient une fiche d'un de ces annuaires
+    # comme site_web (voir état des lieux Supabase du 2026-08-08).
+    "entreprises.lefigaro.fr", "prosmaison.fr", "le-codepostal.com",
+    "e-pro.fr", "monartisan.info", "architectes-pour-tous.fr",
+    "lagazettefrance.fr", "findglocal.com", "annuaire-pro-btp.fr",
+    "copainsdavant.linternaute.com",
 )
 NOMBRE_MAX_RESULTATS_EXAMINES = 3
 
@@ -88,12 +101,13 @@ HEADERS_RECHERCHE = {
                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
 }
 
-# Motifs d'adresses/numéros placeholder à rejeter (pages de démo, CMS non
-# configuré, Sentry, etc.) — même précaution que email_enricher.py.
-MOTIFS_EMAIL_INVALIDES = [
-    r"exemple@", r"test@", r"@sentry\.", r"@wixpress\.", r"noreply@",
-    r"@wordpress\.", r"votreadresse@",
-]
+# Motifs de numéros placeholder à rejeter (0000000000, 1111111111...).
+# Côté email, MOTIF_EMAIL_INVALIDE (importé d'email_enricher.py) est
+# réutilisé tel quel plutôt que dupliqué ici : une liste locale distincte
+# avait fini par diverger de l'originale (ex: "vous@"/"votre@" absents ici
+# alors que couverts là-bas), laissant passer de faux positifs (cas réel :
+# "vous@cabinet.fr", "votre@email.fr" — placeholders de page vitrine non
+# personnalisée — retenus comme contact réel avant ce correctif).
 MOTIF_TELEPHONE_PLACEHOLDER = re.compile(r"^(\d)\1{8,9}$")  # ex: 0000000000, 1111111111
 
 
@@ -136,25 +150,62 @@ def commune_correspond(commune_source: str, communes_cibles: list[str]) -> bool:
     )
 
 
+_MOTIF_TITRE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+
+
 def page_correspond_bien(html: str, nom_entreprise: str, commune: str) -> bool:
-    """Garde-fou anti-homonyme : la page doit citer le nom de l'entreprise
-    ET la commune, sinon on écarte le domaine (site sans rapport, revendu,
-    ou parké)."""
-    html_normalise = normaliser(html)
-    return normaliser(nom_entreprise)[:15] in html_normalise and normaliser(commune) in html_normalise
+    """Garde-fou anti-homonyme.
+
+    Renforcé le 2026-08-08 : l'ancienne version (nom tronqué à 15 caractères
+    présent QUELQUE PART dans le HTML brut) laissait passer des pages sans
+    rapport qui mentionnaient juste incidemment l'acteur en passant — cas
+    réels observés : "Yves Jacquet" cité sur dataprospects.fr (site d'une
+    société de vente de fichiers de prospection, aucun rapport), "86
+    L'Atelier" cité sur une sous-page de hexagone-architecture.fr (un tout
+    autre cabinet d'architecture). Dans les deux cas la commune matchait
+    aussi, donc l'ancien garde-fou (nom + commune quelque part dans le
+    corps) ne suffisait pas.
+
+    On exige maintenant qu'une majorité des mots distinctifs du nom
+    apparaisse dans le <title> de la page — bien plus fiable qu'une
+    mention en corps de texte : un site cite quasi toujours son propre nom
+    dans son titre, un site tiers qui mentionne quelqu'un en passant ne le
+    fait presque jamais. Réutilise mots_significatifs/contient_mot/
+    extraire_nom_commercial d'email_enricher.py (même logique déjà
+    éprouvée sur le pipeline artisans) plutôt que de réinventer un filtre
+    ad hoc ici."""
+    from email_enricher import contient_mot, extraire_nom_commercial, mots_significatifs
+
+    nom_principal, nom_commercial = extraire_nom_commercial(nom_entreprise)
+    mots = mots_significatifs(nom_commercial or nom_principal)
+    if not mots:
+        return False
+
+    match_titre = _MOTIF_TITRE.search(html)
+    if not match_titre:
+        return False
+    titre_normalise = normaliser(match_titre.group(1))
+
+    trouves = sum(1 for m in mots if contient_mot(titre_normalise, m))
+    seuil = max(1, (len(mots) + 1) // 2)
+    if trouves < seuil:
+        return False
+
+    return normaliser(commune) in normaliser(html)
 
 
 def email_valide(adresse: str) -> bool:
     """Filtre en deux temps : d'abord le bruit d'EXTRACTION propre à ce
     scraper (placeholders de template, adresses techniques — voir
-    MOTIFS_EMAIL_INVALIDES), avant tout appel réseau ; puis, seulement pour
-    ce qui a passé ce premier filtre, la vérification structurelle
-    partagée (format strict, domaine jetable, enregistrement MX — voir
-    email_validator.py, réutilisée aussi par le pipeline artisans) — un
-    email sans MX ne peut PAS recevoir de message, quelle que soit sa forme."""
+    MOTIF_EMAIL_INVALIDE, importé d'email_enricher.py), avant tout appel
+    réseau ; puis, seulement pour ce qui a passé ce premier filtre, la
+    vérification structurelle partagée (format strict, domaine jetable,
+    enregistrement MX — voir email_validator.py, réutilisée aussi par le
+    pipeline artisans) — un email sans MX ne peut PAS recevoir de message,
+    quelle que soit sa forme."""
     if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", adresse or ""):
         return False
-    if any(re.search(motif, adresse, re.IGNORECASE) for motif in MOTIFS_EMAIL_INVALIDES):
+    if MOTIF_EMAIL_INVALIDE.search(adresse):
         return False
     exploitable, _raison = email_exploitable(adresse)
     return exploitable

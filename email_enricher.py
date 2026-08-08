@@ -75,7 +75,7 @@ MOTIF_TELEPHONE = re.compile(
 # réel observé dans ce pipeline, aucun rapport avec un vrai contact
 # commercial) : jamais valides.
 MOTIF_EMAIL_INVALIDE = re.compile(
-    r"^(user|test|foo|bar|someone|name|nom|prenom|email|votre)@|"
+    r"^(user|test|foo|bar|someone|name|nom|prenom|email|votre|vous|votreadresse)@|"
     r"@(domain|example|test|yourdomain|mydomain)\.(com|fr|org)$|"
     r"^[0-9a-f]{16,}@|"
     r"@([a-z0-9-]+\.)*(sentry|wixpress|sentry-next)\.|"
