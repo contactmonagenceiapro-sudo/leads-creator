@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import unicodedata
+import uuid
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -223,6 +224,48 @@ def update_lead_professionnel_absence(email_address: str, email_alternatif: str 
             log.info(f"🌴 Acteur pro {email_address} marqué absent / à recontacter")
     except Exception as e:
         log.error(f"Erreur Supabase (leads_professionnels, absence) : {e}")
+
+
+def journaliser_reponse(email_address: str) -> None:
+    """Journalise un événement 'repondu' dans email_events (voir
+    sql/init_email_reponses.sql) pour CHAQUE lead correspondant à cet email —
+    par construction un même email n'existe normalement que dans une seule
+    des deux tables (artisans XOR pro), mais on ne suppose rien et on
+    vérifie les deux, comme update_lead_status/update_lead_professionnel_status.
+
+    Appelée UNIQUEMENT pour une vraie réponse humaine (mots-clés
+    positifs/négatifs/sans mot-clé, voir _scanner_boite) — jamais pour un
+    bounce ni une notification d'absence automatique, qui font `continue`
+    avant d'atteindre cet appel : ni l'un ni l'autre n'est un signal
+    d'engagement du lead.
+
+    N'interrompt jamais le scan en cas d'échec Supabase (même principe que
+    le reste de ce module) : le pire cas est un événement manquant, jamais
+    un crash du scan pour les messages suivants."""
+    lead_artisan = recuperer_lead_par_email(email_address)
+    if lead_artisan:
+        try:
+            supabase.table("email_events").insert({
+                "tracking_id": str(uuid.uuid4()),
+                "type_evenement": "repondu",
+                "lead_type": "lead_artisan",
+                "lead_id": lead_artisan["id"],
+            }).execute()
+        except Exception as e:
+            log.error(f"Erreur journalisation réponse (lead_artisan, {email_address}) : {e}")
+
+    lead_pro = recuperer_lead_professionnel_par_email(email_address)
+    if lead_pro:
+        try:
+            supabase.table("email_events").insert({
+                "tracking_id": str(uuid.uuid4()),
+                "type_evenement": "repondu",
+                "lead_type": "lead_professionnel",
+                "lead_id": lead_pro["id"],
+                "client_final": lead_pro.get("client_final"),
+            }).execute()
+        except Exception as e:
+            log.error(f"Erreur journalisation réponse (lead_professionnel, {email_address}) : {e}")
 
 
 def envoyer_suivi_positif(lead: dict) -> None:
@@ -873,6 +916,13 @@ def _scanner_boite() -> tuple[dict, int, str | None]:
                 update_lead_professionnel_absence(sender, contact_alternatif)
                 compteurs["absences"] += 1
                 continue
+
+            # Passé les gardes bounce/absence ci-dessus, on sait déjà qu'il
+            # s'agit d'une vraie réponse humaine (positive, négative, ou sans
+            # mot-clé reconnu) — journalisée une seule fois ici plutôt que
+            # dans chacune des 3 branches ci-dessous (voir journaliser_reponse,
+            # sql/init_email_reponses.sql).
+            journaliser_reponse(sender)
 
             mot_negatif = contient_un_mot(texte_normalise, MOTS_NEGATIFS)
             if mot_negatif:

@@ -460,6 +460,59 @@ def get_warmup_status() -> dict:
     return statut_ramp_warmup()
 
 
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_taux_reponse() -> dict:
+    """Taux de réponse par segment (artisans) et par campagne B2B (client_final),
+    calculé à partir de email_events (voir sql/init_email_reponses.sql) : un
+    'envoye' sans 'repondu' correspondant = pas encore de réponse. Compte les
+    lead_id DISTINCTS (pas les lignes) : une relance ou une seconde réponse
+    du même lead ne doit pas gonfler artificiellement le taux.
+
+    Pas de notion d'ouverture ici (pixel de tracking retiré, voir
+    email_tracking.py) — uniquement le taux de réponse."""
+    try:
+        lignes = (
+            supabase.table("email_events")
+            .select("lead_type,lead_id,client_final,type_evenement")
+            .in_("type_evenement", ["envoye", "repondu"])
+            .execute()
+            .data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture email_events : {e}") from e
+
+    def _taux(envoyes: set, repondus: set) -> dict:
+        return {
+            "envoyes": len(envoyes),
+            "repondus": len(repondus),
+            "taux": round(len(repondus) / len(envoyes), 3) if envoyes else 0,
+        }
+
+    envoyes_artisan, repondus_artisan = set(), set()
+    envoyes_par_client: dict[str, set] = {}
+    repondus_par_client: dict[str, set] = {}
+
+    for ligne in lignes:
+        lead_id = ligne["lead_id"]
+        cible_envoyes, cible_repondus = (
+            (envoyes_artisan, repondus_artisan) if ligne["lead_type"] == "lead_artisan"
+            else (
+                envoyes_par_client.setdefault(ligne.get("client_final") or "?", set()),
+                repondus_par_client.setdefault(ligne.get("client_final") or "?", set()),
+            )
+        )
+        (cible_repondus if ligne["type_evenement"] == "repondu" else cible_envoyes).add(lead_id)
+
+    clients = sorted(set(envoyes_par_client) | set(repondus_par_client))
+    return {
+        "artisans": _taux(envoyes_artisan, repondus_artisan),
+        "b2b_par_client": [
+            {"client_final": client, **_taux(envoyes_par_client.get(client, set()), repondus_par_client.get(client, set()))}
+            for client in clients
+        ],
+    }
+
+
 # ---------------------------------------------------------------------
 # Contrats / paiements (Stripe) — confirmation manuelle (plus de webhooks)
 # ---------------------------------------------------------------------

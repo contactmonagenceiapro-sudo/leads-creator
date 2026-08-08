@@ -18,7 +18,7 @@ import requests
 import streamlit as st
 
 from common import safe_call
-from data_access import get_warmup_status
+from data_access import get_taux_reponse, get_warmup_status
 
 st.title("📶 Délivrabilité")
 st.caption("Montée en charge du domaine d'envoi (warmup) & enregistrements DNS SPF/DKIM/DMARC")
@@ -56,6 +56,49 @@ elif ramp:
             "réputation — il complète un warmup tiers (Instantly, Lemwarm, Warmup Inbox...) "
             "s'il y en a un, il ne le remplace pas."
         )
+
+st.divider()
+
+# ---------------------------------------------------------------------
+# Taux de réponse (artisans + par campagne B2B)
+# ---------------------------------------------------------------------
+
+st.subheader("Taux de réponse")
+st.caption(
+    "Calculé à partir des événements 'envoye'/'repondu' journalisés dans email_events "
+    "(voir mail_processor.py::journaliser_reponse) — une réponse compte pour un lead qui "
+    "a répondu au moins une fois, jamais un OOF ni un bounce. Pas de suivi d'ouverture : "
+    "le pixel de tracking a été retiré (voir email_tracking.py)."
+)
+
+reponses, erreur_reponses = safe_call(get_taux_reponse)
+if erreur_reponses:
+    st.error(erreur_reponses)
+elif reponses:
+    st.markdown("**Artisans (B2C)**")
+    art = reponses["artisans"]
+    col1, col2, col3 = st.columns(3)
+    col1.metric("E-mails envoyés", art["envoyes"])
+    col2.metric("Réponses reçues", art["repondus"])
+    col3.metric("Taux de réponse", f"{art['taux'] * 100:.1f} %")
+
+    if reponses["b2b_par_client"]:
+        st.markdown("**Campagnes B2B**")
+        st.dataframe(
+            [
+                {
+                    "Campagne": ligne["client_final"],
+                    "E-mails envoyés": ligne["envoyes"],
+                    "Réponses reçues": ligne["repondus"],
+                    "Taux de réponse": f"{ligne['taux'] * 100:.1f} %",
+                }
+                for ligne in reponses["b2b_par_client"]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.caption("Aucun envoi B2B journalisé pour l'instant.")
 
 st.divider()
 
