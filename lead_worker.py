@@ -195,6 +195,19 @@ TENTATIVES_OLLAMA = int(os.getenv("OLLAMA_TENTATIVES", "2"))
 PAUSE_RETRY_OLLAMA_SEC = 5
 
 
+# Obligation légale en prospection B2B/B2C en France (Code des postes et
+# communications électroniques, art. L34-5) : chaque email de prospection
+# doit offrir un moyen simple de refuser d'en recevoir d'autres. Ajoutée ICI
+# (après coup, sur le texte final) plutôt que confiée au prompt LLM : un
+# lead réel a montré que l'IA peut ignorer une consigne explicite du prompt
+# (ex: "ne mets AUCUN placeholder" pourtant non respecté sur des pitches déjà
+# en base) — mieux vaut une ligne garantie à 100% qu'une consigne de plus
+# que le modèle pourrait sauter. "stop" est déjà reconnu comme mot-clé de
+# désinscription par mail_processor.py::MOTS_NEGATIFS, donc une réponse à ce
+# mail fonctionne immédiatement sans changement côté traitement des réponses.
+MENTION_DESINSCRIPTION = "\n\nPour ne plus recevoir nos messages, répondez STOP."
+
+
 def _pitch_generique_repli(lead: dict) -> str:
     """Modèle de secours si le LLM (local ou cloud, voir llm_config.py) est
     indisponible — un lead qualifié ne doit jamais rester sans email juste
@@ -249,13 +262,13 @@ def generer_pitch(lead: dict) -> str:
         pause_retry_sec=PAUSE_RETRY_OLLAMA_SEC,
     )
     if pitch:
-        return pitch
+        return pitch + MENTION_DESINSCRIPTION
 
     log.warning(
         f"IA indisponible ({LLM_API_URL}) pour {lead['company_name']} — "
         f"utilisation du pitch générique de repli."
     )
-    return _pitch_generique_repli(lead)
+    return _pitch_generique_repli(lead) + MENTION_DESINSCRIPTION
 
 
 # ---------------------------------------------------------------------------
