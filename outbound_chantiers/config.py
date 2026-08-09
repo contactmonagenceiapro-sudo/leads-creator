@@ -102,15 +102,21 @@ COMMUNES_CIBLES_PAR_DEFAUT = _CAMPAGNE_PAR_DEFAUT["communes_cibles"]
 SIRENE_API_URL = "https://recherche-entreprises.api.gouv.fr/search"
 
 # === Signal d'activité "permis de construire" (agrégé, PAS de données nominatives) ===
-# À CONFIRMER avant mise en production : visiter data.grandlyon.com, rechercher
-# "permis de construire" / "autorisations d'urbanisme", ouvrir le jeu de
-# données pertinent, section "API" -> copier l'identifiant de dataset et
-# l'URL de base (portails OpenDataSoft : forme
-# https://<portail>/api/records/1.0/search/?dataset=<id>).
-# Alternative si rien de pertinent n'est publié pour la Métropole de Lyon :
-# le jeu de données national Sitadel sur data.gouv.fr (moins granulaire,
-# mais couvre tout le territoire).
-OPENDATA_BASE_URL = os.getenv("OUTBOUND_OPENDATA_BASE_URL", "https://data.grandlyon.com/api/records/1.0/search/")
+# Source : SDES / base Sitadel3, jeu national "Liste des autorisations
+# d'urbanisme créant des logements", diffusé via l'API Dido (open data,
+# aucune clé requise, mise à jour mensuelle). Couverture NATIONALE (pas
+# limitée à une métropole) — cohérent avec le principe multi-client de ce
+# département : data.grandlyon.com a été écarté après vérification, son API
+# a changé de format et ne publie de toute façon les permis que commune par
+# commune, pour une poignée de communes seulement (voir historique du
+# diagnostic si besoin).
+# OUTBOUND_OPENDATA_DATASET_ID attend l'identifiant technique ("rid") du
+# fichier de données Dido, ex: 8b35affb-55fc-4c1f-915b-7750f974446a pour le
+# fichier "logements" (voir signal_activite_chantiers.py pour le détail de
+# l'appel).
+OPENDATA_BASE_URL = os.getenv(
+    "OUTBOUND_OPENDATA_BASE_URL", "https://data.statistiques.developpement-durable.gouv.fr/dido/api/v1/datafiles"
+)
 OPENDATA_DATASET_ID = os.getenv("OUTBOUND_OPENDATA_DATASET_ID", "")  # vide = signal désactivé, score neutre
 
 # === Pondération du score final (module 2/3) ===
