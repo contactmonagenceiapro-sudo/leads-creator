@@ -390,7 +390,15 @@ def rechercher_entreprises_ouvertes(
         nom = entreprise.get("nom_complet") or entreprise.get("nom_raison_sociale")
         if not nom:
             continue
-        fiches.append({"nom": nom, "adresse": adresse, "siren": entreprise.get("siren")})
+        fiches.append({
+            "nom": nom,
+            "adresse": adresse,
+            "siren": entreprise.get("siren"),
+            # Déjà présent dans CETTE MÊME réponse SIRENE (aucun appel
+            # supplémentaire) — voir même logique côté pro,
+            # outbound_chantiers/sourcing_acteurs_pro.py::extraire_champs_utiles.
+            "tranche_effectif_salarie": etablissements_actifs[0].get("tranche_effectif_salarie"),
+        })
 
     return fiches
 
@@ -431,6 +439,7 @@ def recuperer_leads_open_data() -> list[dict]:
                     # (vérifiable sur annuaire-entreprises.data.gouv.fr).
                     "siren": fiche.get("siren"),
                     "adresse": fiche["adresse"],
+                    "tranche_effectif_salarie": fiche.get("tranche_effectif_salarie"),
                     "weakness": (
                         "Aucun site web recensé dans les données publiques (SIRENE) : "
                         "visibilité digitale à qualifier manuellement avant prospection "
@@ -653,6 +662,7 @@ def scraper_annuaire_batiment() -> list[dict]:
                 leads.append({
                     "company_name": fiche["nom"],
                     "industry": secteur,
+                    "ville": ville,
                     "weakness": weakness,
                     "email": email,
                     "email_source": email_source,

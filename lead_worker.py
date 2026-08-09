@@ -367,6 +367,13 @@ def inserer_lead(lead: dict, pitch: str | None, envoi_reussi: bool, marquer_inva
         "telephone": lead.get("telephone"),
         "siren": lead.get("siren"),
         "adresse": lead.get("adresse"),
+        # Colonne structurée (en plus de la mention "ville=" dans "notes" ci-
+        # dessous, conservée telle quelle) : nécessaire pour croiser chaque
+        # artisan avec le signal de dynamisme communal (voir
+        # sql/init_commune_leads.sql pour la reconstitution des leads déjà
+        # en base au moment de cette migration).
+        "commune": ville or None,
+        "tranche_effectif_salarie": lead.get("tranche_effectif_salarie"),
         "pitch_commercial": pitch,
         "source": "scraper_batiment",
         # Traçabilité de la confiance dans l'email (email_verifie_site,
@@ -440,6 +447,18 @@ def process_pipeline() -> ResultatTraitement:
     if not leads:
         log.info("Aucun nouveau lead à traiter (leads.json vide ou sans lead exploitable).")
         return resultat
+
+    # Trie par score décroissant avant traitement : à budget d'envoi
+    # quotidien limité (voir plus bas), les leads les mieux qualifiés
+    # doivent être contactés en premier plutôt que dans l'ordre arbitraire
+    # du scraping — même logique que
+    # outbound_chantiers/outbound_pro_btp.py (order=score_final.desc).
+    # Actuellement un NO-OP : leads.json ne porte pas encore de score (le
+    # calcul du score lui-même est une étape à venir, pas encore
+    # implémentée) — score absent ⇒ 0 partout ⇒ tri stable ⇒ ordre
+    # inchangé. S'activera automatiquement dès qu'un score sera présent,
+    # sans autre changement de code ici.
+    leads = sorted(leads, key=lambda l: -(l.get("score") or 0))
 
     log.info(f"{len(leads)} leads valides chargés, début du traitement...")
 
