@@ -100,18 +100,25 @@ def _code_insee_pour_commune(commune: str) -> str | None:
     return code
 
 
-def recuperer_activite_par_commune() -> dict[str, float]:
+def recuperer_activite_par_commune(communes: list[str] | None = None) -> dict[str, float]:
     """Renvoie un score d'activité chantiers normalisé (0 à 1) par CODE
     INSEE de commune, basé sur le volume de permis de construire/
     déclarations préalables déposés sur les FENETRE_ACTIVITE_JOURS derniers
-    jours, PARMI LES COMMUNES CIBLÉES PAR LA CAMPAGNE ACTIVE (config.py ::
-    COMMUNES_CIBLES — jamais une ville en dur ici). Normaliser sur ce seul
-    périmètre (plutôt que sur la France entière) donne un score qui reflète
-    le dynamisme relatif AU SEIN de la zone visée par le client — sans ça,
-    la commune la plus active de France (souvent hors zone) écraserait
-    l'échelle et tasserait tous les scores du client vers le bas.
+    jours, PARMI LES COMMUNES PASSÉES EN ARGUMENT. Sans argument, retombe
+    sur COMMUNES_CIBLES (config.py, campagne B2B active) — comportement
+    historique, inchangé pour outbound_chantiers/scorer_et_publier.py et
+    sourcing_acteurs_pro.py. Un appelant HORS B2B (ex: scoring des leads
+    artisans, zone géographique différente de la campagne B2B en cours) doit
+    passer sa PROPRE liste de communes, jamais dépendre implicitement de la
+    config d'une autre campagne.
+
+    Normaliser sur le périmètre demandé (plutôt que sur la France entière)
+    donne un score qui reflète le dynamisme relatif AU SEIN de cette zone —
+    sans ça, la commune la plus active de France (souvent hors zone)
+    écraserait l'échelle et tasserait tous les scores vers le bas.
+
     Ne lève jamais d'exception : renvoie un dict vide si le jeu de données
-    n'est pas configuré, indisponible, ou si aucune commune ciblée n'est
+    n'est pas configuré, indisponible, ou si aucune commune n'est
     résolvable, à charge de l'appelant d'utiliser le score neutre par
     défaut."""
     if not OPENDATA_DATASET_ID:
@@ -121,7 +128,8 @@ def recuperer_activite_par_commune() -> dict[str, float]:
         )
         return {}
 
-    codes_cibles = sorted({c for c in (_code_insee_pour_commune(nom) for nom in COMMUNES_CIBLES) if c})
+    communes_a_resoudre = communes if communes is not None else COMMUNES_CIBLES
+    codes_cibles = sorted({c for c in (_code_insee_pour_commune(nom) for nom in communes_a_resoudre) if c})
     if not codes_cibles:
         log.warning("Aucune commune ciblée n'a pu être résolue en code INSEE — score neutre appliqué.")
         return {}

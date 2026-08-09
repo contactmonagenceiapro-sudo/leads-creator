@@ -42,6 +42,7 @@ from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_blackliste_ou_a_risque, email_status
 from llm_config import LLM_API_URL, LLM_MODEL_MAIN, LLM_TIMEOUT, generer_texte
+from scorer_leads import activite_pour_communes, calculer_score
 
 load_dotenv()
 
@@ -374,6 +375,10 @@ def inserer_lead(lead: dict, pitch: str | None, envoi_reussi: bool, marquer_inva
         # en base au moment de cette migration).
         "commune": ville or None,
         "tranche_effectif_salarie": lead.get("tranche_effectif_salarie"),
+        # Calculé une fois pour tout le lot dans process_pipeline() (voir
+        # scorer_leads.py::calculer_score) — jamais recalculé ici pour ne
+        # pas refaire un appel réseau par lead.
+        "score": lead.get("score", 0),
         "pitch_commercial": pitch,
         "source": "scraper_batiment",
         # Traçabilité de la confiance dans l'email (email_verifie_site,
@@ -448,16 +453,18 @@ def process_pipeline() -> ResultatTraitement:
         log.info("Aucun nouveau lead à traiter (leads.json vide ou sans lead exploitable).")
         return resultat
 
-    # Trie par score décroissant avant traitement : à budget d'envoi
+    # Calcule le score de chaque lead (voir scorer_leads.py) AVANT le
+    # traitement, puis trie par score décroissant : à budget d'envoi
     # quotidien limité (voir plus bas), les leads les mieux qualifiés
     # doivent être contactés en premier plutôt que dans l'ordre arbitraire
     # du scraping — même logique que
     # outbound_chantiers/outbound_pro_btp.py (order=score_final.desc).
-    # Actuellement un NO-OP : leads.json ne porte pas encore de score (le
-    # calcul du score lui-même est une étape à venir, pas encore
-    # implémentée) — score absent ⇒ 0 partout ⇒ tri stable ⇒ ordre
-    # inchangé. S'activera automatiquement dès qu'un score sera présent,
-    # sans autre changement de code ici.
+    # Le signal d'activité chantiers est récupéré UNE fois pour tout le lot
+    # (pas par lead) : mêmes communes qui reviennent pour de nombreux leads.
+    communes_du_lot = sorted({lead["ville"] for lead in leads if lead.get("ville")})
+    activite_par_commune = activite_pour_communes(communes_du_lot)
+    for lead in leads:
+        lead["score"] = calculer_score(lead.get("ville"), lead.get("tranche_effectif_salarie"), activite_par_commune)
     leads = sorted(leads, key=lambda l: -(l.get("score") or 0))
 
     log.info(f"{len(leads)} leads valides chargés, début du traitement...")
