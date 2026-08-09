@@ -26,6 +26,7 @@ from outbound_chantiers.config import (
     NB_NOUVEAUX_SOUHAITES_PAR_SEGMENT,
     SIRENE_API_URL,
 )
+from outbound_chantiers.signal_activite_chantiers import recuperer_activite_par_commune, score_pour_commune
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [SOURCING-PRO] %(message)s")
 log = logging.getLogger(__name__)
@@ -85,6 +86,12 @@ def extraire_champs_utiles(resultat: dict, type_acteur: str) -> dict:
         "code_postal": siege.get("code_postal"),
         "adresse": siege.get("adresse"),
         "date_creation": resultat.get("date_creation"),
+        # Déjà présent dans CETTE MÊME réponse SIRENE (aucun appel
+        # supplémentaire) — code INSEE de tranche d'effectif salarié de
+        # l'établissement (ex: "11" = 10 à 19 salariés), utilisé comme
+        # critère de score "taille d'entreprise" (voir
+        # scorer_et_publier.py::score_taille_entreprise).
+        "tranche_effectif_salarie": siege.get("tranche_effectif_salarie"),
     }
 
 
@@ -128,13 +135,23 @@ def sourcer_acteurs_pro() -> list[dict]:
     deja_connus = recuperer_sirens_deja_connus(CLIENT_FINAL)
     log.info(f"{len(deja_connus)} acteur(s) déjà en base pour « {CLIENT_FINAL} » — exclus des nouveaux résultats")
 
+    # Priorise les communes les plus dynamiques (signal module 1b, déjà
+    # nécessaire pour le scoring) : à quota de pages/requêtes égal, on veut
+    # que les communes à fort potentiel soient explorées EN PREMIER, plutôt
+    # que de scraper toutes les communes de façon uniforme peu importe leur
+    # dynamisme réel. Sans signal configuré, score_pour_commune() renvoie
+    # 0.5 partout : le tri est alors stable et ne change rien à l'ordre
+    # d'origine (comportement identique à avant).
+    activite_par_commune = recuperer_activite_par_commune()
+    communes_triees = sorted(COMMUNES_CIBLES, key=lambda c: -score_pour_commune(c, activite_par_commune))
+
     nb_requetes = 0
     nb_echecs = 0
     nb_reexclus_deja_connus = 0
 
     for type_acteur, codes_naf in NAF_CODES_CIBLES.items():
         for code_naf in codes_naf:
-            for commune in COMMUNES_CIBLES:
+            for commune in communes_triees:
                 nouveaux_ce_segment = 0
 
                 for page in range(1, MAX_PAGES_PAR_SEGMENT + 1):

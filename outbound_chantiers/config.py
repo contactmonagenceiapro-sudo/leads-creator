@@ -122,6 +122,15 @@ OPENDATA_DATASET_ID = os.getenv("OUTBOUND_OPENDATA_DATASET_ID", "")  # vide = si
 # === Pondération du score final (module 2/3) ===
 POIDS_ACTIVITE_CHANTIERS = 0.5  # poids du signal d'activité locale dans le score final
 
+# Bonus PLAFONNÉS (taille d'entreprise, présence web) appliqués APRÈS le
+# score de base (type d'acteur x50% + activité chantiers x50%, ci-dessus) —
+# volontairement de petite ampleur pour ne jamais remettre en cause cette
+# pondération existante, juste l'affiner en marge. Un acteur sans donnée
+# disponible sur l'un de ces critères reçoit un bonus nul (jamais négatif),
+# jamais pénalisé faute de donnée — voir scorer_et_publier.py.
+BONUS_MAX_TAILLE_ENTREPRISE = 0.05
+BONUS_MAX_PRESENCE_WEB = 0.05
+
 # Seuil (score_final, 0 à 1) au-delà duquel un acteur nouvellement publié
 # déclenche une alerte temps réel (Discord + e-mail, voir scorer_et_publier.py
 # et alertes.py). MÊME variable d'environnement que api/main.py (qui l'utilise

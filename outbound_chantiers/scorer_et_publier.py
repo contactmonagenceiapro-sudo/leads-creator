@@ -35,6 +35,8 @@ import requests
 from alertes import alerter_discord, envoyer_alerte_email
 from email_validator import email_status
 from outbound_chantiers.config import (
+    BONUS_MAX_PRESENCE_WEB,
+    BONUS_MAX_TAILLE_ENTREPRISE,
     CLIENT_FINAL,
     POIDS_ACTIVITE_CHANTIERS,
     POIDS_TYPE_ACTEUR,
@@ -50,15 +52,62 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 FICHIER_ENTREE = Path(__file__).parent / "acteurs_pro_enrichis.json"
 
+# Code INSEE de tranche d'effectif salarié (établissement) -> score 0-1,
+# croissant puis plafonné : au-delà d'une cinquantaine de salariés, "plus
+# gros" n'apporte plus d'information supplémentaire utile pour juger de la
+# pertinence d'un partenariat avec un client BTP de petite taille (le sujet
+# ici est la taille probable des chantiers gérés, pas un objectif de score
+# maximal pour les plus grosses structures). Absente/inconnue ('NN', valeur
+# vide) -> 0.0, jamais de pénalité faute de donnée SIRENE.
+SCORES_TRANCHE_EFFECTIF = {
+    "00": 0.0,   # 0 salarié
+    "01": 0.15,  # 1 à 2
+    "02": 0.3,   # 3 à 5
+    "03": 0.45,  # 6 à 9
+    "11": 0.6,   # 10 à 19
+    "12": 0.75,  # 20 à 49
+    "21": 0.9,   # 50 à 99
+    "22": 1.0,   # 100 à 199
+    "31": 1.0, "32": 1.0, "41": 1.0, "42": 1.0, "51": 1.0, "52": 1.0, "53": 1.0,
+}
+
+
+def score_taille_entreprise(tranche_effectif_salarie: str | None) -> float:
+    return SCORES_TRANCHE_EFFECTIF.get(tranche_effectif_salarie or "", 0.0)
+
+
+def score_presence_web(acteur: dict) -> float:
+    """Composite à partir des signaux déjà collectés par l'enrichissement
+    (module 2), sans nouvelle source : site propre (0.5 — le plus engageant,
+    signale une vraie vitrine professionnelle), LinkedIn (0.3), autres
+    réseaux sociaux (0.2). Plafonné à 1.0."""
+    score = 0.0
+    if acteur.get("site_web"):
+        score += 0.5
+    if acteur.get("linkedin_url"):
+        score += 0.3
+    if acteur.get("reseaux_sociaux"):
+        score += 0.2
+    return min(score, 1.0)
+
 
 def calculer_score(acteur: dict, activite_par_commune: dict[str, float]) -> float:
     poids_type = POIDS_TYPE_ACTEUR.get(acteur["type_acteur"], 0.5)
     score_activite = score_pour_commune(acteur.get("commune") or "", activite_par_commune)
 
-    # Score final : moyenne pondérée entre la pertinence du type d'acteur et
-    # le dynamisme de sa zone. Plafonné à 1.0 pour rester interprétable.
-    score = (poids_type * (1 - POIDS_ACTIVITE_CHANTIERS)) + (score_activite * POIDS_ACTIVITE_CHANTIERS)
-    return round(min(score, 1.0), 3)
+    # Score de base : moyenne pondérée entre la pertinence du type d'acteur
+    # et le dynamisme de sa zone — pondération INCHANGÉE (50/50).
+    score_base = (poids_type * (1 - POIDS_ACTIVITE_CHANTIERS)) + (score_activite * POIDS_ACTIVITE_CHANTIERS)
+
+    # Bonus plafonnés (taille d'entreprise, présence web) : affinent le
+    # score en marge sans jamais dominer le score de base ci-dessus — voir
+    # BONUS_MAX_TAILLE_ENTREPRISE / BONUS_MAX_PRESENCE_WEB (config.py).
+    bonus = (
+        score_taille_entreprise(acteur.get("tranche_effectif_salarie")) * BONUS_MAX_TAILLE_ENTREPRISE
+        + score_presence_web(acteur) * BONUS_MAX_PRESENCE_WEB
+    )
+
+    return round(min(score_base + bonus, 1.0), 3)
 
 
 def publier_en_base(acteur: dict, est_nouveau: bool = True) -> bool:
@@ -86,11 +135,21 @@ def publier_en_base(acteur: dict, est_nouveau: bool = True) -> bool:
         "reseaux_sociaux": acteur.get("reseaux_sociaux") or {},
         "enrichissement_statut": acteur.get("enrichissement_statut") or "non_tente",
         "enrichi_at": datetime.now(timezone.utc).isoformat(),
+        "tranche_effectif_salarie": acteur.get("tranche_effectif_salarie"),
         "score_activite_chantiers": acteur["score_activite_chantiers"],
         "score_final": acteur["score_final"],
     }
     if est_nouveau and statut_email in ("invalid_syntax", "invalid_domain"):
         payload["statut"] = "invalide"
+    elif est_nouveau and statut_email == "email_introuvable":
+        # Sort proprement ces acteurs de la file d'envoi automatique
+        # (outbound_pro_btp.py::lancer_campagne_initiale ne sélectionne que
+        # statut='a_contacter' ET exige un email — sans cette bascule, un
+        # acteur sans email reste indéfiniment en tête de file, re-sélectionné
+        # puis silencieusement ignoré à chaque run) — reste visible et
+        # filtrable dans le dashboard pour un contact manuel (téléphone :
+        # quasi systématiquement disponible pour ce cas, voir diagnostic).
+        payload["statut"] = "necessite_contact_manuel"
     try:
         reponse = requests.post(
             f"{SUPABASE_URL}/rest/v1/leads_professionnels",
