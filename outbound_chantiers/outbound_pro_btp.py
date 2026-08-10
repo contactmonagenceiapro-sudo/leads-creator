@@ -52,11 +52,26 @@ from outbound_chantiers.config import (
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+# Même variable que lead_worker.py/mail_processor.py/contrats_signature.py
+# pour construire les liens publics du dashboard (voir MENTION_DESINSCRIPTION
+# ci-dessous, qui pointe vers ?vue=confidentialite).
+PUBLIC_DASHBOARD_URL = os.getenv("PUBLIC_DASHBOARD_URL", "http://localhost:8501")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [OUTBOUND-PRO] %(message)s")
 log = logging.getLogger(__name__)
 
 TABLE = "leads_professionnels"
+
+# Même obligation légale que lead_worker.py::MENTION_DESINSCRIPTION (Code
+# des postes et communications électroniques, art. L34-5) — appliquée ici
+# aux DEUX types d'e-mails de ce pipeline (premier contact ET relances : une
+# relance reste une prospection, pas juste le premier envoi). "stop" est
+# déjà reconnu par mail_processor.py::MOTS_NEGATIFS, donc une réponse à ce
+# mail fonctionne immédiatement sans changement côté traitement des réponses.
+MENTION_DESINSCRIPTION = (
+    "\n\nPour ne plus recevoir nos messages, répondez STOP."
+    f"\nPolitique de confidentialité : {PUBLIC_DASHBOARD_URL}/?vue=confidentialite"
+)
 # Anti-spam, alignée sur lead_worker.py/ceo_agent.py/relance_prospects.py
 # (même compte Zoho, même limite) — portée à 45-90s suite à un premier
 # blocage Zoho, puis à 60-120s après un second blocage malgré ce premier
@@ -188,7 +203,11 @@ def generer_pitch_ia(acteur: dict) -> str:
 def message_premier_contact(acteur: dict) -> tuple[str, str]:
     commune = acteur.get("commune") or "votre secteur"
     sujet = f"{CLIENT_FINAL} — partenariat professionnel sur {commune}"
-    corps = generer_pitch_ia(acteur) + f"\n\n(message transmis pour le compte de {CLIENT_FINAL} par {AGENCY_NAME})"
+    corps = (
+        generer_pitch_ia(acteur)
+        + f"\n\n(message transmis pour le compte de {CLIENT_FINAL} par {AGENCY_NAME})"
+        + MENTION_DESINSCRIPTION
+    )
     return sujet, corps
 
 
@@ -209,7 +228,7 @@ def message_relance(acteur: dict, numero_relance: int) -> tuple[str, str]:
             f"jour, n'hésitez pas à revenir vers nous. Je ne vous solliciterai plus "
             f"dans l'intervalle.\n\nCordialement,\n{CLIENT_FINAL}"
         )
-    return sujet, corps
+    return sujet, corps + MENTION_DESINSCRIPTION
 
 
 def statut_ramp_warmup() -> dict:

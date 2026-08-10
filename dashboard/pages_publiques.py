@@ -18,6 +18,7 @@ token, jamais par lead_id, contrairement aux autres vues ci-dessus.
 """
 
 import os
+from pathlib import Path
 
 import streamlit as st
 
@@ -27,6 +28,21 @@ from signature_interne import enregistrer_signature, envoyer_contrat_signature_i
 from supabase_client import supabase
 
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
+
+# Lien relatif (même app) vers la page de politique de confidentialité
+# ci-dessous — réutilisé partout où une mention RGPD est requise sur cette
+# page (intake, signature) : lead_worker.py::MENTION_DESINSCRIPTION (email
+# en texte brut, pas de lien cliquable côté serveur) et
+# landing/artisan-inscription.html (page statique hors de cette app,
+# nécessite l'URL absolue de PUBLIC_DASHBOARD_URL en dur) ont chacun leur
+# propre construction du même lien.
+LIEN_CONFIDENTIALITE = "?vue=confidentialite"
+LIBELLE_LIEN_CONFIDENTIALITE = "politique de confidentialité"
+
+# Racine du dépôt : pages_publiques.py vit dans dashboard/, le fichier
+# source de la politique à la racine (politique-confidentialite.md) — même
+# convention que RACINE_REPO dans data_access.py/process_runner.py.
+CHEMIN_POLITIQUE_CONFIDENTIALITE = Path(__file__).resolve().parent.parent / "politique-confidentialite.md"
 # "interne" (défaut) = signature électronique simple maison (signature_interne.py) ;
 # "yousign" = repasse sur le prestataire de confiance Yousign (contrats_signature.py),
 # gardé disponible pour plus tard (budget/volume suffisant, ou contrat à enjeu plus
@@ -155,6 +171,7 @@ def afficher_intake(lead_id: str | None) -> None:
             "Téléphone à afficher publiquement sur le site (pas pour vous appeler)",
             placeholder="0X XX XX XX XX", max_chars=50,
         )
+        st.caption(f"En envoyant ce formulaire, vous acceptez notre [{LIBELLE_LIEN_CONFIDENTIALITE}]({LIEN_CONFIDENTIALITE}).")
         envoyer = st.form_submit_button("Envoyer", type="primary", use_container_width=True)
 
     if not envoyer:
@@ -251,7 +268,8 @@ def afficher_signature(token: str | None) -> None:
     st.caption(
         "En tapant votre nom et en cliquant ci-dessous, vous acceptez les conditions du "
         "devis ci-dessus. Ceci constitue une signature électronique simple au sens de "
-        "l'article 1367 du Code civil (nom, date, heure et adresse IP sont enregistrés)."
+        "l'article 1367 du Code civil (nom, date, heure et adresse IP sont enregistrés — "
+        f"voir notre [{LIBELLE_LIEN_CONFIDENTIALITE}]({LIEN_CONFIDENTIALITE}))."
     )
     nom_saisi = st.text_input("Votre nom complet, pour valider")
     if st.button("✅ J'accepte les conditions", type="primary", use_container_width=True):
@@ -329,3 +347,22 @@ def afficher_devis(slug: str | None) -> None:
                 st.rerun()
 
     st.caption("Vos informations ne sont utilisées que pour traiter cette demande de devis.")
+
+
+def afficher_confidentialite() -> None:
+    """Politique de confidentialité — page publique statique, affichée
+    telle quelle depuis politique-confidentialite.md (racine du dépôt,
+    source unique : toute mise à jour du contenu se fait dans ce seul
+    fichier, jamais dans le code). Liée depuis l'intake, la signature, le
+    pitch email (lead_worker.py) et le portail artisan
+    (landing/artisan-inscription.html)."""
+    st.title("Politique de confidentialité")
+    try:
+        contenu = CHEMIN_POLITIQUE_CONFIDENTIALITE.read_text(encoding="utf-8")
+    except OSError:
+        st.error(
+            "Politique de confidentialité momentanément indisponible — "
+            "contactez-nous directement à expertisedigitale@zohomail.eu."
+        )
+        return
+    st.markdown(contenu)

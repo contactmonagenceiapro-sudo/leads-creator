@@ -56,6 +56,10 @@ SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
+# Même variable que mail_processor.py/contrats_signature.py/signature_interne.py
+# pour construire les liens publics du dashboard (voir MENTION_DESINSCRIPTION
+# ci-dessous, qui pointe vers ?vue=confidentialite).
+PUBLIC_DASHBOARD_URL = os.getenv("PUBLIC_DASHBOARD_URL", "http://localhost:8501")
 
 # Pause anti-spam entre deux ENVOIS RÉELS (alignée sur ceo_agent.py,
 # relance_prospects.py et outbound_pro_btp.py — tous partagent le même
@@ -206,7 +210,14 @@ PAUSE_RETRY_OLLAMA_SEC = 5
 # que le modèle pourrait sauter. "stop" est déjà reconnu comme mot-clé de
 # désinscription par mail_processor.py::MOTS_NEGATIFS, donc une réponse à ce
 # mail fonctionne immédiatement sans changement côté traitement des réponses.
-MENTION_DESINSCRIPTION = "\n\nPour ne plus recevoir nos messages, répondez STOP."
+# Lien vers la politique de confidentialité (?vue=confidentialite, voir
+# dashboard/pages_publiques.py::afficher_confidentialite) ajouté au même
+# endroit : email en texte brut, donc URL directe plutôt qu'un lien cliquable
+# stylé (pas de HTML dans ces emails, voir ceo_agent.py::send_email_prospect).
+MENTION_DESINSCRIPTION = (
+    "\n\nPour ne plus recevoir nos messages, répondez STOP."
+    f"\nPolitique de confidentialité : {PUBLIC_DASHBOARD_URL}/?vue=confidentialite"
+)
 
 
 def _pitch_generique_repli(lead: dict) -> str:
