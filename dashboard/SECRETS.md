@@ -51,6 +51,14 @@ DELAI_PREMIERE_RELANCE_JOURS = "4"
 DELAI_RELANCE_SUIVANTE_JOURS = "4"
 MAX_RELANCES = "2"
 
+# Signal d'activité chantiers (Sitadel3/SDES, voir
+# outbound_chantiers/signal_activite_chantiers.py) — rid du fichier "Liste
+# des autorisations d'urbanisme créant des logements" sur data.statistiques.
+# developpement-durable.gouv.fr (Dido), vérifié en direct le 10/08 (national,
+# fonctionne aussi bien pour le Grand Est que pour Lyon). Laisser vide =
+# signal désactivé, score neutre 0.5 appliqué à tous les leads.
+OUTBOUND_OPENDATA_DATASET_ID = "8b35affb-55fc-4c1f-915b-7750f974446a"
+
 # Ollama local (http://localhost:11434) injoignable depuis Streamlit Cloud —
 # voir llm_config.py (racine du dépôt) : si LLM_API_URL est vide, tout appel
 # à l'IA échoue proprement et repli automatiquement sur un pitch générique

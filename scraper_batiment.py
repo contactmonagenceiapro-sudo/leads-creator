@@ -5,8 +5,9 @@ scraper_batiment.py
 ====================
 
 Scraper de leads BtoB cible : PME du secteur du Bâtiment (gros œuvre, second
-œuvre, rénovation, électricité, plomberie, isolation) dans la région Grand Est
-(Reims, Strasbourg, Metz, Nancy, Troyes, Mulhouse, Colmar...).
+œuvre, rénovation, électricité, plomberie, isolation) sur deux zones :
+Métropole de Lyon et région Grand Est (Reims, Strasbourg, Metz, Nancy,
+Troyes, Mulhouse, Colmar, Charleville-Mézières) — voir VILLES_CIBLES.
 
 Ce script s'insère dans le pipeline `ai-company` :
     scraper_batiment.py  -->  leads.json  -->  lead_worker.py (Ollama + Supabase)
@@ -55,7 +56,7 @@ OUTPUT_FILE = Path(__file__).resolve().parent / "leads.json"
 # rattaché aux établissements dans SIRENE (vérifié en direct : code_commune
 # =69123 ne renvoie presque aucun résultat, alors que 69381-69389 en
 # renvoient des centaines chacun).
-VILLES_CIBLES = [
+VILLES_LYON = [
     "Lyon 1er", "Lyon 2e", "Lyon 3e", "Lyon 4e", "Lyon 5e",
     "Lyon 6e", "Lyon 7e", "Lyon 8e", "Lyon 9e",
     # Communes limitrophes à fort volume (Métropole de Lyon), ajoutées pour
@@ -66,6 +67,23 @@ VILLES_CIBLES = [
     "Vaulx-en-Velin", "Caluire-et-Cuire", "Oullins-Pierre-Bénite",
     "Rillieux-la-Pape", "Écully",
 ]
+
+# Zone Grand Est — décision business du 10/08 : réactivée EN PLUS de Lyon
+# (jamais à la place). Zone historique (présente dans la toute première
+# version de ce script), remplacée par Lyon le 28/07 pour un motif de
+# volume, pas un problème technique. Contrairement à Lyon, ces communes ont
+# un code INSEE standard unique, pas d'arrondissements.
+VILLES_GRAND_EST = [
+    "Reims", "Strasbourg", "Metz", "Nancy", "Troyes",
+    "Mulhouse", "Colmar", "Charleville-Mézières",
+]
+
+# Liste à plat consommée par les boucles de scraping ci-dessous. Découpée en
+# deux sous-listes nommées (au lieu d'une seule liste plate) pour que le
+# dashboard puisse classer chaque lead par zone (voir
+# dashboard/data_access.py::get_stats_par_zone_artisans) sans dupliquer les
+# noms de communes.
+VILLES_CIBLES = VILLES_LYON + VILLES_GRAND_EST
 
 # Code commune INSEE de chaque ville ciblée (identifie une commune de façon
 # unique, contrairement au code postal qui peut regrouper plusieurs communes
@@ -94,6 +112,15 @@ VILLES_CODE_INSEE = {
     "Oullins-Pierre-Bénite": "69149",
     "Rillieux-la-Pape": "69286",
     "Écully": "69081",
+    # Grand Est — codes vérifiés en direct (API géo.api.gouv.fr).
+    "Reims": "51454",
+    "Strasbourg": "67482",
+    "Metz": "57463",
+    "Nancy": "54395",
+    "Troyes": "10387",
+    "Mulhouse": "68224",
+    "Colmar": "68066",
+    "Charleville-Mézières": "08105",
 }
 
 # Ciblage métier : (mot-clé de recherche, libellé du sous-secteur)

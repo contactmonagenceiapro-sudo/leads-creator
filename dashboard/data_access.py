@@ -30,6 +30,12 @@ import stripe
 
 from supabase_client import supabase
 
+# sys.path (voir dashboard/app.py) inclut la racine du dépôt : import direct
+# du module du scraper pour réutiliser sa définition des deux zones (Lyon /
+# Grand Est) sans dupliquer la liste des communes ici — voir
+# scraper_batiment.py::VILLES_LYON / VILLES_GRAND_EST.
+from scraper_batiment import VILLES_GRAND_EST, VILLES_LYON
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [DASHBOARD] %(message)s")
 log = logging.getLogger(__name__)
 
@@ -205,6 +211,52 @@ def get_leads(limit: int = 100) -> dict:
     except Exception as e:
         raise DataAccessError(f"Erreur lecture leads : {e}") from e
     return {"leads": data}
+
+
+def _zone_pour_commune(commune: str | None) -> str:
+    """Classe une commune de `leads` dans l'une des deux zones scrapées
+    (voir scraper_batiment.py::VILLES_LYON / VILLES_GRAND_EST), sans
+    dupliquer les noms de communes. 'Autre' couvre les leads antérieurs à
+    ce découpage ou une commune retirée depuis de VILLES_CIBLES."""
+    if commune in VILLES_LYON:
+        return "Lyon"
+    if commune in VILLES_GRAND_EST:
+        return "Grand Est"
+    return "Autre"
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_stats_par_zone_artisans() -> dict:
+    """Répartition des leads artisans (table `leads`) par zone géographique
+    — le pipeline scraper_batiment.py/lead_worker.py n'a pas de notion de
+    campagne (contrairement au B2B, voir get_campagne_stats) : cette vue
+    reconstitue une visibilité séparée Lyon / Grand Est à partir de la seule
+    colonne `commune`, sans toucher à la structure de données existante."""
+    try:
+        leads = (
+            supabase.table("leads").select("commune,status,contacted,score").execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture répartition par zone : {e}") from e
+
+    zones: dict[str, dict] = {
+        nom: {"total": 0, "a_contacter": 0, "contactes": 0, "scores": []}
+        for nom in ("Lyon", "Grand Est", "Autre")
+    }
+    for lead in leads:
+        zone = zones[_zone_pour_commune(lead.get("commune"))]
+        zone["total"] += 1
+        if lead.get("contacted"):
+            zone["contactes"] += 1
+        elif lead.get("status") == "a_contacter":
+            zone["a_contacter"] += 1
+        zone["scores"].append(lead.get("score") or 0)
+
+    for zone in zones.values():
+        scores = zone.pop("scores")
+        zone["score_moyen"] = round(sum(scores) / len(scores), 1) if scores else 0
+
+    return zones
 
 
 # ---------------------------------------------------------------------

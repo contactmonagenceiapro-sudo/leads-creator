@@ -27,7 +27,7 @@ import streamlit as st
 
 import process_runner
 from common import afficher_suivi, executer_avec_spinner, liste_noms_campagnes, safe_call
-from data_access import compter_relances_envoyees_depuis, get_campagnes
+from data_access import compter_relances_envoyees_depuis, get_campagnes, get_stats_par_zone_artisans
 
 st.title("📈 Suivi et Résultats des Actions")
 st.caption(
@@ -136,6 +136,29 @@ tab_sourcing, tab_campagnes, tab_relances, tab_bounces = st.tabs(
 )
 
 with tab_sourcing:
+    st.markdown("#### 🗺️ Répartition par zone")
+    st.caption(
+        "Le pipeline artisans n'a pas de notion de campagne (contrairement au B2B, "
+        "onglet suivant) : Lyon et Grand Est partagent le même scraping, le même "
+        "traitement IA et le même budget d'envoi quotidien — cette vue reconstitue "
+        "juste une visibilité séparée à partir de la commune de chaque lead."
+    )
+    zones_data, zones_error = safe_call(get_stats_par_zone_artisans)
+    if zones_error:
+        st.error(zones_error)
+    elif zones_data:
+        colonnes = st.columns(3)
+        for col, nom_zone in zip(colonnes, ("Lyon", "Grand Est", "Autre")):
+            zone = zones_data.get(nom_zone, {})
+            with col:
+                st.metric(nom_zone, zone.get("total", 0))
+                st.caption(
+                    f"À contacter : {zone.get('a_contacter', 0)} · "
+                    f"Contactés : {zone.get('contactes', 0)} · "
+                    f"Score moyen : {zone.get('score_moyen', 0)}"
+                )
+    st.divider()
+
     bloc_action(
         "scraping", "🔍 Scraping des artisans", process_runner.lancer_scraping, estimation_secondes=90
     )
