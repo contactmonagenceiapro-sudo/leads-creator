@@ -1,8 +1,8 @@
 """
 Pages PUBLIQUES du dashboard — accessibles SANS connexion, contrairement à
 toutes les autres pages (voir app.py, qui court-circuite exiger_connexion()
-pour ces trois vues via un paramètre d'URL ?vue=...). Remplacent les
-anciennes routes HTML de api/main.py :
+pour ces vues via un paramètre d'URL ?vue=...). Remplacent les anciennes
+routes HTML de api/main.py :
 - GET/POST /presentation/{lead_id}  -> ?vue=presentation&lead_id=...
 - GET/POST /intake/{lead_id}        -> ?vue=intake&lead_id=...
 - GET/POST /devis/{client_slug}     -> ?vue=devis&slug=...
@@ -10,17 +10,28 @@ anciennes routes HTML de api/main.py :
 Contenu et logique métier repris tels quels (mêmes champs de formulaire,
 même comportement), seulement traduits en composants Streamlit natifs au
 lieu de HTML/CSS brut.
+
+afficher_signature (?vue=signature&token=...) est différente : nouvelle
+page (pas une reprise d'une ancienne route FastAPI), ajoutée le 10/08 pour
+la signature électronique interne (voir signature_interne.py) — résout par
+token, jamais par lead_id, contrairement aux autres vues ci-dessus.
 """
 
 import os
 
 import streamlit as st
 
-from contrats_signature import envoyer_contrat_signature
+from contrats_signature import envoyer_contrat_signature, generer_pdf_devis
 from alertes import alerter_discord
+from signature_interne import enregistrer_signature, envoyer_contrat_signature_interne, get_contrat_par_token
 from supabase_client import supabase
 
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
+# "interne" (défaut) = signature électronique simple maison (signature_interne.py) ;
+# "yousign" = repasse sur le prestataire de confiance Yousign (contrats_signature.py),
+# gardé disponible pour plus tard (budget/volume suffisant, ou contrat à enjeu plus
+# important) — voir diagnostic + plan validés le 10/08.
+SIGNATURE_PROVIDER = os.getenv("SIGNATURE_PROVIDER_PAR_DEFAUT", "interne")
 
 # Tout statut atteint APRÈS une soumission d'intake réussie (voir
 # envoyer_contrat_signature / marquer_contrat_signe / marquer_contrat_paye
@@ -94,8 +105,9 @@ def afficher_presentation(lead_id: str | None) -> None:
 def afficher_intake(lead_id: str | None) -> None:
     """Formulaire asynchrone de collecte du contenu nécessaire à la
     production du site (aucun appel : tout est déclaratif, par écrit).
-    Déclenche la génération du devis PDF + l'envoi en signature Yousign dès
-    la soumission."""
+    Déclenche la génération du devis PDF + l'envoi en signature électronique
+    dès la soumission (interne par défaut, Yousign en option — voir
+    SIGNATURE_PROVIDER)."""
     if not lead_id:
         st.error("Lien invalide : identifiant manquant.")
         return
@@ -168,10 +180,87 @@ def afficher_intake(lead_id: str | None) -> None:
         return
 
     with st.spinner("Génération de votre devis et envoi en signature électronique..."):
-        envoyer_contrat_signature(lead, payload)
+        if SIGNATURE_PROVIDER == "yousign":
+            envoyer_contrat_signature(lead, payload)
+        else:
+            envoyer_contrat_signature_interne(lead, payload)
 
     st.session_state[cle_envoye] = True
     st.rerun()
+
+
+def _get_intake(lead_id: str) -> dict:
+    """Même principe que _get_lead() : jamais d'exception visible sur une
+    page publique."""
+    try:
+        rows = (
+            supabase.table("intake_responses").select("*")
+            .eq("lead_id", lead_id).order("created_at", desc=True).limit(1).execute().data
+        )
+    except Exception:
+        return {}
+    return rows[0] if rows else {}
+
+
+def afficher_signature(token: str | None) -> None:
+    """Page publique de signature électronique interne (lien envoyé par
+    email à la place d'une demande Yousign, voir
+    signature_interne.envoyer_contrat_signature_interne). Résout STRICTEMENT
+    par token — jamais par lead_id/contract_id — le token est le seul
+    contrôle d'accès à cette page."""
+    if not token:
+        st.error("Lien invalide : jeton manquant.")
+        return
+
+    contrat = get_contrat_par_token(token)
+    if not contrat:
+        st.error("Page introuvable.")
+        return
+
+    cle_signe = f"signature_ok_{token}"
+    deja_signe = contrat.get("yousign_status") == "signe"
+    if st.session_state.get(cle_signe) or deja_signe:
+        st.title("Signé ✅")
+        with st.container(border=True):
+            st.write(
+                "Merci, ce contrat est signé ! Vous avez reçu (ou allez recevoir) la "
+                "confirmation par email avec le récapitulatif complet."
+            )
+        return
+
+    lead = _get_lead(contrat["lead_id"])
+    if not lead:
+        st.error("Contrat introuvable.")
+        return
+
+    intake = _get_intake(contrat["lead_id"])
+    pdf_bytes = generer_pdf_devis(lead, intake)
+
+    st.title(f"Votre devis — {lead.get('company') or ''}")
+    with st.container(border=True):
+        st.write(f"Description du projet : {intake.get('description', '') or '—'}")
+        st.write("Prestation : Création de site vitrine + optimisation SEO local (Done For You)")
+        st.markdown(f"**Montant : {(contrat.get('montant_centimes') or 0) / 100:.2f} € TTC**")
+    st.download_button(
+        "⬇️ Télécharger le devis en PDF", data=pdf_bytes,
+        file_name=f"devis_{contrat['id']}.pdf", mime="application/pdf",
+    )
+
+    st.divider()
+    st.subheader("Validation du devis")
+    st.caption(
+        "En tapant votre nom et en cliquant ci-dessous, vous acceptez les conditions du "
+        "devis ci-dessus. Ceci constitue une signature électronique simple au sens de "
+        "l'article 1367 du Code civil (nom, date, heure et adresse IP sont enregistrés)."
+    )
+    nom_saisi = st.text_input("Votre nom complet, pour valider")
+    if st.button("✅ J'accepte les conditions", type="primary", use_container_width=True):
+        succes, message_erreur = enregistrer_signature(contrat, nom_saisi)
+        if not succes:
+            st.warning(message_erreur)
+        else:
+            st.session_state[cle_signe] = True
+            st.rerun()
 
 
 def afficher_devis(slug: str | None) -> None:

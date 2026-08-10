@@ -24,7 +24,7 @@ d'entrée et construit SA PROPRE navigation en plus de celle définie ici via
 st.navigation()/st.Page() — les deux mécanismes entrent alors en conflit.
 
 Pages PUBLIQUES (dashboard/pages_publiques.py) : accessibles via un
-paramètre d'URL dédié (?vue=presentation|intake|devis), interceptées ici
+paramètre d'URL dédié (?vue=presentation|intake|devis|signature), interceptées ici
 AVANT auth.exiger_connexion() — ce sont les liens envoyés aux prospects par
 e-mail (voir mail_processor.py::envoyer_suivi_positif), qui ne doivent
 évidemment pas nécessiter de compte.
@@ -64,13 +64,15 @@ initialiser_secrets()
 # Routing des pages PUBLIQUES — avant tout gate d'authentification.
 # ---------------------------------------------------------------------
 _vue_publique = st.query_params.get("vue")
-if _vue_publique in ("presentation", "intake", "devis"):
-    from pages_publiques import afficher_devis, afficher_intake, afficher_presentation
+if _vue_publique in ("presentation", "intake", "devis", "signature"):
+    from pages_publiques import afficher_devis, afficher_intake, afficher_presentation, afficher_signature
 
     if _vue_publique == "presentation":
         afficher_presentation(st.query_params.get("lead_id"))
     elif _vue_publique == "intake":
         afficher_intake(st.query_params.get("lead_id"))
+    elif _vue_publique == "signature":
+        afficher_signature(st.query_params.get("token"))
     else:
         afficher_devis(st.query_params.get("slug"))
     st.stop()

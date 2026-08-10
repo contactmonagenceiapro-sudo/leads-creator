@@ -609,16 +609,25 @@ st.divider()
 
 
 # ---------------------------------------------------------------------
-# 7. Contrats — confirmation manuelle (signature Yousign / paiement Stripe)
+# 7. Contrats — signature (interne, auto ; Yousign, manuelle) / paiement Stripe
 # ---------------------------------------------------------------------
 #
-# Remplace les anciens webhooks Yousign/Stripe (supprimés avec le backend
-# FastAPI) : l'admin vérifie lui-même dans Yousign/Stripe, puis confirme ici.
+# Contrats signature_provider='interne' (défaut depuis le 10/08, voir
+# signature_interne.py) : yousign_status passe automatiquement à 'signe' dès
+# le clic du client sur la page publique — le bouton "Marquer signé"
+# ci-dessous ne leur sert jamais (déjà signés à l'affichage). Contrats
+# signature_provider='yousign' (option conservée, voir contrats_signature.py)
+# : toujours confirmés manuellement, pas de webhook (supprimé avec le
+# backend FastAPI) — l'admin vérifie dans Yousign, puis confirme ici.
+# Paiement Stripe : toujours confirmé manuellement pour les deux, même
+# principe (pas de webhook).
 
 st.subheader("💼 Contrats — signature & paiement")
 st.caption(
-    "Plus de webhook automatique : vérifie toi-même dans Yousign qu'un contrat "
-    "est signé, ou dans Stripe qu'un paiement est passé, puis confirme ici."
+    "Signature électronique interne (par défaut) : le statut passe à « Signé » "
+    "automatiquement dès que le client valide sur sa page. Signature Yousign "
+    "(option) : vérifie toi-même dans Yousign, puis confirme avec le bouton. "
+    "Paiement Stripe : toujours à confirmer manuellement ici."
 )
 
 contrats_liste_data, contrats_liste_error = safe_call(get_contracts)
@@ -636,7 +645,8 @@ else:
                 with col_info:
                     st.markdown(
                         f"**{entreprise}** — {(c.get('montant_centimes') or 0) / 100:.2f} € — "
-                        f"signature : `{c.get('yousign_status', '?')}` — "
+                        f"signature : `{c.get('yousign_status', '?')}` "
+                        f"({c.get('signature_provider') or 'interne'}) — "
                         f"paiement : `{c.get('payment_status') or 'en_attente'}`"
                     )
                     st.caption(f"Créé le {c.get('created_at', '')[:16].replace('T', ' ')}")
