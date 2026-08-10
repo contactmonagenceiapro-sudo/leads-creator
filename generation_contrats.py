@@ -34,6 +34,69 @@ def _siret_agence_texte(agence: dict) -> str:
     return "En cours d'immatriculation"
 
 
+# Numéros SIRET déjà rencontrés dans ce projet comme placeholder d'exemple
+# (jamais un vrai SIRET) — normalisés sans espaces. Incident réel corrigé le
+# 10/08 : "123 456 789 00012" (repris tel quel du placeholder du champ de
+# saisie, voir administration_contrats.py) était resté enregistré comme SIRET
+# réel de l'agence dans agence_config. Liste extensible si un autre
+# placeholder de ce type est un jour découvert.
+SIRET_PLACEHOLDERS_CONNUS = {"12345678900012"}
+
+
+def siret_valide_pour_statut_definitif(siret_numero: str) -> tuple[bool, str]:
+    """Empêche de faire passer siret_statut à "definitif" (donc d'exposer le
+    numéro sur un vrai contrat, voir _siret_agence_texte) tant que
+    siret_numero est vide ou correspond à un placeholder d'exemple connu.
+    Renvoie (valide, message_erreur — vide si valide)."""
+    numero_nettoye = re.sub(r"\s+", "", siret_numero or "")
+    if not numero_nettoye:
+        return False, (
+            "Le numéro SIRET est vide — impossible de passer au statut « Immatriculé » "
+            "sans un vrai numéro."
+        )
+    if numero_nettoye in SIRET_PLACEHOLDERS_CONNUS:
+        return False, (
+            "Ce numéro SIRET correspond à un exemple/placeholder connu, pas à un vrai "
+            "SIRET — impossible de passer au statut « Immatriculé »."
+        )
+    return True, ""
+
+
+# Grille de prix par lead livré selon le type d'acteur B2B (architecte,
+# promoteur, maître d'œuvre) — décision business validée, indépendante des
+# poids de scoring outbound_chantiers/config.py::POIDS_TYPE_ACTEUR (ceux-ci
+# priorisent l'ordre d'envoi, ils ne fixent aucun prix). Ces clés reprennent
+# telles quelles celles utilisées dans campagnes.types_acteur_cibles (voir
+# sql/init_campagnes.sql). Sert UNIQUEMENT d'aide-mémoire affiché à côté du
+# champ "Prix" du bon de commande (voir administration_contrats.py) : le
+# prix reste saisi à la main, jamais calculé automatiquement — un calcul
+# automatique risquerait de sur-simplifier un cas particulier (remise
+# négociée, palier de volume...).
+GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR = {
+    "architecte": 70,
+    "promoteur": 60,
+    "maitre_oeuvre": 50,
+}
+
+
+def aide_memoire_prix(types_acteur_cibles: list[dict] | None) -> str:
+    """Formate un rappel de la grille de prix par lead pour les types
+    d'acteur d'une campagne donnée (ex: [{"cle":"architecte","libelle":
+    "Architectes",...}, ...], voir campagnes.types_acteur_cibles). Renvoie
+    une chaîne vide si la campagne ne cible aucun type d'acteur connu de la
+    grille — à l'appelant de ne rien afficher dans ce cas plutôt que
+    d'afficher un aide-mémoire trompeur pour un client hors grille B2B."""
+    lignes = []
+    for type_acteur in types_acteur_cibles or []:
+        cle = type_acteur.get("cle", "")
+        prix = GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR.get(cle)
+        if prix is None:
+            continue
+        libelle = type_acteur.get("libelle") or cle
+        lignes.append(f"{libelle} : {prix} €/lead")
+    return " · ".join(lignes)
+
+
 def construire_articles_cgv(agence: dict) -> list[tuple[str, str]]:
     """Conditions Générales de Prestation (CGV) — cadre B2B générique,
     applicable à tout client de l'agence quel que soit le bon de commande.

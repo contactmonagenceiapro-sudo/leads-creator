@@ -34,9 +34,11 @@ from common import liste_noms_campagnes, safe_call
 from data_access import get_campagnes
 from generation_contrats import (
     DEFAULTS_AGENCE,
+    aide_memoire_prix,
     construire_articles_cgv,
     construire_pdf,
     construire_texte,
+    siret_valide_pour_statut_definitif,
     slugifier_reference,
 )
 from supabase_client import supabase
@@ -110,21 +112,36 @@ with st.expander(
         )
 
     if enregistrer_agence:
-        try:
-            sauvegarder_config_agence({
-                "nom": nom_agence_saisi.strip() or DEFAULTS_AGENCE["nom"],
-                "adresse": adresse_agence_saisie.strip(),
-                "email": email_agence_saisi.strip(),
-                "siret_statut": "definitif" if statut_siret_libelle.startswith("Immatriculé") else "en_cours",
-                "siret_numero": siret_agence_saisi.strip(),
-            })
-        except Exception as e:
-            st.error(
-                f"Impossible d'enregistrer la configuration : {e}. La table `agence_config` "
-                "existe-t-elle en base (voir sql/init_agence_config.sql) ?"
-            )
+        statut_siret_demande = "definitif" if statut_siret_libelle.startswith("Immatriculé") else "en_cours"
+
+        # Garde-fou : un SIRET vide ou placeholder (ex: "123 456 789 00012",
+        # incident réel corrigé le 10/08) ne doit jamais pouvoir être marqué
+        # "définitif" — sinon il finit par apparaître sur un vrai contrat
+        # (voir generation_contrats._siret_agence_texte).
+        siret_ok, message_siret = (
+            siret_valide_pour_statut_definitif(siret_agence_saisi)
+            if statut_siret_demande == "definitif"
+            else (True, "")
+        )
+
+        if not siret_ok:
+            st.error(message_siret)
         else:
-            st.success("Configuration de l'agence enregistrée — elle sera utilisée pour tous les prochains documents.")
+            try:
+                sauvegarder_config_agence({
+                    "nom": nom_agence_saisi.strip() or DEFAULTS_AGENCE["nom"],
+                    "adresse": adresse_agence_saisie.strip(),
+                    "email": email_agence_saisi.strip(),
+                    "siret_statut": statut_siret_demande,
+                    "siret_numero": siret_agence_saisi.strip(),
+                })
+            except Exception as e:
+                st.error(
+                    f"Impossible d'enregistrer la configuration : {e}. La table `agence_config` "
+                    "existe-t-elle en base (voir sql/init_agence_config.sql) ?"
+                )
+            else:
+                st.success("Configuration de l'agence enregistrée — elle sera utilisée pour tous les prochains documents.")
             st.rerun()
 
 campagnes_data, campagnes_error = safe_call(get_campagnes)
@@ -144,8 +161,12 @@ mode_client = st.radio(
     label_visibility="collapsed",
 )
 
+campagne_selectionnee = None
 if mode_client == "Client existant (campagne configurée)" and noms_campagnes:
     nom_entreprise = st.selectbox("Entreprise cliente", options=noms_campagnes)
+    campagne_selectionnee = next(
+        (c for c in campagnes_data.get("campagnes", []) if c.get("nom_client") == nom_entreprise), None
+    )
 else:
     nom_entreprise = st.text_input("Nom de l'entreprise cliente", placeholder="ex. ACME Bâtiment SARL")
 
@@ -175,6 +196,16 @@ with col_obj2:
         placeholder="ex. 990 € HT, ou « Phase de test gratuite »",
         height=80,
     )
+    # Aide-mémoire uniquement (le prix reste saisi à la main, jamais calculé
+    # automatiquement — voir generation_contrats.aide_memoire_prix) : rappelle
+    # la grille validée pour les types d'acteur ciblés par la campagne
+    # sélectionnée. Rien à afficher pour un nouveau client en saisie libre
+    # (aucune campagne, donc aucun type d'acteur connu) ou une campagne hors
+    # grille B2B (types d'acteur inconnus de GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR).
+    if campagne_selectionnee:
+        rappel_prix = aide_memoire_prix(campagne_selectionnee.get("types_acteur_cibles"))
+        if rappel_prix:
+            st.caption(f"📌 Grille validée : {rappel_prix}")
 
 conditions_particulieres = st.text_area(
     "Conditions particulières (facultatif, une par ligne — en complément des CGV ci-dessous)",
