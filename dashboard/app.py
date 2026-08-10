@@ -113,7 +113,17 @@ with st.sidebar:
         elif health:
             for cle in ("supabase", "ollama"):
                 valeur = health.get(cle, "?")
-                emoji = "🟢" if valeur == "ok" else ("🟡" if "degraded" in str(valeur) else "🔴")
+                if valeur == "ok":
+                    emoji = "🟢"
+                elif "degraded" in str(valeur):
+                    emoji = "🟡"
+                elif "non configuré" in str(valeur):
+                    # Choix assumé (pas de budget LLM cloud actuellement,
+                    # voir data_access.get_health), jamais une panne — même
+                    # code couleur que "Zoho/Discord non configuré" plus bas.
+                    emoji = "⚪"
+                else:
+                    emoji = "🔴"
                 st.caption(f"{emoji} {cle.capitalize()} : {valeur}")
             st.caption("🟢 Zoho configuré" if health.get("zoho_configure") else "⚪ Zoho non configuré")
             st.caption("🟢 Discord configuré" if health.get("discord_configure") else "⚪ Discord non configuré")

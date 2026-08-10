@@ -124,8 +124,12 @@ def compter_relances_envoyees_depuis(depuis_iso: str) -> int:
 @st.cache_data(ttl=CACHE_TTL_SECONDES)
 def get_health() -> dict:
     """État réel des dépendances externes (Supabase, Ollama, Zoho, Discord).
-    Ollama est probablement injoignable depuis Streamlit Cloud (mode dégradé
-    assumé) — ce n'est pas une erreur bloquante, juste une information."""
+    Ollama/LLM cloud : décision assumée le 11/08, faute de budget pour un
+    service LLM hébergé — LLM_API_URL/OLLAMA_HOST restent volontairement non
+    configurés, donc generer_pitch()/generer_pitch_ia() retombent sur le
+    pitch générique (voir lead_worker.py/outbound_pro_btp.py). Ce n'est PLUS
+    affiché comme une panne (voir plus bas) tant qu'aucun des deux n'est
+    configuré : ce serait alors une vraie alerte, pas l'état normal actuel."""
     import requests
 
     resultat = {}
@@ -160,22 +164,32 @@ def get_health() -> dict:
     except Exception as e:
         resultat["supabase"] = f"down ({e})"
 
-    try:
-        # Teste la MÊME URL que celle effectivement utilisée par les scripts
-        # de prospection (lead_worker.py/outbound_pro_btp.py) — voir
-        # llm_config.py, racine du dépôt, pour la résolution local/cloud
-        # (LLM_API_URL en prod, OLLAMA_HOST en dev/docker-compose). Un
-        # OLLAMA_HOST redéfini séparément ici pouvait faire afficher "ok"
-        # sur un Ollama local jamais utilisé par les scripts réels si
-        # LLM_API_URL pointait ailleurs (ou l'inverse).
-        from llm_config import LLM_API_KEY, LLM_API_URL
+    # Aucun LLM_API_URL/OLLAMA_HOST configuré : llm_config.py retombe alors
+    # sur le défaut codé en dur http://127.0.0.1:11434 (jamais joignable
+    # depuis Streamlit Cloud) — décision assumée le 11/08 (pas de budget
+    # actuellement), donc affiché en gris neutre "non configuré", jamais en
+    # rouge "down" : ce n'est pas une panne à corriger. Si l'un des deux est
+    # explicitement configuré plus tard et devient injoignable, LÀ c'est une
+    # vraie panne (voir branche ci-dessous, comportement inchangé).
+    if not (os.getenv("LLM_API_URL") or os.getenv("OLLAMA_HOST")):
+        resultat["ollama"] = "non configuré — pitch générique utilisé (choix actuel, pas une panne)"
+    else:
+        try:
+            # Teste la MÊME URL que celle effectivement utilisée par les
+            # scripts de prospection (lead_worker.py/outbound_pro_btp.py) —
+            # voir llm_config.py, racine du dépôt, pour la résolution
+            # local/cloud (LLM_API_URL en prod, OLLAMA_HOST en dev/docker-
+            # compose). Un OLLAMA_HOST redéfini séparément ici pouvait faire
+            # afficher "ok" sur un Ollama local jamais utilisé par les
+            # scripts réels si LLM_API_URL pointait ailleurs (ou l'inverse).
+            from llm_config import LLM_API_KEY, LLM_API_URL
 
-        headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
-        r = requests.get(f"{LLM_API_URL}/api/tags", headers=headers, timeout=5)
-        modeles = [m["name"] for m in r.json().get("models", [])] if r.status_code == 200 else []
-        resultat["ollama"] = "ok" if r.status_code == 200 and modeles else "degraded (aucun modèle installé)"
-    except requests.exceptions.RequestException as e:
-        resultat["ollama"] = f"down ({e})"
+            headers = {"Authorization": f"Bearer {LLM_API_KEY}"} if LLM_API_KEY else {}
+            r = requests.get(f"{LLM_API_URL}/api/tags", headers=headers, timeout=5)
+            modeles = [m["name"] for m in r.json().get("models", [])] if r.status_code == 200 else []
+            resultat["ollama"] = "ok" if r.status_code == 200 and modeles else "degraded (aucun modèle installé)"
+        except requests.exceptions.RequestException as e:
+            resultat["ollama"] = f"down ({e})"
 
     resultat["zoho_configure"] = bool(os.getenv("ZOHO_USER") and os.getenv("ZOHO_PASSWORD"))
     resultat["discord_configure"] = bool(os.getenv("DISCORD_WEBHOOK_URL"))
