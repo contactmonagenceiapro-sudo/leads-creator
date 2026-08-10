@@ -1,15 +1,18 @@
 """
-Blacklist durable des adresses e-mail ayant provoqué un rebond DÉFINITIF
-(hard bounce) — table emails_blacklistes (voir sql/init_bounces.sql),
-alimentée par mail_processor.py::traiter_bounce(), consultée par tous les
-pipelines d'envoi (ceo_agent.py, relance_prospects.py,
+Blacklist durable des adresses e-mail à ne plus jamais recontacter — table
+emails_blacklistes (voir sql/init_bounces.sql), alimentée par
+mail_processor.py sur deux événements : un rebond DÉFINITIF (hard bounce,
+voir traiter_bounce()) et une désinscription explicite ("STOP", voir
+update_lead_status()/update_lead_professionnel_status(), correctif du
+10/08 — RGPD/droit d'opposition, art. L34-5 CPCE). Consultée par tous les
+pipelines d'envoi (lead_worker.py, ceo_agent.py, relance_prospects.py,
 outbound_chantiers/outbound_pro_btp.py) AVANT chaque campagne.
 
-Nécessaire EN PLUS du statut posé sur le lead lui-même (status='invalide'
-côté leads, statut='invalide' côté leads_professionnels) : un même email
-peut réapparaître sur une NOUVELLE ligne lead après un re-scraping
-ultérieur (nouvel id, statut réinitialisé à 'new'/'a_contacter') — seule
-cette table, indépendante des lignes leads, survit à ça.
+Nécessaire EN PLUS du statut posé sur le lead lui-même (status='invalide'/
+'decline' côté leads, statut='invalide'/'decline' côté leads_professionnels) :
+un même email peut réapparaître sur une NOUVELLE ligne lead après un
+re-scraping ultérieur (nouvel id, statut réinitialisé à 'new'/'a_contacter')
+— seule cette table, indépendante des lignes leads, survit à ça.
 
 Module séparé (ni dans mail_processor.py, ni dans ceo_agent.py) pour
 éviter tout risque de cycle d'import : mail_processor.py importe déjà

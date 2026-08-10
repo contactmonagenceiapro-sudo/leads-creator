@@ -145,10 +145,24 @@ def recuperer_lead_professionnel_par_email(email_address: str) -> dict | None:
 
 
 def update_lead_status(email_address: str, new_status: str) -> None:
+    """new_status == "decline" (désinscription/refus, voir MOTS_NEGATIFS) ne
+    doit jamais se limiter à un statut sur CETTE ligne : un re-scraping
+    ultérieur de la même entreprise crée une NOUVELLE ligne (nouvel id,
+    contacted=False) que ce statut ne protège pas — d'où l'ajout à la
+    blacklist durable (email_blacklist.py, jusqu'ici réservée aux hard
+    bounces), consultée par TOUS les pipelines d'envoi (lead_worker.py,
+    ceo_agent.py, relance_prospects.py, outbound_pro_btp.py) avant chaque
+    campagne, indépendamment de l'id de la ligne lead. Incident corrigé le
+    10/08 : un "STOP" ne protégeait avant que la ligne existante."""
     try:
         response = supabase.table("leads").update({"status": new_status}).eq("email", email_address).execute()
         if response.data:
             log.info(f"🔥 Lead {email_address} mis à jour avec le statut : '{new_status}'")
+            if new_status == "decline":
+                blacklister_email(
+                    email_address, raison="desinscription_stop",
+                    lead_type="lead_artisan", lead_id=response.data[0].get("id"),
+                )
         else:
             log.warning(f"Lead non trouvé dans la table pour l'email : {email_address}")
     except Exception as e:
@@ -160,7 +174,9 @@ def update_lead_professionnel_status(email_address: str, new_status: str) -> Non
     leads_professionnels du département outbound_chantiers (acteurs pro :
     architectes, promoteurs, maîtres d'œuvre). Un désabonnement doit
     s'appliquer aux DEUX pipelines de prospection, pas seulement à celui des
-    artisans — sans quoi le mot-clé 'stop' d'un architecte serait ignoré."""
+    artisans — sans quoi le mot-clé 'stop' d'un architecte serait ignoré.
+    Même correctif de durabilité que update_lead_status ci-dessus pour
+    new_status == "decline" (voir sa docstring)."""
     try:
         response = (
             supabase.table("leads_professionnels")
@@ -170,6 +186,11 @@ def update_lead_professionnel_status(email_address: str, new_status: str) -> Non
         )
         if response.data:
             log.info(f"🔥 Acteur pro {email_address} mis à jour avec le statut : '{new_status}'")
+            if new_status == "decline":
+                blacklister_email(
+                    email_address, raison="desinscription_stop",
+                    lead_type="lead_professionnel", lead_id=response.data[0].get("id"),
+                )
     except Exception as e:
         log.error(f"Erreur Supabase (leads_professionnels) : {e}")
 

@@ -185,9 +185,10 @@ def email_blackliste_ou_a_risque(
 ) -> tuple[bool, str | None]:
     """LE point d'entrée à utiliser avant d'ajouter un email à une
     campagne ou à Supabase (voir docstring du module). Combine :
-        1. La blacklist durable (hard bounces déjà vus, voir
-           email_blacklist.py) — un email qui a DÉJÀ fait bondir un
-           envoi précédent, quel que soit son format.
+        1. La blacklist durable (voir email_blacklist.py) — un email déjà
+           vu en hard bounce OU ayant demandé à ne plus être contacté
+           ("STOP", voir mail_processor.py::update_lead_status), quel que
+           soit le format de l'adresse.
         2. La vérification structurelle ci-dessus (format, domaine
            jetable, MX) — un email jamais vu mais à risque connu.
 
@@ -204,7 +205,7 @@ def email_blackliste_ou_a_risque(
     if blacklist is None:
         blacklist = emails_blacklistes()
     if email_normalise in blacklist:
-        return True, "déjà blacklisté (hard bounce précédent)"
+        return True, "déjà blacklisté (hard bounce ou désinscription précédente)"
 
     exploitable, raison = email_exploitable(email_normalise, verifier_mx=verifier_mx)
     if not exploitable:
