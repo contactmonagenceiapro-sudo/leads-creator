@@ -46,6 +46,7 @@ from outbound_chantiers.config import (
     LIBELLES_TYPE_ACTEUR,
     MAX_RELANCES,
     SECTEUR,
+    SEUIL_LEAD_ULTRA_QUALIFIE,
     ZOHO_PASSWORD,
     ZOHO_USER,
 )
@@ -200,11 +201,37 @@ def generer_pitch_ia(acteur: dict) -> str:
     return _pitch_generique_repli(acteur, commune)
 
 
+def _mention_prioritaire(acteur: dict) -> str:
+    """Même principe que lead_worker.py::_mention_prioritaire côté B2C —
+    ajoutée UNIQUEMENT aux acteurs dont score_final dépasse
+    SEUIL_LEAD_ULTRA_QUALIFIE (déjà utilisé pour l'alerte interne
+    Discord/e-mail, voir scorer_et_publier.py::_alerter_si_ultra_qualifie —
+    même seuil réutilisé ici pour ne jamais avoir deux définitions de
+    "prioritaire" qui pourraient diverger). Jamais le score brut : on cite le
+    vrai signal qui le fait monter (activité chantiers de la commune), le
+    seul élément factuel et vérifiable par le destinataire lui-même.
+
+    Appliquée une seule fois ici, dans message_premier_contact (appelant
+    commun aux deux chemins generer_pitch_ia/_pitch_generique_repli), plutôt
+    que dupliquée dans chacun des deux — les deux chemins produisent tous les
+    deux un corps d'e-mail qui transite par cette fonction avant envoi."""
+    commune = acteur.get("commune")
+    precision = f" ({commune})" if commune else ""
+    return (
+        f"Nous vous contactons en priorité : votre zone d'activité{precision} "
+        f"connaît actuellement un fort dynamisme de la construction.\n\n"
+    )
+
+
 def message_premier_contact(acteur: dict) -> tuple[str, str]:
     commune = acteur.get("commune") or "votre secteur"
     sujet = f"{CLIENT_FINAL} — partenariat professionnel sur {commune}"
+    mention_prioritaire = (
+        _mention_prioritaire(acteur) if (acteur.get("score_final") or 0) >= SEUIL_LEAD_ULTRA_QUALIFIE else ""
+    )
     corps = (
-        generer_pitch_ia(acteur)
+        mention_prioritaire
+        + generer_pitch_ia(acteur)
         + f"\n\n(message transmis pour le compte de {CLIENT_FINAL} par {AGENCY_NAME})"
         + MENTION_DESINSCRIPTION
     )

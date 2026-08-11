@@ -70,6 +70,21 @@ SCORES_TRANCHE_EFFECTIF = {
 # voir le diagnostic validé avant implémentation.
 BONUS_MAX_TAILLE_ENTREPRISE = 0.10
 
+# Seuil (score 0-100) au-delà duquel un lead est considéré "prioritaire" côté
+# pitch (voir lead_worker.py::generer_pitch) — équivalent B2C de
+# outbound_chantiers/config.py::SEUIL_LEAD_ULTRA_QUALIFIE (B2B, échelle 0-1),
+# mais gardé séparé : les deux échelles ne sont pas directement comparables
+# (score_activite plafonné + bonus taille de poids différent, voir docstring
+# du module) et un run de rescoring futur sur l'une ne doit jamais faire
+# dériver silencieusement l'autre.
+# Valeur choisie sur la distribution réelle constatée le 2026-08-11 (615
+# leads scorés) : les scores se regroupent par paliers (2, 8, 9, 10, 13, 14,
+# 18, 20, 24, 30, 33, 36, 39, 46, 50, 69, 93, 100), avec un saut net entre 69
+# et 93. Seuil=90 isole les deux paliers du haut (93 et 100) = 170/615
+# (27.6%) : une vraie minorité, proche de la cible "top 20-25%" demandée,
+# sans tomber dans un seuil arbitraire qui couperait au milieu d'un palier.
+SEUIL_LEAD_PRIORITAIRE_B2C = int(os.getenv("SEUIL_LEAD_PRIORITAIRE_B2C", "90"))
+
 
 def score_taille_entreprise(tranche_effectif_salarie: str | None) -> float:
     return SCORES_TRANCHE_EFFECTIF.get(tranche_effectif_salarie or "", 0.0)

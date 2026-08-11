@@ -42,7 +42,7 @@ from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_blackliste_ou_a_risque, email_status
 from llm_config import LLM_API_URL, LLM_MODEL_MAIN, LLM_TIMEOUT, generer_texte
-from scorer_leads import activite_pour_communes, calculer_score
+from scorer_leads import SEUIL_LEAD_PRIORITAIRE_B2C, activite_pour_communes, calculer_score
 
 load_dotenv()
 
@@ -238,6 +238,29 @@ def _pitch_generique_repli(lead: dict) -> str:
     )
 
 
+def _mention_prioritaire(lead: dict) -> str:
+    """Ligne ajoutée UNIQUEMENT aux leads dont le score dépasse
+    SEUIL_LEAD_PRIORITAIRE_B2C (voir scorer_leads.py) — jamais le chiffre
+    brut du score, qui n'a de sens qu'en interne pour classer les leads
+    entre eux, pas pour le destinataire. On cite à la place le vrai signal
+    qui fait monter ce score (activité chantiers de sa commune, voir
+    scorer_leads.calculer_score) : la commune est nommée pour rester
+    factuelle et vérifiable par le destinataire lui-même, jamais une
+    affirmation vague ou flatteuse sur l'entreprise.
+
+    Ajoutée ICI (post-génération, comme MENTION_DESINSCRIPTION) plutôt que
+    confiée au prompt LLM : on garde un contrôle total sur le wording exact
+    et sur le fait qu'elle n'apparaît QUE si le seuil est franchi, plutôt que
+    de dépendre d'une consigne que le modèle pourrait diversement interpréter
+    ou ignorer."""
+    ville = lead.get("ville")
+    precision = f" ({ville})" if ville else ""
+    return (
+        f"Nous vous contactons en priorité : votre zone d'activité{precision} "
+        f"connaît actuellement un fort dynamisme de la construction.\n\n"
+    )
+
+
 def generer_pitch(lead: dict) -> str:
     """Génère un pitch commercial personnalisé via le LLM configuré (voir
     llm_config.py — local en dev, cloud en prod selon LLM_API_URL/
@@ -261,9 +284,13 @@ def generer_pitch(lead: dict) -> str:
         f"compétence technique de leur côté. Objectif de l'email : "
         f"décrocher une réponse pour en discuter, pas vendre directement. "
         f"Ton direct et concret, pas de jargon marketing. "
-        f"IMPORTANT : ne mets AUCUN placeholder entre crochets (pas de "
-        f"'[Votre nom]', '[Votre fonction]' etc.) — termine simplement par "
-        f"'Cordialement,' suivi de '{AGENCY_NAME}', rien d'autre après."
+        f"IMPORTANT : n'invente ni ne mentionne AUCUN nom de personne (pas de "
+        f"responsable commercial, directeur ou signataire fictif, ex: 'Jean "
+        f"Dupont') — l'e-mail est signé uniquement par '{AGENCY_NAME}', jamais "
+        f"un prénom/nom inventé. Ne mets non plus AUCUN placeholder entre "
+        f"crochets (pas de '[Votre nom]', '[Votre fonction]' etc.) — termine "
+        f"simplement par 'Cordialement,' suivi de '{AGENCY_NAME}', rien "
+        f"d'autre après."
     )
 
     pitch = generer_texte(
@@ -273,14 +300,17 @@ def generer_pitch(lead: dict) -> str:
         tentatives=TENTATIVES_OLLAMA,
         pause_retry_sec=PAUSE_RETRY_OLLAMA_SEC,
     )
+    mention_prioritaire = (
+        _mention_prioritaire(lead) if (lead.get("score") or 0) >= SEUIL_LEAD_PRIORITAIRE_B2C else ""
+    )
     if pitch:
-        return pitch + MENTION_DESINSCRIPTION
+        return mention_prioritaire + pitch + MENTION_DESINSCRIPTION
 
     log.warning(
         f"IA indisponible ({LLM_API_URL}) pour {lead['company_name']} — "
         f"utilisation du pitch générique de repli."
     )
-    return _pitch_generique_repli(lead) + MENTION_DESINSCRIPTION
+    return mention_prioritaire + _pitch_generique_repli(lead) + MENTION_DESINSCRIPTION
 
 
 # ---------------------------------------------------------------------------
