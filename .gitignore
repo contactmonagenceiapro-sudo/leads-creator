@@ -9,7 +9,6 @@ __pycache__/
 *.pyc
 *.pyo
 venv/
-test_install/venv/
 .venv/
 
 # Logs
