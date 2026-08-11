@@ -20,6 +20,7 @@ jour plutôt que la version mise en cache jusqu'à CACHE_TTL_SECONDES plus tard.
 """
 
 import glob
+import hashlib
 import logging
 import os
 from datetime import datetime, timezone
@@ -35,6 +36,13 @@ from supabase_client import supabase
 # Grand Est) sans dupliquer la liste des communes ici — voir
 # scraper_batiment.py::VILLES_LYON / VILLES_GRAND_EST.
 from scraper_batiment import VILLES_GRAND_EST, VILLES_LYON
+
+# Même module que mail_processor.py (désinscription STOP) et
+# lead_worker.py/outbound_pro_btp.py (hard bounces) — voir
+# supprimer_donnees_rgpd() ci-dessous : le droit à l'effacement doit lui
+# aussi empêcher tout recontact futur, même après un nouveau scraping qui
+# recréerait une ligne pour la même entreprise/personne.
+from email_blacklist import blacklister_email
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [DASHBOARD] %(message)s")
 log = logging.getLogger(__name__)
@@ -802,3 +810,140 @@ def get_email_events(type_evenement: str | None = None, client_final: str | None
     except Exception as e:
         raise DataAccessError(f"Erreur lecture événements e-mail : {e}") from e
     return {"email_events": data}
+
+
+# ---------------------------------------------------------------------
+# Suppression RGPD (droit à l'effacement, art. 17 RGPD)
+# ---------------------------------------------------------------------
+
+def rechercher_email_rgpd(email: str) -> dict:
+    """Cherche un email dans `leads` (B2C) ET `leads_professionnels` (B2B)
+    — jamais une seule des deux, un même contact pouvant légitimement
+    exister des deux côtés (ex: un artisan aussi ciblé par une campagne
+    B2B). Ne décide de rien : sert uniquement à afficher ce qui SERAIT
+    supprimé, pour vérification visuelle avant toute action (voir
+    supprimer_donnees_rgpd ci-dessous, qui reçoit les ids exacts affichés
+    ici plutôt que de re-résoudre l'email au moment de la suppression)."""
+    email = (email or "").strip().lower()
+    if not email:
+        raise DataAccessError("Merci de renseigner un e-mail.")
+    try:
+        leads = (
+            supabase.table("leads")
+            .select("id,company,name,status,created_at")
+            .eq("email", email).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur de recherche dans leads : {e}") from e
+    try:
+        leads_pro = (
+            supabase.table("leads_professionnels")
+            .select("id,nom_entreprise,type_acteur,client_final,statut,created_at")
+            .eq("email", email).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur de recherche dans leads_professionnels : {e}") from e
+    return {"email": email, "leads": leads or [], "leads_professionnels": leads_pro or []}
+
+
+def supprimer_donnees_rgpd(
+    email: str,
+    leads_ids: list[str],
+    leads_professionnels_ids: list[str],
+    date_demande_iso: str,
+    traite_par: str,
+) -> dict:
+    """Exécute le droit à l'effacement pour un email donné :
+    1) supprime définitivement les lignes dont les ids ont été VALIDÉS par
+       l'admin après vérification visuelle (rechercher_email_rgpd) — jamais
+       un nouveau filtre par email au moment de la suppression, pour
+       garantir que ce qui est supprimé est exactement ce qui a été montré ;
+    2) blackliste l'email (email_blacklist.py) pour empêcher tout recontact
+       futur, même après un nouveau scraping qui recréerait une ligne ;
+    3) trace l'opération dans registre_suppressions_rgpd (voir
+       sql/init_registre_suppressions_rgpd.sql) — y compris quand
+       leads_ids/leads_professionnels_ids sont tous deux vides (email déjà
+       supprimé ou jamais présent : la demande doit être tracée comme
+       traitée quand même, pas silencieusement ignorée)."""
+    email = (email or "").strip().lower()
+    if not email:
+        raise DataAccessError("Merci de renseigner un e-mail.")
+    if not (traite_par or "").strip():
+        raise DataAccessError("Merci d'indiquer qui traite cette suppression.")
+
+    supprimes_leads = []
+    if leads_ids:
+        try:
+            supprimes_leads = supabase.table("leads").delete().in_("id", leads_ids).execute().data or []
+        except Exception as e:
+            raise DataAccessError(f"Échec de la suppression dans leads : {e}") from e
+
+    supprimes_leads_pro = []
+    if leads_professionnels_ids:
+        try:
+            supprimes_leads_pro = (
+                supabase.table("leads_professionnels")
+                .delete().in_("id", leads_professionnels_ids).execute().data or []
+            )
+        except Exception as e:
+            raise DataAccessError(f"Échec de la suppression dans leads_professionnels : {e}") from e
+
+    tables_touchees = []
+    if supprimes_leads:
+        tables_touchees.append("leads")
+    if supprimes_leads_pro:
+        tables_touchees.append("leads_professionnels")
+    table_source = "+".join(tables_touchees) or "aucune"
+
+    lead_id_reference = (supprimes_leads[0]["id"] if supprimes_leads else None) or (
+        supprimes_leads_pro[0]["id"] if supprimes_leads_pro else None
+    )
+    lead_type_reference = "lead_artisan" if supprimes_leads else ("lead_professionnel" if supprimes_leads_pro else None)
+    blacklister_email(
+        email, raison="rgpd_droit_effacement",
+        lead_type=lead_type_reference, lead_id=lead_id_reference,
+    )
+
+    email_hash = hashlib.sha256(email.encode("utf-8")).hexdigest()
+    try:
+        supabase.table("registre_suppressions_rgpd").insert({
+            "email_hash": email_hash,
+            "table_source": table_source,
+            "date_demande": date_demande_iso,
+            "date_traitement": datetime.now(timezone.utc).isoformat(),
+            "traite_par": traite_par.strip(),
+        }).execute()
+    except Exception as e:
+        # La suppression + blacklist ont déjà eu lieu à ce stade : ne
+        # jamais prétendre que rien ne s'est passé, juste signaler que la
+        # TRACE de l'opération n'a pas pu être enregistrée (table pas
+        # encore créée ? voir sql/init_registre_suppressions_rgpd.sql).
+        raise DataAccessError(
+            f"Suppression effectuée (tables concernées : {table_source}) et email "
+            f"blacklisté, MAIS l'enregistrement dans le registre a échoué : {e} — "
+            "vérifie que sql/init_registre_suppressions_rgpd.sql a bien été exécuté "
+            "dans Supabase."
+        ) from e
+
+    get_registre_suppressions_rgpd.clear()
+    return {
+        "email": email,
+        "supprimes_leads": len(supprimes_leads),
+        "supprimes_leads_professionnels": len(supprimes_leads_pro),
+        "table_source": table_source,
+    }
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_registre_suppressions_rgpd(limit: int = 20) -> dict:
+    try:
+        lignes = (
+            supabase.table("registre_suppressions_rgpd")
+            .select("*").order("date_traitement", desc=True).limit(limit).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(
+            f"Erreur lecture du registre RGPD : {e} — la table existe-t-elle "
+            "(sql/init_registre_suppressions_rgpd.sql) ?"
+        ) from e
+    return {"suppressions": lignes or []}

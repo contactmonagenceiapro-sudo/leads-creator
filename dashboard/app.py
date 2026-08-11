@@ -15,6 +15,7 @@ Structure (multi-pages) :
     app_pages/gestion_clients.py    -> [Admin] Gestion & Réponse aux clients
     app_pages/administration_contrats.py -> [Admin] Administration & Contrats
     app_pages/deliverabilite.py     -> [Admin] Délivrabilité
+    app_pages/suppression_rgpd.py   -> [Admin] Suppression RGPD (droit à l'effacement)
     app_pages/portail_client.py     -> [Client] Vue restreinte à ses propres campagnes
                                         (également accessible à l'admin, en aperçu/test)
 
@@ -165,12 +166,18 @@ if est_admin():
     )
     page_deliverabilite = st.Page("app_pages/deliverabilite.py", title="Délivrabilité", icon="📶")
     page_suivi = st.Page("app_pages/suivi_resultats.py", title="Suivi & Résultats", icon="📈")
+    # Admin uniquement (jamais côté Portail Client) : supprime des données
+    # réelles de façon irréversible — voir app_pages/suppression_rgpd.py.
+    page_suppression_rgpd = st.Page("app_pages/suppression_rgpd.py", title="Suppression RGPD", icon="🗑️")
     # Portail Client accessible en aperçu à l'admin (choix de la campagne à
     # prévisualiser géré dans portail_client.py) — pour pouvoir tester
     # directement depuis l'interface ce que voit un compte client.
     page_portail_client = st.Page("app_pages/portail_client.py", title="Portail Client (aperçu)", icon="📊")
     pg = st.navigation(
-        [page_sourcing, page_gestion, page_administration, page_deliverabilite, page_suivi, page_portail_client]
+        [
+            page_sourcing, page_gestion, page_administration, page_deliverabilite,
+            page_suivi, page_suppression_rgpd, page_portail_client,
+        ]
     )
 else:
     page_client = st.Page("app_pages/portail_client.py", title="Mon espace", icon="📊")
