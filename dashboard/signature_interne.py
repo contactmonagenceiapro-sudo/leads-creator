@@ -174,6 +174,12 @@ def construire_pdf_preuve(contrat: dict, lead: dict, intake: dict, signed_at_aff
     document accepté) — voir les limites documentées en tête de module avant
     de considérer ce document comme équivalent à une signature Yousign."""
     pdf = FPDF()
+    # cp1252 (Windows-1252) plutôt que le strict latin-1 par défaut, pour
+    # accepter tiret cadratin/demi-cadratin, guillemets courbes, points de
+    # suspension ou "€" dans un champ saisi par l'utilisateur (description
+    # de l'intake, user-agent...) sans faire planter la génération — même
+    # correctif que generation_contrats.py::_DocumentPDF.
+    pdf.core_fonts_encoding = "cp1252"
     pdf.add_page()
 
     pdf.set_fill_color(*COULEUR_PRIMAIRE)

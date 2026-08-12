@@ -37,6 +37,12 @@ def generer_pdf_devis(lead: dict, intake: dict) -> bytes:
     """Génère un devis PDF minimal à partir des infos du lead et de l'intake,
     pour transmission en signature électronique (aucune saisie manuelle)."""
     pdf = FPDF()
+    # cp1252 (Windows-1252) plutôt que le strict latin-1 par défaut, pour
+    # accepter tiret cadratin/demi-cadratin, guillemets courbes, points de
+    # suspension ou "€" dans un champ saisi par l'utilisateur (description
+    # de l'intake notamment) sans faire planter la génération — même
+    # correctif que generation_contrats.py::_DocumentPDF.
+    pdf.core_fonts_encoding = "cp1252"
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 10, f"Devis - {AGENCY_NAME}", ln=True)
