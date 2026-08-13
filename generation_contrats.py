@@ -78,6 +78,13 @@ GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR = {
     "maitre_oeuvre": 50,
 }
 
+# Même variable d'environnement que dashboard/contrats_signature.py::CONTRACT_AMOUNT_EUR
+# (même défaut 990€) — lue indépendamment ici plutôt qu'importée depuis ce
+# module dashboard, pour ne jamais faire dépendre generation_contrats.py
+# (pure logique juridique/mise en page, sans Streamlit) d'un fichier de la
+# couche présentation.
+MONTANT_PRESTATION_B2C_EUR = float(os.getenv("CONTRACT_AMOUNT_EUR", "990"))
+
 
 def aide_memoire_prix(types_acteur_cibles: list[dict] | None) -> str:
     """Formate un rappel de la grille de prix par lead pour les types
@@ -95,6 +102,22 @@ def aide_memoire_prix(types_acteur_cibles: list[dict] | None) -> str:
         libelle = type_acteur.get("libelle") or cle
         lignes.append(f"{libelle} : {prix} €/lead")
     return " · ".join(lignes)
+
+
+def _article_renvoi_cgv_generales() -> tuple[str, str]:
+    """Article de renvoi croisé, identique pour le B2B (construire_articles_cgv)
+    et le B2C (construire_articles_cgv_b2c) : les conditions particulières du
+    document signé (bon de commande B2B ou devis B2C) priment toujours sur les
+    CGV générales publiques en cas de contradiction — un seul point de vérité
+    pour ce texte, partagé par les deux fonctions plutôt que dupliqué, pour
+    qu'il ne puisse jamais diverger silencieusement entre les deux tunnels."""
+    return (
+        "Article 9 - Articulation avec les Conditions Générales de Vente générales",
+        "Les présentes conditions particulières, intégrées au présent contrat signé "
+        "électroniquement, complètent et prévalent, en cas de contradiction, sur les "
+        "Conditions Générales de Vente générales de l'Agence, disponibles sur son site "
+        "internet.",
+    )
 
 
 def construire_articles_cgv(agence: dict) -> list[tuple[str, str]]:
@@ -185,6 +208,113 @@ def construire_articles_cgv(agence: dict) -> list[tuple[str, str]]:
             "competente du siege social de l'Agence.",
         ),
         ("Article 8 - Statut juridique de l'Agence", texte_statut),
+        _article_renvoi_cgv_generales(),
+    ]
+
+
+def construire_articles_cgv_b2c(agence: dict) -> list[tuple[str, str]]:
+    """Conditions Générales de Prestation (CGV) — cadre B2C, applicable au
+    devis signé électroniquement dans le tunnel artisan (voir
+    dashboard/contrats_signature.py::generer_pdf_devis). Même structure et
+    même ton que construire_articles_cgv (B2B) ci-dessus, mais adaptée à une
+    prestation concrète et unique — création de site vitrine + optimisation
+    SEO local, Done For You (voir le libellé de prestation déjà utilisé dans
+    generer_pdf_devis) — plutôt qu'à une notion de "lead qualifié" B2B qui
+    n'a pas de sens ici : dans ce tunnel, le Client EST l'artisan qui achète
+    la prestation, pas un lead qui lui est livré.
+
+    La logique de statut SIRET (agence["siret_statut"]) est volontairement
+    DUPLIQUÉE depuis construire_articles_cgv plutôt que factorisée : même
+    principe que SCORES_TRANCHE_EFFECTIF dans scorer_leads.py — B2B et B2C
+    restent deux segments commerciaux indépendants, qui ne doivent jamais
+    dépendre l'un de l'autre au niveau du code, même pour une clause au
+    contenu proche."""
+    nom = agence.get("nom") or DEFAULTS_AGENCE["nom"]
+
+    if agence.get("siret_statut") == "definitif" and agence.get("siret_numero", "").strip():
+        texte_statut = (
+            f"L'Agence est immatriculée sous le numéro SIRET {agence['siret_numero'].strip()}. "
+            f"Ses coordonnées complètes figurent en en-tête du présent document."
+        )
+    else:
+        texte_statut = (
+            "À la date d'émission du présent document, l'Agence est en cours de formalisation "
+            "de sa structure juridique (immatriculation SIRET en cours). Le Client en est "
+            "informé et l'accepte expressément pour toute prestation exécutée au cours de "
+            "cette phase transitoire."
+        )
+
+    return [
+        (
+            "Article 1 - Objet et champ d'application",
+            f"Les présentes Conditions Générales de Prestation régissent la prestation de "
+            f"création de site internet vitrine et d'optimisation du référencement local "
+            f"(SEO), fournie par {nom} (« l'Agence ») au client artisan ou professionnel du "
+            f"bâtiment signataire du présent devis (« le Client »). Les informations "
+            f"particulières figurant au présent devis (description du projet, montant) "
+            f"complètent les présentes CGV et prévalent en cas de contradiction entre les "
+            f"deux documents.",
+        ),
+        (
+            "Article 2 - Contenu de la prestation",
+            "La prestation comprend la création d'un site internet vitrine adapté à "
+            "l'activité du Client ainsi qu'une optimisation de son référencement local — à "
+            "l'exclusion de toute prestation complémentaire non expressément mentionnée au "
+            "présent devis (campagne publicitaire payante, rédaction de contenu au-delà du "
+            "socle du site, maintenance au-delà de la période convenue). Le périmètre exact "
+            "est précisé dans la description du projet figurant au présent document ; toute "
+            "évolution substantielle fait l'objet d'un accord écrit complémentaire.",
+        ),
+        (
+            "Article 3 - Obligation de moyens",
+            "L'Agence met en œuvre tous les moyens raisonnables (techniques et "
+            "méthodologiques) pour livrer un site internet fonctionnel et une optimisation "
+            "du référencement local conforme aux bonnes pratiques en vigueur. Les parties "
+            "reconnaissent expressément que l'Agence est tenue à une obligation de moyens et "
+            "non de résultat : elle ne garantit ni un positionnement précis dans les "
+            "résultats de recherche, ni un volume de trafic ou de contacts entrants générés "
+            "par le site.",
+        ),
+        (
+            "Article 4 - Délai de réclamation et garantie de reprise",
+            "Toute réclamation relative à la prestation livrée (dysfonctionnement du site, "
+            "non-conformité au périmètre convenu à l'article 2) doit être formulée par écrit "
+            "dans un délai de 7 (sept) jours calendaires à compter de la mise en ligne du "
+            "site ; passé ce délai, la prestation est réputée conforme et définitivement "
+            "acceptée. Pour toute réclamation recevable et formulée dans les délais, "
+            "l'Agence propose, à son choix, la correction du dysfonctionnement signalé ou "
+            "l'émission d'un avoir commercial d'un montant correspondant, à l'exclusion de "
+            "toute autre indemnisation.",
+        ),
+        (
+            "Article 5 - Prix, paiement et durée",
+            f"Le prix de la prestation est fixé à {MONTANT_PRESTATION_B2C_EUR:.2f} € TTC, "
+            f"tel qu'indiqué au présent devis, payable selon les modalités communiquées au "
+            f"Client après validation du présent document. La prestation est réputée "
+            f"achevée à la mise en ligne du site internet et à la mise en place du "
+            f"référencement local convenu, sauf prestation complémentaire expressément "
+            f"convenue entre les parties.",
+        ),
+        (
+            "Article 6 - Confidentialité et données personnelles",
+            "Chaque partie s'engage à garder confidentielles les informations commerciales "
+            "et techniques échangées dans le cadre du contrat. Les données personnelles du "
+            "Client sont traitées par l'Agence dans le respect du Règlement Général sur la "
+            "Protection des Données (RGPD), exclusivement aux fins de l'exécution de la "
+            "présente prestation et de la relation commerciale qui en découle.",
+        ),
+        (
+            "Article 7 - Responsabilité et droit applicable",
+            "La responsabilité de l'Agence est limitée au montant effectivement payé au "
+            "titre de la prestation, hors faute lourde ou dolosive ; elle ne saurait être "
+            "tenue pour responsable des conséquences indirectes résultant de l'utilisation "
+            "du site par le Client, notamment de son exploitation commerciale ou du contenu "
+            "qui y est publié. Les présentes CGV sont soumises au droit français ; tout "
+            "litige non résolu à l'amiable relève de la juridiction compétente du siège "
+            "social de l'Agence.",
+        ),
+        ("Article 8 - Statut juridique de l'Agence", texte_statut),
+        _article_renvoi_cgv_generales(),
     ]
 
 

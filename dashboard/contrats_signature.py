@@ -21,41 +21,126 @@ import re
 import requests
 import stripe
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos
 
+from generation_contrats import (
+    COULEUR_ACCENT,
+    COULEUR_PRIMAIRE,
+    COULEUR_TEXTE_CLAIR,
+    DEFAULTS_AGENCE,
+    construire_articles_cgv_b2c,
+)
 from supabase_client import supabase
 
 log = logging.getLogger(__name__)
 
-AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
 YOUSIGN_API_KEY = os.getenv("YOUSIGN_API_KEY", "")
 YOUSIGN_API_URL = os.getenv("YOUSIGN_API_URL", "https://api-sandbox.yousign.app/v3")
 CONTRACT_AMOUNT_EUR = float(os.getenv("CONTRACT_AMOUNT_EUR", "990"))
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
 
 
+def _charger_config_agence() -> dict:
+    """Copie locale de administration_contrats.py::charger_config_agence
+    plutôt qu'un import cross-page (ce module est appelé depuis un
+    formulaire public, voir docstring en tête de fichier — jamais depuis une
+    page Streamlit elle-même) : même table agence_config, même repli sur
+    DEFAULTS_AGENCE si la table est vide/absente ou Supabase injoignable, ne
+    lève jamais d'exception."""
+    try:
+        rows = supabase.table("agence_config").select("*").eq("cle", "agence").limit(1).execute().data
+    except Exception:
+        return dict(DEFAULTS_AGENCE)
+    if not rows:
+        return dict(DEFAULTS_AGENCE)
+    return {**DEFAULTS_AGENCE, **{k: v for k, v in rows[0].items() if k in DEFAULTS_AGENCE}}
+
+
 def generer_pdf_devis(lead: dict, intake: dict) -> bytes:
-    """Génère un devis PDF minimal à partir des infos du lead et de l'intake,
-    pour transmission en signature électronique (aucune saisie manuelle)."""
-    pdf = FPDF()
+    """Génère le devis PDF à partir des infos du lead et de l'intake, CGV B2C
+    incluses (voir generation_contrats.py::construire_articles_cgv_b2c) —
+    pour transmission en signature électronique (aucune saisie manuelle).
+    Même style de mise en page (bandeau d'en-tête, sections) que le bon de
+    commande B2B (generation_contrats.py::construire_pdf), pour une identité
+    visuelle cohérente entre les deux tunnels.
+
+    Signature inchangée (lead, intake) -> bytes : la config agence est
+    rechargée en interne (_charger_config_agence) plutôt qu'ajoutée en
+    paramètre, pour ne casser aucun des 3 appelants existants
+    (contrats_signature.envoyer_contrat_signature, signature_interne, et
+    pages_publiques.afficher_signature)."""
+    agence = _charger_config_agence()
+    nom_agence = agence.get("nom") or DEFAULTS_AGENCE["nom"]
+
+    pdf = FPDF(format="A4")
     # cp1252 (Windows-1252) plutôt que le strict latin-1 par défaut, pour
     # accepter tiret cadratin/demi-cadratin, guillemets courbes, points de
     # suspension ou "€" dans un champ saisi par l'utilisateur (description
     # de l'intake notamment) sans faire planter la génération — même
     # correctif que generation_contrats.py::_DocumentPDF.
     pdf.core_fonts_encoding = "cp1252"
+    pdf.set_auto_page_break(auto=True, margin=20)
     pdf.add_page()
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.cell(0, 10, f"Devis - {AGENCY_NAME}", ln=True)
-    pdf.set_font("Helvetica", "", 11)
-    pdf.ln(6)
-    pdf.multi_cell(0, 7,
+
+    # --- Bandeau d'en-tête : même style que generation_contrats.py::construire_pdf ---
+    pdf.set_fill_color(*COULEUR_PRIMAIRE)
+    pdf.rect(0, 0, 210, 26, style="F")
+    pdf.set_xy(10, 6)
+    pdf.set_text_color(*COULEUR_TEXTE_CLAIR)
+    pdf.set_font("Helvetica", "B", 17)
+    pdf.cell(0, 9, nom_agence, ln=True)
+    pdf.set_x(10)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.cell(0, 6, "Devis - Creation de site vitrine + optimisation SEO local")
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_xy(10, 31)
+
+    def titre_section(texte: str) -> None:
+        pdf.set_fill_color(*COULEUR_ACCENT)
+        pdf.rect(10, pdf.get_y() + 1, 3, 4.5, style="F")
+        pdf.set_xy(16, pdf.get_y())
+        pdf.set_font("Helvetica", "B", 10.5)
+        pdf.set_text_color(*COULEUR_PRIMAIRE)
+        pdf.cell(0, 6.5, texte, ln=True)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "", 9.5)
+        pdf.ln(0.5)
+
+    # --- Objet du devis ---
+    titre_section("Devis")
+    pdf.set_x(10)
+    pdf.set_font("Helvetica", "", 10.5)
+    pdf.multi_cell(
+        0, 6,
         f"Client : {lead.get('company', '')}\n"
         f"Description du projet : {intake.get('description', '')}\n\n"
         f"Prestation : Création de site vitrine + optimisation SEO local (Done For You)\n"
-        f"Montant : {CONTRACT_AMOUNT_EUR:.2f} EUR TTC\n\n"
-        f"En signant électroniquement ce document, le client accepte les "
-        f"conditions ci-dessus et le lancement de la prestation."
+        f"Montant : {CONTRACT_AMOUNT_EUR:.2f} EUR TTC",
+        new_x=XPos.LMARGIN, new_y=YPos.NEXT,
     )
+    pdf.ln(2)
+
+    # --- Corps des CGV B2C ---
+    titre_section("Conditions générales de prestation")
+    for titre, corps in construire_articles_cgv_b2c(agence):
+        pdf.set_x(10)
+        pdf.set_font("Helvetica", "B", 9.5)
+        pdf.multi_cell(0, 5, titre, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.set_x(10)
+        pdf.set_font("Helvetica", "", 8.5)
+        pdf.multi_cell(0, 4.3, corps, align="J", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(1.5)
+    pdf.ln(1)
+
+    pdf.set_x(10)
+    pdf.set_font("Helvetica", "", 9.5)
+    pdf.multi_cell(
+        0, 5,
+        "En signant électroniquement ce document, le client accepte les conditions "
+        "générales de prestation ci-dessus et le lancement de la prestation.",
+        new_x=XPos.LMARGIN, new_y=YPos.NEXT,
+    )
+
     return bytes(pdf.output(dest="S"))
 
 
