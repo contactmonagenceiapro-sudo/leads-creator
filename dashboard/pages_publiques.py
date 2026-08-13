@@ -25,11 +25,11 @@ import streamlit as st
 from contrats_signature import envoyer_contrat_signature, generer_pdf_devis, libelle_prestation, normaliser_type_offre
 from alertes import alerter_discord
 from generation_contrats import (
-    PRIX_ABONNEMENT_MENSUEL_EUR,
-    PRIX_LEAD_UNITE_EUR,
+    FORMULES_ABONNEMENT,
     TYPE_OFFRE_ABONNEMENT,
     TYPE_OFFRE_UNITE,
-    VOLUME_LEADS_ABONNEMENT,
+    formule_abonnement_par_id,
+    fourchette_prix_unite_eur,
 )
 from signature_interne import enregistrer_signature, envoyer_contrat_signature_interne, get_contrat_par_token
 from supabase_client import supabase
@@ -116,15 +116,17 @@ def afficher_presentation(lead_id: str | None) -> None:
         st.markdown(f"Bonjour **{company}**,")
         st.write(pitch)
 
+    mini, maxi = fourchette_prix_unite_eur()
+    formules_texte = " · ".join(f"{f['label']} : {f['prix_eur']:.0f} € TTC/mois" for f in FORMULES_ABONNEMENT)
+
     st.subheader("Ce qui est inclus, sans aucune action technique de votre part :")
     with st.container(border=True):
         st.markdown(
             "✅ Des demandes de devis réelles, de particuliers/professionnels intéressés "
             "par vos prestations  \n"
             "✅ Ciblées sur votre corps de métier et votre zone d'intervention  \n"
-            f"✅ Au choix : à l'unité ({PRIX_LEAD_UNITE_EUR:.0f} € TTC/lead) ou en "
-            f"abonnement mensuel ({VOLUME_LEADS_ABONNEMENT} leads inclus, "
-            f"{PRIX_ABONNEMENT_MENSUEL_EUR:.0f} € TTC/mois)  \n"
+            f"✅ Au choix : à l'unité ({mini:.0f} à {maxi:.0f} € TTC/lead, selon sa "
+            f"qualité) ou en abonnement mensuel ({formules_texte})  \n"
             "✅ Aucun appel, aucune compétence technique requise de votre côté"
         )
 
@@ -163,6 +165,40 @@ def afficher_intake(lead_id: str | None) -> None:
     st.title(f"Démarrons, {company}")
     st.write("Ce formulaire remplace tout appel téléphonique : remplissez-le à votre rythme.")
 
+    # Le choix de formule est VOLONTAIREMENT en dehors du st.form ci-dessous
+    # (contrairement aux autres champs) : un widget dans un formulaire ne
+    # déclenche aucun rerun avant la soumission, donc il serait impossible
+    # d'afficher conditionnellement les 3 formules d'abonnement (ou la
+    # fourchette à l'unité) tant que le Client n'a pas encore choisi entre
+    # les deux — ces deux widgets, eux, doivent réagir immédiatement.
+    mini, maxi = fourchette_prix_unite_eur()
+    type_offre = st.radio(
+        "Formule souhaitée",
+        options=[TYPE_OFFRE_UNITE, TYPE_OFFRE_ABONNEMENT],
+        format_func=lambda v: (
+            f"À l'unité — de {mini:.0f} à {maxi:.0f} € TTC par lead livré, selon sa qualité"
+            if v == TYPE_OFFRE_UNITE
+            else "Abonnement mensuel — volume au choix"
+        ),
+        key=f"type_offre_{lead_id}",
+    )
+
+    formule_abonnement = None
+    if type_offre == TYPE_OFFRE_UNITE:
+        st.caption(
+            f"Le prix dépend de la qualité de chaque lead livré (entre {mini:.0f} € et "
+            f"{maxi:.0f} € TTC) ; vous ne payez que ce que vous recevez, facturé à chaque livraison."
+        )
+    else:
+        formule_abonnement = st.radio(
+            "Choisissez votre volume mensuel",
+            options=[f["id"] for f in FORMULES_ABONNEMENT],
+            format_func=lambda fid: (
+                lambda f: f"{f['label']} — {f['prix_eur']:.0f} € TTC/mois"
+            )(formule_abonnement_par_id(fid)),
+            key=f"formule_abonnement_{lead_id}",
+        )
+
     # max_chars sur chaque champ : ce formulaire est public et non authentifié,
     # rien n'empêche un abus (texte massif envoyé en boucle) sans une limite
     # basique — appliquée au niveau du widget, la plus simple à maintenir.
@@ -175,16 +211,6 @@ def afficher_intake(lead_id: str | None) -> None:
         )
         zone_activite = st.text_input(
             "Zone d'intervention (villes/rayon)", placeholder="Ex : Reims et 30km alentour", max_chars=300,
-        )
-        type_offre = st.radio(
-            "Formule souhaitée",
-            options=[TYPE_OFFRE_UNITE, TYPE_OFFRE_ABONNEMENT],
-            format_func=lambda v: (
-                f"À l'unité — {PRIX_LEAD_UNITE_EUR:.0f} € TTC par lead livré"
-                if v == TYPE_OFFRE_UNITE
-                else f"Abonnement mensuel — {VOLUME_LEADS_ABONNEMENT} leads inclus, "
-                     f"{PRIX_ABONNEMENT_MENSUEL_EUR:.0f} € TTC/mois"
-            ),
         )
         st.caption(f"En envoyant ce formulaire, vous acceptez notre [{LIBELLE_LIEN_CONFIDENTIALITE}]({LIEN_CONFIDENTIALITE}).")
         envoyer = st.form_submit_button("Envoyer", type="primary", use_container_width=True)
@@ -204,6 +230,7 @@ def afficher_intake(lead_id: str | None) -> None:
         "corps_metier": corps_metier,
         "zone_activite": zone_activite,
         "type_offre": type_offre,
+        "formule_abonnement": formule_abonnement,
     }
     try:
         supabase.table("intake_responses").insert(payload).execute()
@@ -269,15 +296,23 @@ def afficher_signature(token: str | None) -> None:
     intake = _get_intake(contrat["lead_id"])
     pdf_bytes = generer_pdf_devis(lead, intake)
     type_offre = normaliser_type_offre(contrat.get("type_offre") or intake.get("type_offre"))
-    periodicite = " / mois" if type_offre == TYPE_OFFRE_ABONNEMENT else " / lead"
+
+    if type_offre == TYPE_OFFRE_ABONNEMENT:
+        formule = formule_abonnement_par_id(contrat.get("formule_abonnement") or intake.get("formule_abonnement"))
+        libelle = libelle_prestation(type_offre, formule_abonnement=formule["id"])
+        ligne_montant = f"**Montant : {formule['prix_eur']:.2f} € TTC / mois ({formule['label']})**"
+    else:
+        libelle = libelle_prestation(type_offre)
+        mini, maxi = fourchette_prix_unite_eur()
+        ligne_montant = f"**Montant : entre {mini:.2f} € et {maxi:.2f} € TTC / lead, selon la qualité du lead livré**"
 
     st.title(f"Votre devis — {lead.get('company') or ''}")
     with st.container(border=True):
         st.write(f"Corps de métier : {intake.get('corps_metier', '') or '—'}")
         st.write(f"Zone d'intervention : {intake.get('zone_activite', '') or '—'}")
         st.write(f"Description de l'activité : {intake.get('description', '') or '—'}")
-        st.write(f"Prestation : {libelle_prestation(type_offre)}")
-        st.markdown(f"**Montant : {(contrat.get('montant_centimes') or 0) / 100:.2f} € TTC{periodicite}**")
+        st.write(f"Prestation : {libelle}")
+        st.markdown(ligne_montant)
     st.download_button(
         "⬇️ Télécharger le devis en PDF", data=pdf_bytes,
         file_name=f"devis_{contrat['id']}.pdf", mime="application/pdf",

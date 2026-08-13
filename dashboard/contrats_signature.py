@@ -28,12 +28,14 @@ from generation_contrats import (
     COULEUR_PRIMAIRE,
     COULEUR_TEXTE_CLAIR,
     DEFAULTS_AGENCE,
-    PRIX_ABONNEMENT_MENSUEL_EUR,
-    PRIX_LEAD_UNITE_EUR,
+    LIBELLE_PALIER,
     TYPE_OFFRE_ABONNEMENT,
     TYPE_OFFRE_UNITE,
-    VOLUME_LEADS_ABONNEMENT,
     construire_articles_cgv_b2c,
+    formule_abonnement_par_id,
+    fourchette_prix_unite_eur,
+    palier_pour_score,
+    prix_lead_unite_eur,
 )
 from supabase_client import supabase
 
@@ -52,23 +54,40 @@ def normaliser_type_offre(type_offre: str | None) -> str:
     return type_offre if type_offre == TYPE_OFFRE_ABONNEMENT else TYPE_OFFRE_UNITE
 
 
-def montant_centimes_pour_offre(type_offre: str | None) -> int:
-    """Montant à facturer selon la formule choisie à l'intake — voir
-    generation_contrats.py::PRIX_LEAD_UNITE_EUR / PRIX_ABONNEMENT_MENSUEL_EUR
-    (valeurs placeholder, à ajuster)."""
+def montant_centimes_a_la_signature(type_offre: str | None, formule_abonnement: str | None) -> int | None:
+    """Montant à enregistrer sur le contrat au moment de la signature.
+    - abonnement : connu immédiatement (formule de volume choisie à
+      l'intake, voir generation_contrats.py::FORMULES_ABONNEMENT).
+    - à l'unité : PAS connu à ce stade — dépend du score du lead qui sera
+      réellement livré (voir generation_contrats.py::palier_pour_score),
+      calculé plus tard au moment de la facturation (voir
+      creer_et_envoyer_lien_paiement ci-dessous). Renvoie None : le champ
+      contracts.montant_centimes reste NULL jusqu'à la livraison, ce n'est
+      pas une donnée manquante par erreur."""
     if normaliser_type_offre(type_offre) == TYPE_OFFRE_ABONNEMENT:
-        return int(PRIX_ABONNEMENT_MENSUEL_EUR * 100)
-    return int(PRIX_LEAD_UNITE_EUR * 100)
+        return int(formule_abonnement_par_id(formule_abonnement)["prix_eur"] * 100)
+    return None
 
 
-def libelle_prestation(type_offre: str | None) -> str:
-    """Libellé humain de la prestation selon la formule — utilisé dans le
-    devis PDF ET comme nom de produit Stripe (voir
-    creer_et_envoyer_lien_paiement), pour qu'un même contrat affiche
-    toujours le même intitulé du devis jusqu'au paiement."""
+def libelle_prestation(
+    type_offre: str | None, formule_abonnement: str | None = None, palier: str | None = None,
+) -> str:
+    """Libellé humain de la prestation — utilisé dans le devis PDF ET comme
+    nom de produit Stripe (voir creer_et_envoyer_lien_paiement), pour qu'un
+    même contrat affiche toujours un intitulé cohérent du devis jusqu'au
+    paiement.
+
+    `palier` (PALIER_PREMIUM/STANDARD/BASIQUE) n'est connu qu'au moment de
+    la livraison du lead — absent (devis initial, avant livraison), le
+    libellé "à l'unité" affiche la fourchette de prix plutôt qu'un palier
+    précis pas encore déterminé."""
     if normaliser_type_offre(type_offre) == TYPE_OFFRE_ABONNEMENT:
-        return f"Abonnement leads qualifiés — {VOLUME_LEADS_ABONNEMENT} leads inclus/mois"
-    return "Lead qualifié à l'unité"
+        formule = formule_abonnement_par_id(formule_abonnement)
+        return f"Abonnement leads qualifiés — {formule['label']}"
+    if palier:
+        return f"Lead qualifié à l'unité — {LIBELLE_PALIER[palier]}"
+    mini, maxi = fourchette_prix_unite_eur()
+    return f"Lead qualifié à l'unité (prix selon la qualité du lead livré, {mini:.0f}-{maxi:.0f} € TTC)"
 
 
 def _charger_config_agence() -> dict:
@@ -105,9 +124,21 @@ def generer_pdf_devis(lead: dict, intake: dict) -> bytes:
     agence = _charger_config_agence()
     nom_agence = agence.get("nom") or DEFAULTS_AGENCE["nom"]
     type_offre = normaliser_type_offre(intake.get("type_offre"))
-    montant_eur = montant_centimes_pour_offre(type_offre) / 100
-    libelle = libelle_prestation(type_offre)
-    periodicite = " / mois" if type_offre == TYPE_OFFRE_ABONNEMENT else " / lead"
+
+    if type_offre == TYPE_OFFRE_ABONNEMENT:
+        formule = formule_abonnement_par_id(intake.get("formule_abonnement"))
+        libelle = libelle_prestation(type_offre, formule_abonnement=formule["id"])
+        ligne_montant = f"Montant : {formule['prix_eur']:.2f} EUR TTC / mois ({formule['label']})"
+    else:
+        # Palier (donc prix exact) inconnu à ce stade : seul le lead
+        # réellement livré déterminera le tarif applicable — voir
+        # creer_et_envoyer_lien_paiement. Le devis affiche la fourchette.
+        libelle = libelle_prestation(type_offre)
+        mini, maxi = fourchette_prix_unite_eur()
+        ligne_montant = (
+            f"Montant : entre {mini:.2f} EUR et {maxi:.2f} EUR TTC / lead, selon la "
+            f"qualité du lead livré (facturé à chaque livraison)"
+        )
 
     pdf = FPDF(format="A4")
     # cp1252 (Windows-1252) plutôt que le strict latin-1 par défaut, pour
@@ -154,7 +185,7 @@ def generer_pdf_devis(lead: dict, intake: dict) -> bytes:
         f"Zone d'intervention : {intake.get('zone_activite', '') or '—'}\n"
         f"Description de l'activité : {intake.get('description', '')}\n\n"
         f"Prestation : {libelle}\n"
-        f"Montant : {montant_eur:.2f} EUR TTC{periodicite}",
+        f"{ligne_montant}",
         new_x=XPos.LMARGIN, new_y=YPos.NEXT,
     )
     pdf.ln(2)
@@ -265,12 +296,14 @@ def envoyer_contrat_signature(lead: dict, intake: dict) -> bool:
         return False
 
     type_offre = normaliser_type_offre(intake.get("type_offre"))
+    formule_abonnement = intake.get("formule_abonnement") if type_offre == TYPE_OFFRE_ABONNEMENT else None
     supabase.table("contracts").insert({
         "lead_id": lead_id,
         "yousign_request_id": signature_request_id,
         "yousign_status": "envoye",
         "type_offre": type_offre,
-        "montant_centimes": montant_centimes_pour_offre(type_offre),
+        "formule_abonnement": formule_abonnement,
+        "montant_centimes": montant_centimes_a_la_signature(type_offre, formule_abonnement),
     }).execute()
     supabase.table("leads").update({"status": "contrat_envoye"}).eq("id", lead_id).execute()
     log.info(f"Contrat envoyé en signature à {lead['email']} (Yousign id={signature_request_id})")
@@ -291,11 +324,28 @@ def creer_et_envoyer_lien_paiement(lead_id: str, contract_id: str) -> bool:
     lead = leads[0]
     contrat = contrats[0]
     type_offre = normaliser_type_offre(contrat.get("type_offre"))
-    nom_produit = f"{libelle_prestation(type_offre)} — {lead.get('company', '')}"
+
+    champs_maj = {}
+    if type_offre == TYPE_OFFRE_ABONNEMENT:
+        formule = formule_abonnement_par_id(contrat.get("formule_abonnement"))
+        montant_centimes = int(formule["prix_eur"] * 100)
+        nom_produit = f"{libelle_prestation(type_offre, formule_abonnement=formule['id'])} — {lead.get('company', '')}"
+    else:
+        # À l'unité : le prix n'est connu qu'à la livraison — c'est ICI,
+        # au moment où le paiement est réellement déclenché, que le score
+        # actuel du lead (leads.score) détermine le palier facturé. Voir
+        # generation_contrats.py::palier_pour_score/prix_lead_unite_eur.
+        palier = palier_pour_score(lead.get("score"))
+        montant_centimes = int(prix_lead_unite_eur(lead.get("score")) * 100)
+        nom_produit = f"{libelle_prestation(type_offre, palier=palier)} — {lead.get('company', '')}"
+        # Le montant n'était pas encore connu à la signature (voir
+        # montant_centimes_a_la_signature) : on le fixe maintenant, pour que
+        # le contrat reflète fidèlement ce qui a été réellement facturé.
+        champs_maj["montant_centimes"] = montant_centimes
 
     try:
         parametres_prix = {
-            "unit_amount": contrat["montant_centimes"],
+            "unit_amount": montant_centimes,
             "currency": "eur",
             "product_data": {"name": nom_produit},
         }
@@ -314,9 +364,8 @@ def creer_et_envoyer_lien_paiement(lead_id: str, contract_id: str) -> bool:
         log.error(f"Erreur création lien de paiement Stripe pour {lead_id} : {e}")
         return False
 
-    supabase.table("contracts").update(
-        {"stripe_payment_link_id": lien.id, "stripe_payment_url": lien.url}
-    ).eq("id", contract_id).execute()
+    champs_maj.update({"stripe_payment_link_id": lien.id, "stripe_payment_url": lien.url})
+    supabase.table("contracts").update(champs_maj).eq("id", contract_id).execute()
     supabase.table("leads").update({"status": "lien_paiement_envoye"}).eq("id", lead_id).execute()
 
     corps = (

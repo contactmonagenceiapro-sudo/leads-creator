@@ -35,8 +35,21 @@ import streamlit as st
 from fpdf import FPDF
 
 from alertes import alerter_blocage_compte_zoho, est_blocage_compte_zoho
-from contrats_signature import generer_pdf_devis, libelle_prestation, montant_centimes_pour_offre, normaliser_type_offre
-from generation_contrats import COULEUR_ACCENT, COULEUR_GRIS, COULEUR_PRIMAIRE, COULEUR_TEXTE_CLAIR, TYPE_OFFRE_ABONNEMENT
+from contrats_signature import (
+    generer_pdf_devis,
+    libelle_prestation,
+    montant_centimes_a_la_signature,
+    normaliser_type_offre,
+)
+from generation_contrats import (
+    COULEUR_ACCENT,
+    COULEUR_GRIS,
+    COULEUR_PRIMAIRE,
+    COULEUR_TEXTE_CLAIR,
+    TYPE_OFFRE_ABONNEMENT,
+    formule_abonnement_par_id,
+    fourchette_prix_unite_eur,
+)
 from supabase_client import supabase
 
 log = logging.getLogger(__name__)
@@ -110,6 +123,7 @@ def envoyer_contrat_signature_interne(lead: dict, intake: dict) -> bool:
     token = secrets.token_urlsafe(32)
 
     type_offre = normaliser_type_offre(intake.get("type_offre"))
+    formule_abonnement = intake.get("formule_abonnement") if type_offre == TYPE_OFFRE_ABONNEMENT else None
     try:
         supabase.table("contracts").insert({
             "lead_id": lead_id,
@@ -117,7 +131,8 @@ def envoyer_contrat_signature_interne(lead: dict, intake: dict) -> bool:
             "signature_token": token,
             "yousign_status": "a_envoyer",
             "type_offre": type_offre,
-            "montant_centimes": montant_centimes_pour_offre(type_offre),
+            "formule_abonnement": formule_abonnement,
+            "montant_centimes": montant_centimes_a_la_signature(type_offre, formule_abonnement),
         }).execute()
     except Exception as e:
         log.error(f"Erreur création du contrat (signature interne) pour {lead_id} : {e}")
@@ -194,7 +209,20 @@ def construire_pdf_preuve(contrat: dict, lead: dict, intake: dict, signed_at_aff
     pdf.set_xy(10, 28)
 
     type_offre = normaliser_type_offre(contrat.get("type_offre"))
-    periodicite = " / mois" if type_offre == TYPE_OFFRE_ABONNEMENT else " / lead"
+    if type_offre == TYPE_OFFRE_ABONNEMENT:
+        formule = formule_abonnement_par_id(contrat.get("formule_abonnement"))
+        libelle = libelle_prestation(type_offre, formule_abonnement=formule["id"])
+        ligne_montant = f"Montant : {formule['prix_eur']:.2f} EUR TTC / mois ({formule['label']})"
+    else:
+        # Montant pas encore connu à ce stade (signature) : dépend du score
+        # du lead réellement livré, calculé plus tard à la facturation —
+        # voir contrats_signature.py::creer_et_envoyer_lien_paiement.
+        libelle = libelle_prestation(type_offre)
+        mini, maxi = fourchette_prix_unite_eur()
+        ligne_montant = (
+            f"Montant : entre {mini:.2f} EUR et {maxi:.2f} EUR TTC / lead, selon la "
+            f"qualite du lead livre"
+        )
     pdf.set_font("Helvetica", "", 11)
     pdf.multi_cell(
         0, 7,
@@ -202,8 +230,8 @@ def construire_pdf_preuve(contrat: dict, lead: dict, intake: dict, signed_at_aff
         f"Corps de metier : {intake.get('corps_metier', '') or '-'}\n"
         f"Zone d'intervention : {intake.get('zone_activite', '') or '-'}\n"
         f"Description de l'activite : {intake.get('description', '')}\n\n"
-        f"Prestation : {libelle_prestation(type_offre)}\n"
-        f"Montant : {(contrat.get('montant_centimes') or 0) / 100:.2f} EUR TTC{periodicite}\n",
+        f"Prestation : {libelle}\n"
+        f"{ligne_montant}\n",
     )
     pdf.ln(4)
 
