@@ -12,6 +12,8 @@ import re
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 
+from scorer_leads import SEUIL_LEAD_PRIORITAIRE_B2C
+
 DEFAULTS_AGENCE = {
     "nom": os.getenv("AGENCY_NAME", "Expertise Digitale"),
     "adresse": os.getenv("AGENCY_ADDRESS", ""),
@@ -80,16 +82,11 @@ GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR = {
 
 # Tarification B2C (vente de leads aux artisans, table `leads`) — deux
 # formules au choix du Client à l'intake (voir dashboard/pages_publiques.py
-# ::afficher_intake) : paiement à l'unité (comme le B2B, cf.
-# GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR ci-dessus) ou abonnement mensuel à volume
-# inclus. VALEURS PLACEHOLDER — montants définitifs non encore fixés par
-# l'agence : à ajuster ici (ou via les variables d'environnement du même nom)
-# avant toute mise en production réelle. Remplace MONTANT_PRESTATION_B2C_EUR
-# (990€, prix de l'ancienne prestation "site vitrine" erronée — voir
-# diagnostic du 2026-08-14).
-PRIX_LEAD_UNITE_EUR = float(os.getenv("PRIX_LEAD_UNITE_EUR", "45"))
-PRIX_ABONNEMENT_MENSUEL_EUR = float(os.getenv("PRIX_ABONNEMENT_MENSUEL_EUR", "490"))
-VOLUME_LEADS_ABONNEMENT = int(os.getenv("VOLUME_LEADS_ABONNEMENT", "15"))
+# ::afficher_intake) : paiement à l'unité (variable selon la qualité du lead
+# livré) ou abonnement mensuel (formules à volume croissant). VALEURS
+# PLACEHOLDER — montants définitifs non encore fixés par l'agence : à
+# ajuster ici (ou via les variables d'environnement du même nom) avant toute
+# mise en production réelle.
 
 # Valeurs acceptées pour intake_responses.type_offre / contracts.type_offre
 # (voir sql/init_intake_responses_leads_b2c.sql) — un seul point de vérité
@@ -97,6 +94,109 @@ VOLUME_LEADS_ABONNEMENT = int(os.getenv("VOLUME_LEADS_ABONNEMENT", "15"))
 # ci-dessous et par dashboard/contrats_signature.py.
 TYPE_OFFRE_UNITE = "unite"
 TYPE_OFFRE_ABONNEMENT = "abonnement"
+
+
+# ---------------------------------------------------------------------
+# Axe 1 — à l'unité : prix variable selon la qualité (score) du lead livré.
+# ---------------------------------------------------------------------
+# Le score utilisé est celui déjà calculé par scorer_leads.py (table `leads`,
+# 0-100) — même seuil que la mention "contact prioritaire" côté
+# lead_worker.py::generer_pitch (SEUIL_LEAD_PRIORITAIRE_B2C, importé plutôt
+# que redéfini : les deux DOIVENT rester synchronisés, contrairement à la
+# duplication délibérée pratiquée ailleurs entre B2B et B2C — ici c'est le
+# MÊME segment B2C, le même signal de qualité, pas deux logiques
+# indépendantes).
+#
+# Le prix n'est donc connu qu'au moment de la LIVRAISON du lead (quand son
+# score réel est disponible), jamais au moment du devis initial — voir
+# dashboard/contrats_signature.py::creer_et_envoyer_lien_paiement, seul
+# endroit où ce montant est réellement calculé et facturé.
+PRIX_LEAD_PREMIUM_EUR = float(os.getenv("PRIX_LEAD_PREMIUM_EUR", "60"))
+PRIX_LEAD_STANDARD_EUR = float(os.getenv("PRIX_LEAD_STANDARD_EUR", "45"))
+PRIX_LEAD_BASIQUE_EUR = float(os.getenv("PRIX_LEAD_BASIQUE_EUR", "30"))
+
+PALIER_PREMIUM = "premium"
+PALIER_STANDARD = "standard"
+PALIER_BASIQUE = "basique"
+
+PRIX_PAR_PALIER_EUR = {
+    PALIER_PREMIUM: PRIX_LEAD_PREMIUM_EUR,
+    PALIER_STANDARD: PRIX_LEAD_STANDARD_EUR,
+    PALIER_BASIQUE: PRIX_LEAD_BASIQUE_EUR,
+}
+LIBELLE_PALIER = {PALIER_PREMIUM: "Premium", PALIER_STANDARD: "Standard", PALIER_BASIQUE: "Basique"}
+
+# 50 = score neutre par défaut appliqué par scorer_leads.py quand aucun
+# signal d'activité chantiers n'est exploitable (commune absente/non
+# résolvable — voir outbound_chantiers/signal_activite_chantiers.py::
+# SCORE_NEUTRE_PAR_DEFAUT = 0.5, x100, sans bonus taille puisque
+# tranche_effectif_salarie est elle aussi presque toujours absente pour ces
+# leads — cf. diagnostic du 2026-08-13 sur les 20 leads sans commune).
+# Valeur dupliquée ici (pas importée) pour ne jamais faire dépendre ce
+# module du package B2B outbound_chantiers, même indirectement.
+SCORE_NEUTRE_LEAD_B2C = 50
+
+
+def palier_pour_score(score: int | None) -> str:
+    """Palier de qualité (Premium/Standard/Basique) pour un score `leads.score`
+    (0-100) donné. Un score neutre (50, y compris tous les leads sans
+    commune identifiée) ou en-dessous tombe en Basique ; jamais d'exception
+    sur une valeur manquante (score=None traité comme 0, donc Basique)."""
+    score = score or 0
+    if score >= SEUIL_LEAD_PRIORITAIRE_B2C:
+        return PALIER_PREMIUM
+    if score > SCORE_NEUTRE_LEAD_B2C:
+        return PALIER_STANDARD
+    return PALIER_BASIQUE
+
+
+def prix_lead_unite_eur(score: int | None) -> float:
+    return PRIX_PAR_PALIER_EUR[palier_pour_score(score)]
+
+
+def fourchette_prix_unite_eur() -> tuple[float, float]:
+    """(prix mini, prix maxi) toutes qualités confondues — affiché au devis
+    tant que le lead réellement livré (et donc son palier) n'est pas
+    encore connu."""
+    valeurs = PRIX_PAR_PALIER_EUR.values()
+    return min(valeurs), max(valeurs)
+
+
+# ---------------------------------------------------------------------
+# Axe 2 — abonnement : formules à volume croissant, tarif/lead dégressif.
+# ---------------------------------------------------------------------
+# Structure en liste de dictionnaires (plutôt que des constantes séparées
+# par formule) : un seul point de vérité par formule (id, volume, prix,
+# libellé), facile à faire évoluer (ajouter/retirer une formule, changer un
+# montant) sans toucher au reste du code qui itère dessus.
+FORMULES_ABONNEMENT = [
+    {
+        "id": "petit",
+        "volume": 10,
+        "prix_eur": float(os.getenv("PRIX_ABONNEMENT_PETIT_EUR", "350")),
+        "label": "10 leads/mois",
+    },
+    {
+        "id": "moyen",
+        "volume": 20,
+        "prix_eur": float(os.getenv("PRIX_ABONNEMENT_MOYEN_EUR", "640")),
+        "label": "20 leads/mois",
+    },
+    {
+        "id": "grand",
+        "volume": 30,
+        "prix_eur": float(os.getenv("PRIX_ABONNEMENT_GRAND_EUR", "900")),
+        "label": "30 leads/mois",
+    },
+]
+FORMULE_ABONNEMENT_PAR_DEFAUT = FORMULES_ABONNEMENT[0]["id"]
+
+
+def formule_abonnement_par_id(formule_id: str | None) -> dict:
+    """Retombe sur la plus petite formule si `formule_id` est absent/inconnu
+    (donnée manquante/corrompue) plutôt que de lever une exception — même
+    principe que palier_pour_score ci-dessus."""
+    return next((f for f in FORMULES_ABONNEMENT if f["id"] == formule_id), FORMULES_ABONNEMENT[0])
 
 
 def aide_memoire_prix(types_acteur_cibles: list[dict] | None) -> str:
@@ -237,10 +337,18 @@ def construire_articles_cgv_b2c(agence: dict, type_offre: str) -> list[tuple[str
     diagnostic du 2026-08-14).
 
     `type_offre` (TYPE_OFFRE_UNITE ou TYPE_OFFRE_ABONNEMENT, voir
-    intake_responses.type_offre) détermine le prix et le mode de livraison
+    intake_responses.type_offre) détermine le mode de livraison et de prix
     décrits aux articles 2 et 5 ; toute autre valeur (donnée manquante/
     corrompue) retombe silencieusement sur TYPE_OFFRE_UNITE plutôt que de
     faire échouer la génération du devis.
+
+    Volontairement AUCUN montant en euros n'est écrit en dur dans les
+    articles ci-dessous (contrairement à la version précédente) : le prix à
+    l'unité dépend du palier de qualité du lead réellement livré
+    (PRIX_PAR_PALIER_EUR) et l'abonnement dépend de la formule de volume
+    choisie (FORMULES_ABONNEMENT) — les CGV renvoient au présent devis pour
+    les montants exacts, pour ne jamais avoir à réécrire ce texte juridique
+    à chaque ajustement tarifaire (voir Article 5).
 
     La logique de statut SIRET (agence["siret_statut"]) reste volontairement
     DUPLIQUÉE depuis construire_articles_cgv plutôt que factorisée : même
@@ -266,21 +374,22 @@ def construire_articles_cgv_b2c(agence: dict, type_offre: str) -> list[tuple[str
 
     if abonnement:
         texte_contenu = (
-            f"La prestation consiste en la mise à disposition du Client de demandes de "
-            f"devis qualifiées (« leads »), correspondant au corps de métier et à la zone "
-            f"d'intervention déclarés au présent devis, livrées au fil de l'eau à mesure de "
-            f"leur qualification. Dans la formule « abonnement », le Client bénéficie d'un "
-            f"volume de {VOLUME_LEADS_ABONNEMENT} leads inclus par mois civil pour le prix "
-            f"forfaitaire fixé à l'article 5 ; les leads non consommés sur un mois donné ne "
-            f"sont ni reportés ni remboursés le mois suivant."
+            "La prestation consiste en la mise à disposition du Client de demandes de "
+            "devis qualifiées (« leads »), correspondant au corps de métier et à la zone "
+            "d'intervention déclarés au présent devis, livrées au fil de l'eau à mesure de "
+            "leur qualification. Dans la formule « abonnement », le Client bénéficie d'un "
+            "volume de leads inclus chaque mois civil, correspondant à la formule choisie "
+            "au présent devis parmi celles proposées par l'Agence, pour le prix forfaitaire "
+            "fixé à l'article 5 ; les leads non consommés sur un mois donné ne sont ni "
+            "reportés ni remboursés le mois suivant."
         )
         texte_prix = (
-            f"Le prix de la prestation, dans la formule « abonnement », est fixé à "
-            f"{PRIX_ABONNEMENT_MENSUEL_EUR:.2f} € TTC par mois pour un volume de "
-            f"{VOLUME_LEADS_ABONNEMENT} leads inclus, payable mensuellement d'avance à "
-            f"compter de la signature du présent devis. L'abonnement est reconduit "
-            f"tacitement chaque mois ; le Client peut y mettre fin à tout moment, sans "
-            f"pénalité, l'arrêt prenant effet à l'échéance mensuelle en cours."
+            "Le prix de la prestation, dans la formule « abonnement », est celui de la "
+            "formule de volume choisie par le Client parmi celles proposées par l'Agence, "
+            "tel qu'indiqué au présent devis, payable mensuellement d'avance à compter de "
+            "la signature du présent devis. L'abonnement est reconduit tacitement chaque "
+            "mois ; le Client peut y mettre fin à tout moment, sans pénalité, l'arrêt "
+            "prenant effet à l'échéance mensuelle en cours."
         )
     else:
         texte_contenu = (
@@ -292,11 +401,13 @@ def construire_articles_cgv_b2c(agence: dict, type_offre: str) -> list[tuple[str
             "volume ni fréquence de livraison n'est garanti sur une période donnée."
         )
         texte_prix = (
-            f"Le prix de la prestation, dans la formule « à l'unité », est fixé à "
-            f"{PRIX_LEAD_UNITE_EUR:.2f} € TTC par lead livré, tel qu'indiqué au présent "
-            f"devis, facturé et payable à chaque livraison. Le présent devis est conclu "
-            f"pour une durée indéterminée et peut être résilié à tout moment par le "
-            f"Client, sans engagement de volume minimum."
+            "Le prix de la prestation, dans la formule « à l'unité », varie selon le "
+            "palier de qualité du lead réellement livré (déterminé par le score attribué "
+            "au lead au moment de sa livraison, selon la méthode de scoring en vigueur "
+            "chez l'Agence), facturé et payable à chaque livraison, dans la fourchette "
+            "indiquée au présent devis. Le présent devis est conclu pour une durée "
+            "indéterminée et peut être résilié à tout moment par le Client, sans "
+            "engagement de volume minimum."
         )
 
     return [
