@@ -28,6 +28,11 @@ from generation_contrats import (
     COULEUR_PRIMAIRE,
     COULEUR_TEXTE_CLAIR,
     DEFAULTS_AGENCE,
+    PRIX_ABONNEMENT_MENSUEL_EUR,
+    PRIX_LEAD_UNITE_EUR,
+    TYPE_OFFRE_ABONNEMENT,
+    TYPE_OFFRE_UNITE,
+    VOLUME_LEADS_ABONNEMENT,
     construire_articles_cgv_b2c,
 )
 from supabase_client import supabase
@@ -36,8 +41,34 @@ log = logging.getLogger(__name__)
 
 YOUSIGN_API_KEY = os.getenv("YOUSIGN_API_KEY", "")
 YOUSIGN_API_URL = os.getenv("YOUSIGN_API_URL", "https://api-sandbox.yousign.app/v3")
-CONTRACT_AMOUNT_EUR = float(os.getenv("CONTRACT_AMOUNT_EUR", "990"))
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")
+
+
+def normaliser_type_offre(type_offre: str | None) -> str:
+    """Jamais None/inconnu au-delà de ce point : toute valeur absente ou
+    corrompue retombe sur TYPE_OFFRE_UNITE plutôt que de faire échouer la
+    génération du devis/contrat (même principe que
+    construire_articles_cgv_b2c côté generation_contrats.py)."""
+    return type_offre if type_offre == TYPE_OFFRE_ABONNEMENT else TYPE_OFFRE_UNITE
+
+
+def montant_centimes_pour_offre(type_offre: str | None) -> int:
+    """Montant à facturer selon la formule choisie à l'intake — voir
+    generation_contrats.py::PRIX_LEAD_UNITE_EUR / PRIX_ABONNEMENT_MENSUEL_EUR
+    (valeurs placeholder, à ajuster)."""
+    if normaliser_type_offre(type_offre) == TYPE_OFFRE_ABONNEMENT:
+        return int(PRIX_ABONNEMENT_MENSUEL_EUR * 100)
+    return int(PRIX_LEAD_UNITE_EUR * 100)
+
+
+def libelle_prestation(type_offre: str | None) -> str:
+    """Libellé humain de la prestation selon la formule — utilisé dans le
+    devis PDF ET comme nom de produit Stripe (voir
+    creer_et_envoyer_lien_paiement), pour qu'un même contrat affiche
+    toujours le même intitulé du devis jusqu'au paiement."""
+    if normaliser_type_offre(type_offre) == TYPE_OFFRE_ABONNEMENT:
+        return f"Abonnement leads qualifiés — {VOLUME_LEADS_ABONNEMENT} leads inclus/mois"
+    return "Lead qualifié à l'unité"
 
 
 def _charger_config_agence() -> dict:
@@ -60,9 +91,11 @@ def generer_pdf_devis(lead: dict, intake: dict) -> bytes:
     """Génère le devis PDF à partir des infos du lead et de l'intake, CGV B2C
     incluses (voir generation_contrats.py::construire_articles_cgv_b2c) —
     pour transmission en signature électronique (aucune saisie manuelle).
-    Même style de mise en page (bandeau d'en-tête, sections) que le bon de
-    commande B2B (generation_contrats.py::construire_pdf), pour une identité
-    visuelle cohérente entre les deux tunnels.
+    Vente de leads qualifiés (à l'unité ou abonnement, voir intake["type_offre"]),
+    pas la prestation "site vitrine" de l'ancienne version de ce module (voir
+    diagnostic du 2026-08-14). Même style de mise en page (bandeau d'en-tête,
+    sections) que le bon de commande B2B (generation_contrats.py::construire_pdf),
+    pour une identité visuelle cohérente entre les deux tunnels.
 
     Signature inchangée (lead, intake) -> bytes : la config agence est
     rechargée en interne (_charger_config_agence) plutôt qu'ajoutée en
@@ -71,6 +104,10 @@ def generer_pdf_devis(lead: dict, intake: dict) -> bytes:
     pages_publiques.afficher_signature)."""
     agence = _charger_config_agence()
     nom_agence = agence.get("nom") or DEFAULTS_AGENCE["nom"]
+    type_offre = normaliser_type_offre(intake.get("type_offre"))
+    montant_eur = montant_centimes_pour_offre(type_offre) / 100
+    libelle = libelle_prestation(type_offre)
+    periodicite = " / mois" if type_offre == TYPE_OFFRE_ABONNEMENT else " / lead"
 
     pdf = FPDF(format="A4")
     # cp1252 (Windows-1252) plutôt que le strict latin-1 par défaut, pour
@@ -91,7 +128,7 @@ def generer_pdf_devis(lead: dict, intake: dict) -> bytes:
     pdf.cell(0, 9, nom_agence, ln=True)
     pdf.set_x(10)
     pdf.set_font("Helvetica", "", 9)
-    pdf.cell(0, 6, "Devis - Creation de site vitrine + optimisation SEO local")
+    pdf.cell(0, 6, "Devis - Fourniture de leads qualifies")
     pdf.set_text_color(0, 0, 0)
     pdf.set_xy(10, 31)
 
@@ -113,16 +150,18 @@ def generer_pdf_devis(lead: dict, intake: dict) -> bytes:
     pdf.multi_cell(
         0, 6,
         f"Client : {lead.get('company', '')}\n"
-        f"Description du projet : {intake.get('description', '')}\n\n"
-        f"Prestation : Création de site vitrine + optimisation SEO local (Done For You)\n"
-        f"Montant : {CONTRACT_AMOUNT_EUR:.2f} EUR TTC",
+        f"Corps de métier : {intake.get('corps_metier', '') or '—'}\n"
+        f"Zone d'intervention : {intake.get('zone_activite', '') or '—'}\n"
+        f"Description de l'activité : {intake.get('description', '')}\n\n"
+        f"Prestation : {libelle}\n"
+        f"Montant : {montant_eur:.2f} EUR TTC{periodicite}",
         new_x=XPos.LMARGIN, new_y=YPos.NEXT,
     )
     pdf.ln(2)
 
     # --- Corps des CGV B2C ---
     titre_section("Conditions générales de prestation")
-    for titre, corps in construire_articles_cgv_b2c(agence):
+    for titre, corps in construire_articles_cgv_b2c(agence, type_offre):
         pdf.set_x(10)
         pdf.set_font("Helvetica", "B", 9.5)
         pdf.multi_cell(0, 5, titre, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
@@ -225,11 +264,13 @@ def envoyer_contrat_signature(lead: dict, intake: dict) -> bool:
         log.error(f"Réponse Yousign inattendue (JSON invalide/champ manquant) pour {lead_id} : {e}")
         return False
 
+    type_offre = normaliser_type_offre(intake.get("type_offre"))
     supabase.table("contracts").insert({
         "lead_id": lead_id,
         "yousign_request_id": signature_request_id,
         "yousign_status": "envoye",
-        "montant_centimes": int(CONTRACT_AMOUNT_EUR * 100),
+        "type_offre": type_offre,
+        "montant_centimes": montant_centimes_pour_offre(type_offre),
     }).execute()
     supabase.table("leads").update({"status": "contrat_envoye"}).eq("id", lead_id).execute()
     log.info(f"Contrat envoyé en signature à {lead['email']} (Yousign id={signature_request_id})")
@@ -249,16 +290,25 @@ def creer_et_envoyer_lien_paiement(lead_id: str, contract_id: str) -> bool:
         return False
     lead = leads[0]
     contrat = contrats[0]
+    type_offre = normaliser_type_offre(contrat.get("type_offre"))
+    nom_produit = f"{libelle_prestation(type_offre)} — {lead.get('company', '')}"
 
     try:
-        prix = stripe.Price.create(
-            unit_amount=contrat["montant_centimes"],
-            currency="eur",
-            product_data={"name": f"Prestation Done For You — {lead.get('company', '')}"},
-        )
+        parametres_prix = {
+            "unit_amount": contrat["montant_centimes"],
+            "currency": "eur",
+            "product_data": {"name": nom_produit},
+        }
+        if type_offre == TYPE_OFFRE_ABONNEMENT:
+            # Abonnement mensuel à volume inclus : prix Stripe récurrent —
+            # le lien de paiement devient alors une souscription (facturée
+            # chaque mois), pas un paiement unique comme pour la formule
+            # "à l'unité" ci-dessous.
+            parametres_prix["recurring"] = {"interval": "month"}
+        prix = stripe.Price.create(**parametres_prix)
         lien = stripe.PaymentLink.create(
             line_items=[{"price": prix.id, "quantity": 1}],
-            metadata={"lead_id": lead_id, "contract_id": contract_id},
+            metadata={"lead_id": lead_id, "contract_id": contract_id, "type_offre": type_offre},
         )
     except stripe.error.StripeError as e:
         log.error(f"Erreur création lien de paiement Stripe pour {lead_id} : {e}")
@@ -271,8 +321,8 @@ def creer_et_envoyer_lien_paiement(lead_id: str, contract_id: str) -> bool:
 
     corps = (
         f"Bonjour,\n\nVotre contrat est bien signé, merci !\n\n"
-        f"Pour lancer la production, voici votre lien de paiement sécurisé :\n{lien.url}\n\n"
-        f"Dès le paiement reçu, on démarre immédiatement.\n\nCordialement"
+        f"Pour activer votre offre, voici votre lien de paiement sécurisé :\n{lien.url}\n\n"
+        f"Dès le paiement reçu, l'envoi de vos leads démarre immédiatement.\n\nCordialement"
     )
     if send_email_prospect(
         lead["email"], f"Contrat signé — lien de paiement {lead.get('company', '')}", corps, lead_id=lead_id

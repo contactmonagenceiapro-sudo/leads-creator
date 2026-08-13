@@ -35,8 +35,8 @@ import streamlit as st
 from fpdf import FPDF
 
 from alertes import alerter_blocage_compte_zoho, est_blocage_compte_zoho
-from contrats_signature import CONTRACT_AMOUNT_EUR, generer_pdf_devis
-from generation_contrats import COULEUR_ACCENT, COULEUR_GRIS, COULEUR_PRIMAIRE, COULEUR_TEXTE_CLAIR
+from contrats_signature import generer_pdf_devis, libelle_prestation, montant_centimes_pour_offre, normaliser_type_offre
+from generation_contrats import COULEUR_ACCENT, COULEUR_GRIS, COULEUR_PRIMAIRE, COULEUR_TEXTE_CLAIR, TYPE_OFFRE_ABONNEMENT
 from supabase_client import supabase
 
 log = logging.getLogger(__name__)
@@ -109,13 +109,15 @@ def envoyer_contrat_signature_interne(lead: dict, intake: dict) -> bool:
     lead_id = lead["id"]
     token = secrets.token_urlsafe(32)
 
+    type_offre = normaliser_type_offre(intake.get("type_offre"))
     try:
         supabase.table("contracts").insert({
             "lead_id": lead_id,
             "signature_provider": "interne",
             "signature_token": token,
             "yousign_status": "a_envoyer",
-            "montant_centimes": int(CONTRACT_AMOUNT_EUR * 100),
+            "type_offre": type_offre,
+            "montant_centimes": montant_centimes_pour_offre(type_offre),
         }).execute()
     except Exception as e:
         log.error(f"Erreur création du contrat (signature interne) pour {lead_id} : {e}")
@@ -126,8 +128,8 @@ def envoyer_contrat_signature_interne(lead: dict, intake: dict) -> bool:
         f"Voici votre devis pour {lead.get('company', 'votre entreprise')} — merci de le "
         f"consulter et de le valider en ligne (2 minutes, aucune installation requise) :\n\n"
         f"{_lien_signature(token)}\n\n"
-        f"Dès validation, nous revenons vers vous avec le lien de paiement pour lancer la "
-        f"production.\n\nCordialement"
+        f"Dès validation, nous revenons vers vous avec le lien de paiement pour activer "
+        f"votre offre.\n\nCordialement"
     )
     if not send_email_prospect(lead["email"], f"Votre devis {lead.get('company', '')}", corps, lead_id=lead_id):
         log.error(f"Échec envoi du lien de signature interne à {lead['email']}")
@@ -191,13 +193,17 @@ def construire_pdf_preuve(contrat: dict, lead: dict, intake: dict, signed_at_aff
     pdf.set_text_color(0, 0, 0)
     pdf.set_xy(10, 28)
 
+    type_offre = normaliser_type_offre(contrat.get("type_offre"))
+    periodicite = " / mois" if type_offre == TYPE_OFFRE_ABONNEMENT else " / lead"
     pdf.set_font("Helvetica", "", 11)
     pdf.multi_cell(
         0, 7,
         f"Client : {lead.get('company', '')}\n"
-        f"Description du projet : {intake.get('description', '')}\n\n"
-        f"Prestation : Creation de site vitrine + optimisation SEO local (Done For You)\n"
-        f"Montant : {(contrat.get('montant_centimes') or 0) / 100:.2f} EUR TTC\n",
+        f"Corps de metier : {intake.get('corps_metier', '') or '-'}\n"
+        f"Zone d'intervention : {intake.get('zone_activite', '') or '-'}\n"
+        f"Description de l'activite : {intake.get('description', '')}\n\n"
+        f"Prestation : {libelle_prestation(type_offre)}\n"
+        f"Montant : {(contrat.get('montant_centimes') or 0) / 100:.2f} EUR TTC{periodicite}\n",
     )
     pdf.ln(4)
 

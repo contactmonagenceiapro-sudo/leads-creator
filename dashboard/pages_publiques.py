@@ -22,8 +22,15 @@ from pathlib import Path
 
 import streamlit as st
 
-from contrats_signature import envoyer_contrat_signature, generer_pdf_devis
+from contrats_signature import envoyer_contrat_signature, generer_pdf_devis, libelle_prestation, normaliser_type_offre
 from alertes import alerter_discord
+from generation_contrats import (
+    PRIX_ABONNEMENT_MENSUEL_EUR,
+    PRIX_LEAD_UNITE_EUR,
+    TYPE_OFFRE_ABONNEMENT,
+    TYPE_OFFRE_UNITE,
+    VOLUME_LEADS_ABONNEMENT,
+)
 from signature_interne import enregistrer_signature, envoyer_contrat_signature_interne, get_contrat_par_token
 from supabase_client import supabase
 
@@ -87,7 +94,11 @@ def _get_campagne_active_par_slug(slug: str) -> str | None:
 
 def afficher_presentation(lead_id: str | None) -> None:
     """Page publique consultée directement par l'artisan depuis son email —
-    présente l'offre Done For You personnalisée."""
+    présente l'offre réelle : apport de leads qualifiés (demandes de devis
+    de particuliers/professionnels dans sa zone d'activité), pas une
+    refonte de site vitrine — voir lead_worker.py::generer_pitch(), déjà
+    aligné sur ce modèle, et le diagnostic du 2026-08-14 qui a identifié
+    que cette page (et tout le tunnel en aval) ne l'était pas."""
     if not lead_id:
         st.error("Lien invalide : identifiant manquant.")
         return
@@ -100,7 +111,7 @@ def afficher_presentation(lead_id: str | None) -> None:
     company = lead.get("company") or "votre entreprise"
     pitch = lead.get("pitch_commercial") or lead.get("weakness") or ""
 
-    st.title(f"{AGENCY_NAME} — Votre projet clé en main")
+    st.title(f"{AGENCY_NAME} — Des clients qualifiés, sans prospection")
     with st.container(border=True):
         st.markdown(f"Bonjour **{company}**,")
         st.write(pitch)
@@ -108,22 +119,26 @@ def afficher_presentation(lead_id: str | None) -> None:
     st.subheader("Ce qui est inclus, sans aucune action technique de votre part :")
     with st.container(border=True):
         st.markdown(
-            "✅ Refonte complète de votre site vitrine  \n"
-            "✅ Optimisation de votre fiche Google Maps / SEO local  \n"
-            "✅ Capture des demandes de devis directement sur le site  \n"
+            "✅ Des demandes de devis réelles, de particuliers/professionnels intéressés "
+            "par vos prestations  \n"
+            "✅ Ciblées sur votre corps de métier et votre zone d'intervention  \n"
+            f"✅ Au choix : à l'unité ({PRIX_LEAD_UNITE_EUR:.0f} € TTC/lead) ou en "
+            f"abonnement mensuel ({VOLUME_LEADS_ABONNEMENT} leads inclus, "
+            f"{PRIX_ABONNEMENT_MENSUEL_EUR:.0f} € TTC/mois)  \n"
             "✅ Aucun appel, aucune compétence technique requise de votre côté"
         )
 
-    st.link_button("Démarrer mon projet (2 minutes) →", f"?vue=intake&lead_id={lead_id}", type="primary")
+    st.link_button("Démarrer (2 minutes) →", f"?vue=intake&lead_id={lead_id}", type="primary")
     st.caption(f"{AGENCY_NAME} — réponse par email uniquement.")
 
 
 def afficher_intake(lead_id: str | None) -> None:
-    """Formulaire asynchrone de collecte du contenu nécessaire à la
-    production du site (aucun appel : tout est déclaratif, par écrit).
-    Déclenche la génération du devis PDF + l'envoi en signature électronique
-    dès la soumission (interne par défaut, Yousign en option — voir
-    SIGNATURE_PROVIDER)."""
+    """Formulaire asynchrone de qualification du Client (aucun appel : tout
+    est déclaratif, par écrit) — corps de métier, zone d'intervention et
+    choix de la formule (à l'unité ou abonnement), pour lancer l'envoi de
+    leads qualifiés. Déclenche la génération du devis PDF + l'envoi en
+    signature électronique dès la soumission (interne par défaut, Yousign
+    en option — voir SIGNATURE_PROVIDER)."""
     if not lead_id:
         st.error("Lien invalide : identifiant manquant.")
         return
@@ -139,13 +154,13 @@ def afficher_intake(lead_id: str | None) -> None:
         st.title("Merci, c'est enregistré !")
         with st.container(border=True):
             st.write(
-                "Nous avons bien reçu toutes les informations. On prépare votre site et "
+                "Nous avons bien reçu vos informations. On prépare votre devis et "
                 "on revient vers vous par email dès qu'il y a du nouveau — toujours sans appel."
             )
         return
 
     company = lead.get("company") or "votre entreprise"
-    st.title(f"Démarrons votre projet, {company}")
+    st.title(f"Démarrons, {company}")
     st.write("Ce formulaire remplace tout appel téléphonique : remplissez-le à votre rythme.")
 
     # max_chars sur chaque champ : ce formulaire est public et non authentifié,
@@ -155,21 +170,21 @@ def afficher_intake(lead_id: str | None) -> None:
         description = st.text_area(
             "Décrivez votre activité en quelques phrases", height=120, max_chars=3000,
         )
+        corps_metier = st.text_input(
+            "Votre corps de métier", placeholder="Ex : Plombier, Électricien, Menuisier...", max_chars=200,
+        )
         zone_activite = st.text_input(
             "Zone d'intervention (villes/rayon)", placeholder="Ex : Reims et 30km alentour", max_chars=300,
         )
-        lien_photos = st.text_input(
-            "Lien vers vos photos (Google Drive, WeTransfer...)", placeholder="https://...", max_chars=500,
-        )
-        lien_site_actuel = st.text_input(
-            "Lien de votre site actuel (si vous en avez un)", placeholder="https://...", max_chars=500,
-        )
-        lien_gbp = st.text_input(
-            "Lien de votre fiche Google Maps / Google Business Profile", placeholder="https://...", max_chars=500,
-        )
-        telephone_public = st.text_input(
-            "Téléphone à afficher publiquement sur le site (pas pour vous appeler)",
-            placeholder="0X XX XX XX XX", max_chars=50,
+        type_offre = st.radio(
+            "Formule souhaitée",
+            options=[TYPE_OFFRE_UNITE, TYPE_OFFRE_ABONNEMENT],
+            format_func=lambda v: (
+                f"À l'unité — {PRIX_LEAD_UNITE_EUR:.0f} € TTC par lead livré"
+                if v == TYPE_OFFRE_UNITE
+                else f"Abonnement mensuel — {VOLUME_LEADS_ABONNEMENT} leads inclus, "
+                     f"{PRIX_ABONNEMENT_MENSUEL_EUR:.0f} € TTC/mois"
+            ),
         )
         st.caption(f"En envoyant ce formulaire, vous acceptez notre [{LIBELLE_LIEN_CONFIDENTIALITE}]({LIEN_CONFIDENTIALITE}).")
         envoyer = st.form_submit_button("Envoyer", type="primary", use_container_width=True)
@@ -179,15 +194,16 @@ def afficher_intake(lead_id: str | None) -> None:
     if not description.strip():
         st.warning("Merci de décrire votre activité avant d'envoyer.")
         return
+    if not corps_metier.strip():
+        st.warning("Merci de renseigner votre corps de métier avant d'envoyer.")
+        return
 
     payload = {
         "lead_id": lead_id,
         "description": description,
+        "corps_metier": corps_metier,
         "zone_activite": zone_activite,
-        "lien_photos": lien_photos,
-        "lien_site_actuel": lien_site_actuel,
-        "lien_gbp": lien_gbp,
-        "telephone_public": telephone_public,
+        "type_offre": type_offre,
     }
     try:
         supabase.table("intake_responses").insert(payload).execute()
@@ -252,12 +268,16 @@ def afficher_signature(token: str | None) -> None:
 
     intake = _get_intake(contrat["lead_id"])
     pdf_bytes = generer_pdf_devis(lead, intake)
+    type_offre = normaliser_type_offre(contrat.get("type_offre") or intake.get("type_offre"))
+    periodicite = " / mois" if type_offre == TYPE_OFFRE_ABONNEMENT else " / lead"
 
     st.title(f"Votre devis — {lead.get('company') or ''}")
     with st.container(border=True):
-        st.write(f"Description du projet : {intake.get('description', '') or '—'}")
-        st.write("Prestation : Création de site vitrine + optimisation SEO local (Done For You)")
-        st.markdown(f"**Montant : {(contrat.get('montant_centimes') or 0) / 100:.2f} € TTC**")
+        st.write(f"Corps de métier : {intake.get('corps_metier', '') or '—'}")
+        st.write(f"Zone d'intervention : {intake.get('zone_activite', '') or '—'}")
+        st.write(f"Description de l'activité : {intake.get('description', '') or '—'}")
+        st.write(f"Prestation : {libelle_prestation(type_offre)}")
+        st.markdown(f"**Montant : {(contrat.get('montant_centimes') or 0) / 100:.2f} € TTC{periodicite}**")
     st.download_button(
         "⬇️ Télécharger le devis en PDF", data=pdf_bytes,
         file_name=f"devis_{contrat['id']}.pdf", mime="application/pdf",

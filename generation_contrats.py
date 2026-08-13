@@ -78,12 +78,25 @@ GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR = {
     "maitre_oeuvre": 50,
 }
 
-# Même variable d'environnement que dashboard/contrats_signature.py::CONTRACT_AMOUNT_EUR
-# (même défaut 990€) — lue indépendamment ici plutôt qu'importée depuis ce
-# module dashboard, pour ne jamais faire dépendre generation_contrats.py
-# (pure logique juridique/mise en page, sans Streamlit) d'un fichier de la
-# couche présentation.
-MONTANT_PRESTATION_B2C_EUR = float(os.getenv("CONTRACT_AMOUNT_EUR", "990"))
+# Tarification B2C (vente de leads aux artisans, table `leads`) — deux
+# formules au choix du Client à l'intake (voir dashboard/pages_publiques.py
+# ::afficher_intake) : paiement à l'unité (comme le B2B, cf.
+# GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR ci-dessus) ou abonnement mensuel à volume
+# inclus. VALEURS PLACEHOLDER — montants définitifs non encore fixés par
+# l'agence : à ajuster ici (ou via les variables d'environnement du même nom)
+# avant toute mise en production réelle. Remplace MONTANT_PRESTATION_B2C_EUR
+# (990€, prix de l'ancienne prestation "site vitrine" erronée — voir
+# diagnostic du 2026-08-14).
+PRIX_LEAD_UNITE_EUR = float(os.getenv("PRIX_LEAD_UNITE_EUR", "45"))
+PRIX_ABONNEMENT_MENSUEL_EUR = float(os.getenv("PRIX_ABONNEMENT_MENSUEL_EUR", "490"))
+VOLUME_LEADS_ABONNEMENT = int(os.getenv("VOLUME_LEADS_ABONNEMENT", "15"))
+
+# Valeurs acceptées pour intake_responses.type_offre / contracts.type_offre
+# (voir sql/init_intake_responses_leads_b2c.sql) — un seul point de vérité
+# pour ces deux littéraux, réutilisé par construire_articles_cgv_b2c()
+# ci-dessous et par dashboard/contrats_signature.py.
+TYPE_OFFRE_UNITE = "unite"
+TYPE_OFFRE_ABONNEMENT = "abonnement"
 
 
 def aide_memoire_prix(types_acteur_cibles: list[dict] | None) -> str:
@@ -212,24 +225,31 @@ def construire_articles_cgv(agence: dict) -> list[tuple[str, str]]:
     ]
 
 
-def construire_articles_cgv_b2c(agence: dict) -> list[tuple[str, str]]:
+def construire_articles_cgv_b2c(agence: dict, type_offre: str) -> list[tuple[str, str]]:
     """Conditions Générales de Prestation (CGV) — cadre B2C, applicable au
     devis signé électroniquement dans le tunnel artisan (voir
     dashboard/contrats_signature.py::generer_pdf_devis). Même structure et
-    même ton que construire_articles_cgv (B2B) ci-dessus, mais adaptée à une
-    prestation concrète et unique — création de site vitrine + optimisation
-    SEO local, Done For You (voir le libellé de prestation déjà utilisé dans
-    generer_pdf_devis) — plutôt qu'à une notion de "lead qualifié" B2B qui
-    n'a pas de sens ici : dans ce tunnel, le Client EST l'artisan qui achète
-    la prestation, pas un lead qui lui est livré.
+    même ton que construire_articles_cgv (B2B) ci-dessus : la prestation
+    réelle est la VENTE DE LEADS (demandes de devis qualifiées de
+    particuliers/professionnels, dans la zone et le corps de métier du
+    Client), exactement comme côté B2B (leads_professionnels) — pas la
+    création de site vitrine de l'ancienne version de ce module (voir
+    diagnostic du 2026-08-14).
 
-    La logique de statut SIRET (agence["siret_statut"]) est volontairement
+    `type_offre` (TYPE_OFFRE_UNITE ou TYPE_OFFRE_ABONNEMENT, voir
+    intake_responses.type_offre) détermine le prix et le mode de livraison
+    décrits aux articles 2 et 5 ; toute autre valeur (donnée manquante/
+    corrompue) retombe silencieusement sur TYPE_OFFRE_UNITE plutôt que de
+    faire échouer la génération du devis.
+
+    La logique de statut SIRET (agence["siret_statut"]) reste volontairement
     DUPLIQUÉE depuis construire_articles_cgv plutôt que factorisée : même
     principe que SCORES_TRANCHE_EFFECTIF dans scorer_leads.py — B2B et B2C
     restent deux segments commerciaux indépendants, qui ne doivent jamais
     dépendre l'un de l'autre au niveau du code, même pour une clause au
     contenu proche."""
     nom = agence.get("nom") or DEFAULTS_AGENCE["nom"]
+    abonnement = type_offre == TYPE_OFFRE_ABONNEMENT
 
     if agence.get("siret_statut") == "definitif" and agence.get("siret_numero", "").strip():
         texte_statut = (
@@ -244,57 +264,75 @@ def construire_articles_cgv_b2c(agence: dict) -> list[tuple[str, str]]:
             "cette phase transitoire."
         )
 
+    if abonnement:
+        texte_contenu = (
+            f"La prestation consiste en la mise à disposition du Client de demandes de "
+            f"devis qualifiées (« leads »), correspondant au corps de métier et à la zone "
+            f"d'intervention déclarés au présent devis, livrées au fil de l'eau à mesure de "
+            f"leur qualification. Dans la formule « abonnement », le Client bénéficie d'un "
+            f"volume de {VOLUME_LEADS_ABONNEMENT} leads inclus par mois civil pour le prix "
+            f"forfaitaire fixé à l'article 5 ; les leads non consommés sur un mois donné ne "
+            f"sont ni reportés ni remboursés le mois suivant."
+        )
+        texte_prix = (
+            f"Le prix de la prestation, dans la formule « abonnement », est fixé à "
+            f"{PRIX_ABONNEMENT_MENSUEL_EUR:.2f} € TTC par mois pour un volume de "
+            f"{VOLUME_LEADS_ABONNEMENT} leads inclus, payable mensuellement d'avance à "
+            f"compter de la signature du présent devis. L'abonnement est reconduit "
+            f"tacitement chaque mois ; le Client peut y mettre fin à tout moment, sans "
+            f"pénalité, l'arrêt prenant effet à l'échéance mensuelle en cours."
+        )
+    else:
+        texte_contenu = (
+            "La prestation consiste en la mise à disposition du Client de demandes de "
+            "devis qualifiées (« leads »), correspondant au corps de métier et à la zone "
+            "d'intervention déclarés au présent devis, livrées au fil de l'eau à mesure de "
+            "leur qualification. Dans la formule « à l'unité », chaque lead livré fait "
+            "l'objet d'une facturation individuelle au tarif fixé à l'article 5 ; aucun "
+            "volume ni fréquence de livraison n'est garanti sur une période donnée."
+        )
+        texte_prix = (
+            f"Le prix de la prestation, dans la formule « à l'unité », est fixé à "
+            f"{PRIX_LEAD_UNITE_EUR:.2f} € TTC par lead livré, tel qu'indiqué au présent "
+            f"devis, facturé et payable à chaque livraison. Le présent devis est conclu "
+            f"pour une durée indéterminée et peut être résilié à tout moment par le "
+            f"Client, sans engagement de volume minimum."
+        )
+
     return [
         (
             "Article 1 - Objet et champ d'application",
             f"Les présentes Conditions Générales de Prestation régissent la prestation de "
-            f"création de site internet vitrine et d'optimisation du référencement local "
-            f"(SEO), fournie par {nom} (« l'Agence ») au client artisan ou professionnel du "
-            f"bâtiment signataire du présent devis (« le Client »). Les informations "
-            f"particulières figurant au présent devis (description du projet, montant) "
-            f"complètent les présentes CGV et prévalent en cas de contradiction entre les "
-            f"deux documents.",
+            f"mise en relation commerciale par la fourniture de demandes de devis "
+            f"qualifiées (« leads ») de particuliers et professionnels intéressés par les "
+            f"prestations du Client, dans sa zone d'activité, fournie par {nom} (« l'Agence ») "
+            f"au client artisan ou professionnel du bâtiment signataire du présent devis "
+            f"(« le Client »). Les informations particulières figurant au présent devis "
+            f"(corps de métier, zone d'intervention, type d'offre choisi) complètent les "
+            f"présentes CGV et prévalent en cas de contradiction entre les deux documents.",
         ),
-        (
-            "Article 2 - Contenu de la prestation",
-            "La prestation comprend la création d'un site internet vitrine adapté à "
-            "l'activité du Client ainsi qu'une optimisation de son référencement local — à "
-            "l'exclusion de toute prestation complémentaire non expressément mentionnée au "
-            "présent devis (campagne publicitaire payante, rédaction de contenu au-delà du "
-            "socle du site, maintenance au-delà de la période convenue). Le périmètre exact "
-            "est précisé dans la description du projet figurant au présent document ; toute "
-            "évolution substantielle fait l'objet d'un accord écrit complémentaire.",
-        ),
+        ("Article 2 - Contenu de la prestation", texte_contenu),
         (
             "Article 3 - Obligation de moyens",
-            "L'Agence met en œuvre tous les moyens raisonnables (techniques et "
-            "méthodologiques) pour livrer un site internet fonctionnel et une optimisation "
-            "du référencement local conforme aux bonnes pratiques en vigueur. Les parties "
-            "reconnaissent expressément que l'Agence est tenue à une obligation de moyens et "
-            "non de résultat : elle ne garantit ni un positionnement précis dans les "
-            "résultats de recherche, ni un volume de trafic ou de contacts entrants générés "
-            "par le site.",
+            "L'Agence met en œuvre tous les moyens raisonnables (sourcing, qualification) "
+            "pour identifier et transmettre au Client des demandes de devis correspondant "
+            "au corps de métier et à la zone d'intervention déclarés au présent devis. Les "
+            "parties reconnaissent expressément que l'Agence est tenue à une obligation de "
+            "moyens et non de résultat : elle ne garantit ni un volume précis de leads sur "
+            "une période donnée, ni la transformation commerciale effective (signature, "
+            "vente) des leads livrés au Client.",
         ),
         (
-            "Article 4 - Délai de réclamation et garantie de reprise",
-            "Toute réclamation relative à la prestation livrée (dysfonctionnement du site, "
-            "non-conformité au périmètre convenu à l'article 2) doit être formulée par écrit "
-            "dans un délai de 7 (sept) jours calendaires à compter de la mise en ligne du "
-            "site ; passé ce délai, la prestation est réputée conforme et définitivement "
-            "acceptée. Pour toute réclamation recevable et formulée dans les délais, "
-            "l'Agence propose, à son choix, la correction du dysfonctionnement signalé ou "
-            "l'émission d'un avoir commercial d'un montant correspondant, à l'exclusion de "
-            "toute autre indemnisation.",
+            "Article 4 - Délai de réclamation et garantie de remplacement",
+            "Toute réclamation relative à un lead livré (contact invalide, hors zone "
+            "d'intervention ou corps de métier convenu) doit être formulée par écrit dans "
+            "un délai de 7 (sept) jours calendaires à compter de sa livraison ; passé ce "
+            "délai, le lead est réputé conforme et définitivement accepté. Pour toute "
+            "réclamation recevable et formulée dans les délais, l'Agence propose, à son "
+            "choix, le remplacement du lead ou l'émission d'un avoir commercial d'un "
+            "montant correspondant, à l'exclusion de toute autre indemnisation.",
         ),
-        (
-            "Article 5 - Prix, paiement et durée",
-            f"Le prix de la prestation est fixé à {MONTANT_PRESTATION_B2C_EUR:.2f} € TTC, "
-            f"tel qu'indiqué au présent devis, payable selon les modalités communiquées au "
-            f"Client après validation du présent document. La prestation est réputée "
-            f"achevée à la mise en ligne du site internet et à la mise en place du "
-            f"référencement local convenu, sauf prestation complémentaire expressément "
-            f"convenue entre les parties.",
-        ),
+        ("Article 5 - Prix, paiement et durée", texte_prix),
         (
             "Article 6 - Confidentialité et données personnelles",
             "Chaque partie s'engage à garder confidentielles les informations commerciales "
@@ -308,10 +346,10 @@ def construire_articles_cgv_b2c(agence: dict) -> list[tuple[str, str]]:
             "La responsabilité de l'Agence est limitée au montant effectivement payé au "
             "titre de la prestation, hors faute lourde ou dolosive ; elle ne saurait être "
             "tenue pour responsable des conséquences indirectes résultant de l'utilisation "
-            "du site par le Client, notamment de son exploitation commerciale ou du contenu "
-            "qui y est publié. Les présentes CGV sont soumises au droit français ; tout "
-            "litige non résolu à l'amiable relève de la juridiction compétente du siège "
-            "social de l'Agence.",
+            "des leads par le Client, notamment de leur exploitation commerciale ou du taux "
+            "de transformation obtenu. Les présentes CGV sont soumises au droit français ; "
+            "tout litige non résolu à l'amiable relève de la juridiction compétente du "
+            "siège social de l'Agence.",
         ),
         ("Article 8 - Statut juridique de l'Agence", texte_statut),
         _article_renvoi_cgv_generales(),
