@@ -224,16 +224,27 @@ with tab_pro:
                         key="select_reenrichir", label_visibility="collapsed",
                     )
                 with col_re2:
-                    if st.button("🔄 Ré-enrichir", use_container_width=True):
-                        resultat, err = executer_avec_spinner(
-                            "Recherche de contact en cours (peut prendre jusqu'à 40s)...",
-                            enrichir_lead_pro, options_reenrichir[choix_reenrichir],
-                        )
-                        if err:
-                            st.error(err)
-                        else:
-                            st.success(f"Statut : {resultat['resultat']['enrichissement_statut']}")
-                            st.rerun()
+                    reenrichir_declenche = st.button("🔄 Ré-enrichir", use_container_width=True)
+                forcer_reecriture = st.checkbox(
+                    "Forcer la mise à jour même si déjà rempli",
+                    value=False, key="checkbox_forcer_reecriture",
+                    help=(
+                        "Par défaut, un champ déjà rempli (site web, e-mail, téléphone, LinkedIn...) "
+                        "n'est jamais écrasé, même si le nouveau résultat est différent — protège une "
+                        "donnée déjà vérifiée. À cocher uniquement si tu sais que la valeur actuelle "
+                        "est fausse et veux la remplacer par le nouveau résultat trouvé."
+                    ),
+                )
+                if reenrichir_declenche:
+                    resultat, err = executer_avec_spinner(
+                        "Recherche de contact en cours (peut prendre jusqu'à 40s)...",
+                        enrichir_lead_pro, options_reenrichir[choix_reenrichir], forcer_reecriture,
+                    )
+                    if err:
+                        st.error(err)
+                    else:
+                        st.success(f"Statut : {resultat['resultat']['enrichissement_statut']}")
+                        st.rerun()
 
                 st.divider()
                 st.markdown("###### 📤 Envoi rapide de leads sélectionnés")

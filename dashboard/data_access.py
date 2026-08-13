@@ -298,10 +298,26 @@ def get_leads_pro(client_final: str) -> dict:
     return {"leads_pro": data}
 
 
-def enrichir_lead_pro(lead_pro_id: str) -> dict:
+def enrichir_lead_pro(lead_pro_id: str, forcer_reecriture: bool = False) -> dict:
     """Ré-enrichissement à la demande (admin) — même logique que le pipeline
-    automatique (module 2). Ne remplace jamais une donnée déjà connue par un
-    résultat vide : seuls les champs manquants sont mis à jour."""
+    automatique (module 2).
+
+    Par défaut (forcer_reecriture=False, comportement historique inchangé) :
+    ne remplace jamais une donnée déjà connue par un résultat vide, seuls les
+    champs manquants sont mis à jour — protège une donnée déjà vérifiée
+    manuellement d'un écrasement accidentel par un résultat de moins bonne
+    qualité.
+
+    Ce même garde-fou a un revers resté invisible jusqu'ici : si le champ
+    déjà rempli est FAUX (pas seulement vide), un nouveau résultat CORRECT
+    trouvé par un ré-enrichissement ultérieur était silencieusement ignoré,
+    jamais écrit en base — aucune erreur, aucun log, juste une correction
+    perdue (cas réel : linkedin_url pointant vers la page LinkedIn d'un
+    annuaire source plutôt que vers le professionnel, jamais corrigé malgré
+    plusieurs ré-enrichissements). forcer_reecriture=True lève ce garde-fou
+    explicitement, à la demande de l'utilisateur (case à cocher dédiée côté
+    dashboard, jamais activée par défaut) : écrase alors tout champ pour
+    lequel un nouveau résultat non vide a été trouvé, même déjà rempli."""
     from outbound_chantiers.enrichir_acteurs_pro import enrichir_un_acteur
 
     try:
@@ -316,7 +332,7 @@ def enrichir_lead_pro(lead_pro_id: str) -> dict:
 
     changements = {
         cle: valeur for cle, valeur in resultat.items()
-        if cle != "contact_exploitable" and valeur and not lead_pro.get(cle)
+        if cle != "contact_exploitable" and valeur and (forcer_reecriture or not lead_pro.get(cle))
     }
     changements["enrichissement_statut"] = resultat["enrichissement_statut"]
     changements["enrichi_at"] = datetime.now(timezone.utc).isoformat()
