@@ -111,7 +111,7 @@ TYPE_OFFRE_ABONNEMENT = "abonnement"
 # score réel est disponible), jamais au moment du devis initial — voir
 # dashboard/contrats_signature.py::creer_et_envoyer_lien_paiement, seul
 # endroit où ce montant est réellement calculé et facturé.
-PRIX_LEAD_PREMIUM_EUR = float(os.getenv("PRIX_LEAD_PREMIUM_EUR", "60"))
+PRIX_LEAD_PREMIUM_EUR = float(os.getenv("PRIX_LEAD_PREMIUM_EUR", "65"))
 PRIX_LEAD_STANDARD_EUR = float(os.getenv("PRIX_LEAD_STANDARD_EUR", "45"))
 PRIX_LEAD_BASIQUE_EUR = float(os.getenv("PRIX_LEAD_BASIQUE_EUR", "30"))
 
@@ -173,19 +173,19 @@ FORMULES_ABONNEMENT = [
     {
         "id": "petit",
         "volume": 10,
-        "prix_eur": float(os.getenv("PRIX_ABONNEMENT_PETIT_EUR", "350")),
+        "prix_eur": float(os.getenv("PRIX_ABONNEMENT_PETIT_EUR", "420")),
         "label": "10 leads/mois",
     },
     {
         "id": "moyen",
         "volume": 20,
-        "prix_eur": float(os.getenv("PRIX_ABONNEMENT_MOYEN_EUR", "640")),
+        "prix_eur": float(os.getenv("PRIX_ABONNEMENT_MOYEN_EUR", "760")),
         "label": "20 leads/mois",
     },
     {
         "id": "grand",
         "volume": 30,
-        "prix_eur": float(os.getenv("PRIX_ABONNEMENT_GRAND_EUR", "900")),
+        "prix_eur": float(os.getenv("PRIX_ABONNEMENT_GRAND_EUR", "990")),
         "label": "30 leads/mois",
     },
 ]
