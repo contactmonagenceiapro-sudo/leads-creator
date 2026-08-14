@@ -93,6 +93,20 @@ DOMAINES_A_IGNORER = (
     "e-pro.fr", "monartisan.info", "architectes-pour-tous.fr",
     "lagazettefrance.fr", "findglocal.com", "annuaire-pro-btp.fr",
     "copainsdavant.linternaute.com",
+    # Identifiés le 2026-08-14 (audit pré-lancement + traitement de 7 leads
+    # B2B avec email/linkedin_url erronés, voir sql/fix_linkedin_url_annuaire_2.sql
+    # et _3.sql) : mêmes symptômes que le lot ci-dessus — fiche annuaire
+    # passant page_correspond_bien() donc retenue à tort comme "site
+    # propre". dataprospects.fr/polesocietes.com/libramemoria.com
+    # confirmés sur 6 leads réels (email générique de l'annuaire, pas de
+    # l'acteur) ; captain-archi.fr repéré lors d'un ré-enrichissement
+    # (CLAUDE MOUCHIKINE) et retrouvé sur 4 leads au total dans la base au
+    # moment de cette correction (site_web app.dataprospects.fr/
+    # captain-archi.fr constatés sur plusieurs acteurs sans rapport entre
+    # eux, signature caractéristique d'un domaine tiers plutôt qu'un site
+    # propre à chacun).
+    "dataprospects.fr", "polesocietes.com", "libramemoria.com",
+    "captain-archi.fr",
 )
 NOMBRE_MAX_RESULTATS_EXAMINES = 3
 
