@@ -77,12 +77,11 @@ stats, stats_error = safe_call(get_stats)
 if stats_error:
     st.error(stats_error)
 elif stats:
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     col1.metric("Leads générés", stats.get("leads_total", "—"))
-    col2.metric("Articles générés", stats.get("articles_generes", "—"))
 
     last_report = stats.get("last_ceo_report")
-    with col3:
+    with col2:
         st.markdown("**Dernier rapport du CEO**")
         if isinstance(last_report, dict):
             st.caption(last_report.get("date", ""))

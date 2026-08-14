@@ -55,6 +55,19 @@ RACINE_REPO = Path(__file__).resolve().parent.parent
 
 CACHE_TTL_SECONDES = 30
 
+# Leads de test/démo créés manuellement dans `leads` (jamais de vrais
+# prospects) : __TEST_E2E_TUNNEL__ (id fixe, réutilisé pour dérouler le
+# tunnel de vente à blanc — voir mémoire e2e_tunnel_test_fixture) boucle ses
+# e-mails vers la boîte de l'agence elle-même, ce qui gonflait artificiellement
+# le taux de réponse artisans. Exclus des KPIs/vues admin pour ne jamais
+# fausser une lecture des vraies statistiques (ex: démo, reporting) — jamais
+# supprimés pour autant, ce lead sert toujours à valider le tunnel.
+LEADS_TEST_A_EXCLURE = (
+    "a51d80c8-8363-42a6-87c8-7481911ecc2b",  # __TEST_E2E_TUNNEL__
+    "ce66b08a-e8f4-456b-a3f5-035dccf292cc",  # "entreprise de test"
+    "b45fc2f7-60ff-4871-bb5a-8a514c2fdcc2",  # "test"
+)
+
 
 class DataAccessError(Exception):
     """Erreur levée par les fonctions de ce module — remplace ApiError.
@@ -96,8 +109,10 @@ def get_stats() -> dict:
         # en fait alors une requête HEAD automatiquement — c'est ce qui
         # remplace l'ancien argument select(..., head=True), supprimé dans
         # cette version (une colonne passée déclencherait un GET classique).
-        leads_count = supabase.table("leads").select(count="exact").execute().count or 0
-        articles_count = supabase.table("articles").select(count="exact").execute().count or 0
+        leads_count = (
+            supabase.table("leads").select(count="exact")
+            .not_.in_("id", LEADS_TEST_A_EXCLURE).execute().count or 0
+        )
         reports = (
             supabase.table("ceo_reports")
             .select("*").order("created_at", desc=True).limit(1).execute().data
@@ -106,7 +121,6 @@ def get_stats() -> dict:
         raise DataAccessError(f"Erreur lecture statistiques : {e}") from e
     return {
         "leads_total": leads_count,
-        "articles_generes": articles_count,
         "last_ceo_report": reports[0].get("date") if reports else None,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -123,7 +137,11 @@ def compter_relances_envoyees_depuis(depuis_iso: str) -> int:
     try:
         # Aucune colonne passée à select() : requête HEAD (compte seul, voir
         # get_stats() ci-dessus pour le pourquoi de cette syntaxe).
-        return supabase.table("leads").select(count="exact").gte("last_relance_at", depuis_iso).execute().count or 0
+        return (
+            supabase.table("leads").select(count="exact")
+            .not_.in_("id", LEADS_TEST_A_EXCLURE)
+            .gte("last_relance_at", depuis_iso).execute().count or 0
+        )
     except Exception as e:
         log.error(f"Erreur lecture du nombre de relances envoyées : {e}")
         return 0
@@ -228,6 +246,7 @@ def get_leads(limit: int = 100) -> dict:
     try:
         data = (
             supabase.table("leads").select("*")
+            .not_.in_("id", LEADS_TEST_A_EXCLURE)
             .order("created_at", desc=True).limit(limit).execute().data
         )
     except Exception as e:
@@ -256,7 +275,8 @@ def get_stats_par_zone_artisans() -> dict:
     colonne `commune`, sans toucher à la structure de données existante."""
     try:
         leads = (
-            supabase.table("leads").select("commune,status,contacted,score").execute().data
+            supabase.table("leads").select("commune,status,contacted,score")
+            .not_.in_("id", LEADS_TEST_A_EXCLURE).execute().data
         )
     except Exception as e:
         raise DataAccessError(f"Erreur lecture répartition par zone : {e}") from e
@@ -393,12 +413,34 @@ def signaler_lead_pro_invalide(
 # Campagnes
 # ---------------------------------------------------------------------
 
+# Priorité de statut pour get_campagnes() ci-dessous — INDÉPENDANTE de la date
+# de création : une campagne 'active' doit toujours passer devant, même créée
+# avant un brouillon ou une campagne en_pause plus récente. Un statut absent/
+# inconnu (donnée legacy) reste prioritaire sur un brouillon explicite plutôt
+# que d'être poussé tout en bas par défaut.
+_PRIORITE_STATUT_CAMPAGNE = {"active": 0, "en_pause": 1, "archivee": 2, "brouillon": 3}
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDES)
 def get_campagnes() -> dict:
     try:
         data = supabase.table("campagnes").select("*").order("created_at", desc=True).execute().data
     except Exception as e:
         raise DataAccessError(f"Erreur lecture campagnes : {e}") from e
+    # Tri par PRIORITÉ DE STATUT d'abord (voir _PRIORITE_STATUT_CAMPAGNE),
+    # date de création ensuite au sein d'un même statut (tri stable : l'ordre
+    # obtenu par .order("created_at", desc=True) ci-dessus est préservé à
+    # l'intérieur de chaque groupe). Nécessaire : un tri qui se contentait de
+    # repousser 'brouillon' en dernier laissait un statut 'en_pause' ou
+    # 'archivee' plus récent passer devant une campagne 'active' plus
+    # ancienne — sinon les st.selectbox de gestion_clients.py/
+    # suivi_resultats.py/administration_contrats.py/portail_client.py
+    # (index 0 implicite) peuvent présélectionner une campagne inactive au
+    # lieu de la vraie campagne en cours.
+    data = sorted(
+        data,
+        key=lambda c: _PRIORITE_STATUT_CAMPAGNE.get(c.get("statut"), 1),
+    )
     return {"campagnes": data}
 
 
@@ -565,6 +607,7 @@ def get_taux_reponse() -> dict:
             supabase.table("email_events")
             .select("lead_type,lead_id,client_final,type_evenement")
             .in_("type_evenement", ["envoye", "repondu"])
+            .not_.in_("lead_id", LEADS_TEST_A_EXCLURE)
             .execute()
             .data
         )
