@@ -107,6 +107,25 @@ DOMAINES_A_IGNORER = (
     # propre à chacun).
     "dataprospects.fr", "polesocietes.com", "libramemoria.com",
     "captain-archi.fr",
+    # Identifiés le 2026-08-14, même jour, en repassant en revue tous les
+    # domaines site_web de leads_professionnels : pas des annuaires
+    # d'entreprises à proprement parler, mais le même symptôme (fiche/page
+    # tierce passant page_correspond_bien() par pure coïncidence de nom et
+    # de commune, retenue à tort comme "site propre") — confirmé par
+    # récupération réelle de chaque page avant ajout, pas par simple
+    # supposition sur le nom de domaine :
+    #   - procedurecollective.fr : registre tiers des procédures
+    #     collectives (liquidations/redressements judiciaires), pas le site
+    #     de l'entreprise concernée (ATELIER 6 CS).
+    #   - bricolage.fr : portail/annuaire grand public de magasins de
+    #     bricolage — la fiche retenue pour "NOVA" concernait en réalité un
+    #     tout autre établissement (SIRET différent de celui du lead),
+    #     simple homonymie de nom commercial ("Nova Piscines").
+    #   - theatrelarenaissance.com : site d'un vrai théâtre ("Théâtre de La
+    #     Renaissance"), homonyme du lead "RENAISSANCE" et situé par
+    #     coïncidence dans la même commune (Oullins-Pierre-Bénite) — aucun
+    #     rapport avec le promoteur recherché.
+    "procedurecollective.fr", "bricolage.fr", "theatrelarenaissance.com",
 )
 NOMBRE_MAX_RESULTATS_EXAMINES = 3
 
