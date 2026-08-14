@@ -1,7 +1,6 @@
 import logging
 import os
 import random
-import smtplib
 import time
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
@@ -10,7 +9,7 @@ from email.mime.text import MIMEText
 from dotenv import load_dotenv
 from supabase import create_client
 
-from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, est_blocage_compte_zoho
+from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, envoyer_smtp, est_blocage_compte_zoho
 from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_exploitable
@@ -125,9 +124,7 @@ def send_email_prospect(to_email: str, subject: str, body: str, lead_id: str | N
         msg["Subject"] = f"[{AGENCY_NAME}] {subject}"
         msg.attach(MIMEText(body, "plain", "utf-8"))
 
-        with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as s:
-            s.login(ZOHO_USER, ZOHO_PASSWORD)
-            s.sendmail(ZOHO_USER, to_email, msg.as_string())
+        envoyer_smtp(msg, ZOHO_USER, to_email)
         if lead_id:
             demarrer_tracking("lead_artisan", lead_id)
         return True
@@ -154,9 +151,7 @@ def send_email_internal(rapport: str, stats: dict) -> bool:
             f"<pre>{rapport}</pre></body></html>"
         )
         msg.attach(MIMEText(html, "html"))
-        with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as s:
-            s.login(ZOHO_USER, ZOHO_PASSWORD)
-            s.sendmail(ZOHO_USER, CEO_EMAIL, msg.as_string())
+        envoyer_smtp(msg, ZOHO_USER, CEO_EMAIL)
         log.info(f"Email envoyé à {CEO_EMAIL}")
         return True
     except Exception as e:

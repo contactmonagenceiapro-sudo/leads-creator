@@ -25,7 +25,6 @@ import hashlib
 import logging
 import os
 import secrets
-import smtplib
 from datetime import datetime, timezone
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -34,7 +33,7 @@ from email.mime.text import MIMEText
 import streamlit as st
 from fpdf import FPDF
 
-from alertes import alerter_blocage_compte_zoho, est_blocage_compte_zoho
+from alertes import alerter_blocage_compte_zoho, envoyer_smtp, est_blocage_compte_zoho
 from contrats_signature import (
     generer_pdf_devis,
     libelle_prestation,
@@ -174,9 +173,7 @@ def _envoyer_email_avec_pdf(destinataire: str, sujet: str, corps: str, pdf_bytes
         piece_jointe.add_header("Content-Disposition", "attachment", filename=nom_fichier)
         msg.attach(piece_jointe)
 
-        with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as s:
-            s.login(ZOHO_USER, ZOHO_PASSWORD)
-            s.sendmail(ZOHO_USER, destinataire, msg.as_string())
+        envoyer_smtp(msg, ZOHO_USER, destinataire)
         return True
     except Exception as e:
         log.error(f"Erreur envoi email avec pièce jointe vers {destinataire} : {e}")

@@ -20,6 +20,57 @@ ZOHO_USER = os.getenv("ZOHO_USER", "")
 ZOHO_PASSWORD = os.getenv("ZOHO_PASSWORD", "")
 CEO_EMAIL = os.getenv("CEO_EMAIL", "")
 
+# Mode simulation pour les tests à blanc (ex: rejouer le tunnel de vente sur
+# le lead __TEST_E2E_TUNNEL__) : évite de polluer une vraie boîte mail à
+# chaque run. Absente/"false" en production = comportement inchangé (voir
+# .env.example). Volontairement permissif sur la casse/valeur ("1"/"true"/
+# "vrai"/"oui") : ce genre de flag est presque toujours activé/désactivé à la
+# main par un humain, pas généré par du code.
+DESACTIVER_ENVOI_REEL = os.getenv("DESACTIVER_ENVOI_REEL", "").strip().lower() in ("1", "true", "vrai", "oui")
+
+
+def _apercu_corps(message) -> str:
+    """Extrait un aperçu texte lisible d'un email.message.Message déjà
+    construit (MIMEText simple ou MIMEMultipart avec parties text/plain,
+    text/html et/ou pièces jointes) — uniquement pour le log en mode dry-run
+    (voir envoyer_smtp ci-dessous), jamais utilisé pour l'envoi réel."""
+    for content_type in ("text/plain", "text/html"):
+        for partie in message.walk():
+            if partie.get_content_type() == content_type:
+                try:
+                    charset = partie.get_content_charset() or "utf-8"
+                    return partie.get_payload(decode=True).decode(charset, errors="replace")
+                except Exception:
+                    return str(partie.get_payload())
+    return str(message.get_payload())
+
+
+def envoyer_smtp(message, expediteur: str, destinataire) -> None:
+    """Point d'envoi SMTP UNIQUE (compte Zoho partagé) — remplace l'appel
+    direct à smtplib.SMTP_SSL, jusqu'ici dupliqué indépendamment dans
+    ceo_agent.py (x2), outbound_chantiers/outbound_pro_btp.py et
+    dashboard/signature_interne.py. `message` doit déjà être entièrement
+    construit (From/To/Subject/corps/pièces jointes) par l'appelant — cette
+    fonction ne fait QUE le login + sendmail, rien d'autre ne change dans le
+    contenu envoyé selon l'appelant.
+
+    Si DESACTIVER_ENVOI_REEL est actif, n'envoie RIEN : logue seulement
+    destinataire/sujet/aperçu du corps et renvoie — aucun appel réseau, donc
+    aucun email réel ne part. Ne catche aucune exception (comportement
+    identique à l'ancien appel direct à smtplib) : c'est TOUJOURS à
+    l'appelant de gérer l'échec (ex: détecter un blocage du compte Zoho via
+    est_blocage_compte_zoho ci-dessous), exactement comme avant."""
+    if DESACTIVER_ENVOI_REEL:
+        log.info(
+            f"[DRY-RUN — DESACTIVER_ENVOI_REEL=true, rien envoyé] "
+            f"À : {destinataire} — Sujet : {message.get('Subject', '?')}\n"
+            f"{_apercu_corps(message)}"
+        )
+        return
+    with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as serveur:
+        serveur.login(ZOHO_USER, ZOHO_PASSWORD)
+        serveur.sendmail(expediteur, destinataire, message.as_string())
+
 
 def alerter_discord(message: str) -> None:
     if not DISCORD_WEBHOOK_URL:
@@ -81,8 +132,6 @@ def envoyer_alerte_email(sujet: str, corps: str) -> None:
         message["Subject"] = sujet
         message["From"] = ZOHO_USER
         message["To"] = CEO_EMAIL
-        with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as serveur:
-            serveur.login(ZOHO_USER, ZOHO_PASSWORD)
-            serveur.sendmail(ZOHO_USER, CEO_EMAIL, message.as_string())
+        envoyer_smtp(message, ZOHO_USER, CEO_EMAIL)
     except smtplib.SMTPException as e:
         log.error(f"Échec envoi alerte e-mail : {e}")

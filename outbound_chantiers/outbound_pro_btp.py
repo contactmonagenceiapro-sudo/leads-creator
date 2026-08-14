@@ -32,7 +32,7 @@ from email.mime.text import MIMEText
 
 import requests
 
-from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, est_blocage_compte_zoho
+from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, envoyer_smtp, est_blocage_compte_zoho
 from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_exploitable
@@ -135,9 +135,7 @@ def envoyer_email(destinataire: str, sujet: str, corps: str, lead_id: str | None
         if lead_id:
             demarrer_tracking("lead_professionnel", lead_id, client_final=CLIENT_FINAL)
 
-        with smtplib.SMTP_SSL("smtp.zoho.eu", 465) as serveur:
-            serveur.login(ZOHO_USER, ZOHO_PASSWORD)
-            serveur.sendmail(ZOHO_USER, [destinataire], message.as_string())
+        envoyer_smtp(message, ZOHO_USER, [destinataire])
         return True
     except smtplib.SMTPException as e:
         log.error(f"Échec d'envoi à {destinataire} : {e}")
