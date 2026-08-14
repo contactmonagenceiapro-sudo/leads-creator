@@ -1,0 +1,40 @@
+-- URGENT — corrige une exposition publique active : `leads` (615 lignes,
+-- données personnelles : noms, emails, scores) et `kpis` étaient les deux
+-- seules tables du projet sans RLS activé — lisibles intégralement via la
+-- clé "anon" publique (celle publiée en clair dans
+-- landing/supabase-client.js, donc accessible à quiconque consulte le code
+-- source d'une page publique de l'espace Artisans). Audit du 2026-08-14.
+--
+-- Mécanisme retenu — cohérent avec les autres tables déjà protégées
+-- (leads_professionnels, intake_responses, contracts, campagnes,
+-- utilisateurs_dashboard, agence_config, email_events : confirmé lors de
+-- l'audit qu'aucune n'est lisible via la clé anon, alors qu'AUCUNE d'elles
+-- non plus n'a de CREATE POLICY versionnée quelque part dans sql/) :
+--
+--   ENABLE ROW LEVEL SECURITY sans AUCUNE politique = accès refusé par
+--   défaut à TOUS les rôles Postgres soumis au RLS (anon, authenticated),
+--   sauf au propriétaire de la table et au rôle service_role, qui
+--   contourne intégralement le RLS par conception Supabase (voir
+--   https://supabase.com/docs/guides/database/postgres/row-level-security
+--   — "the service_role key ... bypasses Row Level Security").
+--
+-- Le dashboard Streamlit (tout le code de ce dépôt : dashboard/, scripts
+-- racine, outbound_chantiers/) n'accède JAMAIS à Supabase autrement que via
+-- SUPABASE_KEY = la clé service_role (voir dashboard/supabase_client.py) —
+-- jamais via une session "authenticated" Supabase Auth (l'authentification
+-- admin/dashboard est un système JWT maison, table utilisateurs_dashboard,
+-- totalement indépendant des rôles Postgres). Une politique explicite
+-- "réservée aux utilisateurs authentifiés du dashboard" n'aurait donc
+-- techniquement AUCUN effet ici : le dashboard n'utilise jamais le rôle
+-- `authenticated`, et service_role contourne le RLS quoi qu'il arrive.
+-- Ajouter une politique redondante (ex: "for service_role") prêterait à
+-- confusion sans changer le comportement réel — d'où l'absence volontaire
+-- de CREATE POLICY ci-dessous, documentée explicitement plutôt que muette.
+--
+-- Vérifié avant cette migration (aucun accès public légitime cassé) :
+-- landing/ (pages publiques, clé anon côté navigateur) ne référence jamais
+-- les tables `leads` ni `kpis` — seule la table `artisans` y est accédée,
+-- déjà protégée par sa propre politique (sql/init_artisans.sql).
+
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE kpis ENABLE ROW LEVEL SECURITY;
