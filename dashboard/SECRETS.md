@@ -41,7 +41,6 @@ PUBLIC_DASHBOARD_URL = "https://mon-app.streamlit.app"
 
 STRIPE_SECRET_KEY = "sk_live_..."   # ou sk_test_... en mode test
 STRIPE_PUBLIC_KEY = "pk_live_..."
-CONTRACT_AMOUNT_EUR = "990"
 
 # "interne" (défaut) = signature électronique simple maison, sans coût, voir
 # signature_interne.py. "yousign" = repasse sur Yousign (YOUSIGN_API_KEY ci-dessous).

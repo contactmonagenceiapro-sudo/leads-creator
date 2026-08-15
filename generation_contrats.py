@@ -80,6 +80,17 @@ GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR = {
     "maitre_oeuvre": 50,
 }
 
+# Libellés humains pour la grille ci-dessus — mêmes libellés que ceux
+# utilisés dans outbound_chantiers/config.py::_CAMPAGNE_PAR_DEFAUT
+# (types_acteur_cibles), dupliqués ici plutôt qu'importés pour ne pas faire
+# dépendre ce module racine du package B2B outbound_chantiers (même principe
+# que SCORE_NEUTRE_LEAD_B2C plus bas).
+LIBELLE_TYPE_ACTEUR_GRILLE_EUR = {
+    "architecte": "Architectes",
+    "promoteur": "Promoteurs immobiliers",
+    "maitre_oeuvre": "Maîtres d'œuvre",
+}
+
 # Tarification B2C (vente de leads aux artisans, table `leads`) — deux
 # formules au choix du Client à l'intake (voir dashboard/pages_publiques.py
 # ::afficher_intake) : paiement à l'unité (variable selon la qualité du lead
@@ -215,6 +226,21 @@ def aide_memoire_prix(types_acteur_cibles: list[dict] | None) -> str:
         libelle = type_acteur.get("libelle") or cle
         lignes.append(f"{libelle} : {prix} €/lead")
     return " · ".join(lignes)
+
+
+def aide_memoire_grille_complete() -> str:
+    """Rappel de la grille de prix B2B COMPLÈTE (tous les types d'acteur,
+    voir GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR) — contrairement à aide_memoire_prix
+    ci-dessus (scopée aux types_acteur_cibles d'UNE campagne existante), ne
+    dépend d'aucune campagne : toujours affichable, y compris pour un
+    nouveau client en saisie libre (voir administration_contrats.py, où le
+    placeholder "ex. 990 € HT" — chiffre hérité de l'ancien modèle "site
+    vitrine", sans lien avec cette grille — servait jusqu'ici de seul repère
+    de prix dans ce mode, diagnostic du 2026-08-16)."""
+    return " · ".join(
+        f"{LIBELLE_TYPE_ACTEUR_GRILLE_EUR.get(cle, cle)} : {prix} €/lead"
+        for cle, prix in GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR.items()
+    )
 
 
 def _article_renvoi_cgv_generales() -> tuple[str, str]:

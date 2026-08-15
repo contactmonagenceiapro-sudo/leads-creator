@@ -34,6 +34,7 @@ from common import liste_noms_campagnes, safe_call
 from data_access import get_campagnes
 from generation_contrats import (
     DEFAULTS_AGENCE,
+    aide_memoire_grille_complete,
     aide_memoire_prix,
     construire_articles_cgv,
     construire_pdf,
@@ -193,19 +194,25 @@ with col_obj1:
 with col_obj2:
     prix_prestation = st.text_area(
         "Prix de la prestation",
-        placeholder="ex. 990 € HT, ou « Phase de test gratuite »",
+        placeholder="ex. 5 leads × 70 €/lead = 350 € HT (voir grille ci-dessous)",
         height=80,
     )
     # Aide-mémoire uniquement (le prix reste saisi à la main, jamais calculé
-    # automatiquement — voir generation_contrats.aide_memoire_prix) : rappelle
-    # la grille validée pour les types d'acteur ciblés par la campagne
-    # sélectionnée. Rien à afficher pour un nouveau client en saisie libre
-    # (aucune campagne, donc aucun type d'acteur connu) ou une campagne hors
-    # grille B2B (types d'acteur inconnus de GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR).
+    # automatiquement — voir generation_contrats.aide_memoire_prix/
+    # aide_memoire_grille_complete) : la grille COMPLÈTE est toujours
+    # affichée, y compris en "Nouveau client (saisie libre)" où aucune
+    # campagne (donc aucun type d'acteur) n'est encore connue — diagnostic du
+    # 2026-08-16, avant ce correctif seul un placeholder ("ex. 990 € HT",
+    # chiffre hérité de l'ancien modèle "site vitrine" sans lien avec cette
+    # grille) servait de repère dans ce mode, au risque d'un ancrage sur un
+    # montant erroné. Quand une campagne est sélectionnée ET cible des types
+    # d'acteur connus de la grille, un second rappel plus précis (scopé à
+    # cette campagne) complète la grille complète ci-dessus.
+    st.caption(f"📌 Grille tarifaire B2B (par lead livré) : {aide_memoire_grille_complete()}")
     if campagne_selectionnee:
         rappel_prix = aide_memoire_prix(campagne_selectionnee.get("types_acteur_cibles"))
         if rappel_prix:
-            st.caption(f"📌 Grille validée : {rappel_prix}")
+            st.caption(f"📌 Types ciblés par cette campagne : {rappel_prix}")
 
 conditions_particulieres = st.text_area(
     "Conditions particulières (facultatif, une par ligne — en complément des CGV ci-dessous)",
