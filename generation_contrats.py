@@ -287,13 +287,29 @@ def construire_articles_cgv(agence: dict) -> list[tuple[str, str]]:
         ),
         (
             "Article 4 - Delai de reclamation et garantie de remplacement",
-            "Toute reclamation relative a un lead livre (contact invalide, hors perimetre "
-            "convenu) doit etre formulee par ecrit dans un delai de 7 (sept) jours "
-            "calendaires a compter de sa livraison ; passe ce delai, le lead est repute "
-            "conforme et definitivement accepte. Pour toute reclamation recevable et "
-            "formulee dans les delais, l'Agence propose, a son choix, le remplacement du "
-            "lead ou l'emission d'un avoir commercial d'un montant correspondant, a "
-            "l'exclusion de toute autre indemnisation.",
+            "Est considere comme invalide, et a ce titre eligible a reclamation dans le "
+            "delai ci-dessous, tout lead livre remplissant au moins l'un des criteres "
+            "suivants : (i) l'adresse email fournie est syntaxiquement invalide ou fait "
+            "l'objet d'un rejet permanent (bounce dur) lors de toute tentative de contact ; "
+            "(ii) le numero de telephone fourni, le cas echeant, est inexistant, errone, ou "
+            "ne correspond a aucune ligne active ; (iii) le lead ne correspond pas a la zone "
+            "geographique convenue au bon de commande ; (iv) le lead ne correspond pas au "
+            "type d'acteur ou au secteur d'activite convenu au bon de commande ; (v) le lead "
+            "constitue un doublon strict d'un lead deja livre au meme Client au cours des 90 "
+            "jours precedents.\n\n"
+            "A l'inverse, ne constituent pas une base de reclamation valable : l'absence de "
+            "reponse du prospect aux sollicitations du Client, le refus du prospect de "
+            "contractualiser avec le Client, ou plus generalement toute insatisfaction "
+            "relative au resultat commercial final, la prestation portant sur la mise a "
+            "disposition d'un contact qualifie et non sur un resultat de conversion (voir "
+            "Article 3).\n\n"
+            "Toute reclamation relative a un lead invalide au sens ci-dessus doit etre "
+            "formulee par ecrit dans un delai de 7 (sept) jours calendaires a compter de sa "
+            "livraison ; passe ce delai, le lead est repute conforme et definitivement "
+            "accepte. Pour toute reclamation recevable et formulee dans les delais, l'Agence "
+            "propose, a son choix, le remplacement du lead ou l'emission d'un avoir "
+            "commercial d'un montant correspondant, a l'exclusion de toute autre "
+            "indemnisation.",
         ),
         (
             "Article 5 - Prix, paiement et duree",
@@ -435,13 +451,28 @@ def construire_articles_cgv_b2c(agence: dict, type_offre: str) -> list[tuple[str
         ),
         (
             "Article 4 - Délai de réclamation et garantie de remplacement",
-            "Toute réclamation relative à un lead livré (contact invalide, hors zone "
-            "d'intervention ou corps de métier convenu) doit être formulée par écrit dans "
-            "un délai de 7 (sept) jours calendaires à compter de sa livraison ; passé ce "
-            "délai, le lead est réputé conforme et définitivement accepté. Pour toute "
-            "réclamation recevable et formulée dans les délais, l'Agence propose, à son "
-            "choix, le remplacement du lead ou l'émission d'un avoir commercial d'un "
-            "montant correspondant, à l'exclusion de toute autre indemnisation.",
+            "Est considéré comme invalide, et à ce titre éligible à réclamation dans le "
+            "délai ci-dessous, tout lead livré remplissant au moins l'un des critères "
+            "suivants : (i) l'adresse email fournie est syntaxiquement invalide ou fait "
+            "l'objet d'un rejet permanent (bounce dur) lors de toute tentative de contact ; "
+            "(ii) le numéro de téléphone fourni, le cas échéant, est inexistant, erroné, ou "
+            "ne correspond à aucune ligne active ; (iii) le lead ne correspond pas à la zone "
+            "d'intervention convenue au présent devis ; (iv) le lead ne correspond pas au "
+            "corps de métier convenu au présent devis ; (v) le lead constitue un doublon "
+            "strict d'un lead déjà livré au même Client au cours des 90 jours précédents.\n\n"
+            "À l'inverse, ne constituent pas une base de réclamation valable : l'absence de "
+            "réponse du prospect aux sollicitations du Client, le refus du prospect de "
+            "contractualiser avec le Client, ou plus généralement toute insatisfaction "
+            "relative au résultat commercial final, la prestation portant sur la mise à "
+            "disposition d'un contact qualifié et non sur un résultat de conversion (voir "
+            "Article 3).\n\n"
+            "Toute réclamation relative à un lead invalide au sens ci-dessus doit être "
+            "formulée par écrit dans un délai de 7 (sept) jours calendaires à compter de sa "
+            "livraison ; passé ce délai, le lead est réputé conforme et définitivement "
+            "accepté. Pour toute réclamation recevable et formulée dans les délais, "
+            "l'Agence propose, à son choix, le remplacement du lead ou l'émission d'un avoir "
+            "commercial d'un montant correspondant, à l'exclusion de toute autre "
+            "indemnisation.",
         ),
         ("Article 5 - Prix, paiement et durée", texte_prix),
         (
