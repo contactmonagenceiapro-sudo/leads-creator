@@ -663,6 +663,35 @@ def get_contracts() -> dict:
     return {"contracts": data}
 
 
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_contracts_finances() -> dict:
+    """Contrats B2C pour app_pages/finances.py — fonction dédiée plutôt que
+    de modifier get_contracts() ci-dessus (utilisée telle quelle par
+    Gestion & Réponse pour les remboursements) : exclut les leads de test/
+    démo (LEADS_TEST_A_EXCLURE) pour ne jamais fausser un KPI financier, et
+    ne limite pas à 100 lignes (le CA total et la courbe cumulée ont besoin
+    de tout l'historique, pas seulement des contrats les plus récents).
+
+    PÉRIMÈTRE : la table `contracts` ne couvre QUE le B2C (vente de leads
+    aux artisans, tunnel intake -> Yousign -> Stripe). Le B2B (campagnes
+    clients, ex. S.B.G Travaux) n'a aucune facturation persistée en base à
+    ce jour — le bon de commande généré depuis "Administration & Contrats"
+    ne fait qu'un PDF, rien n'est écrit côté Supabase (voir sa docstring)."""
+    try:
+        data = (
+            supabase.table("contracts")
+            .select("*,leads(company,email)")
+            .not_.in_("lead_id", LEADS_TEST_A_EXCLURE)
+            .order("created_at", desc=True)
+            .limit(5000)
+            .execute()
+            .data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture contrats (finances) : {e}") from e
+    return {"contracts": data}
+
+
 def marquer_contrat_signe(contract_id: str) -> dict:
     """Remplace le webhook Yousign : l'admin vérifie manuellement dans
     Yousign que le contrat est signé, puis clique ce bouton."""
