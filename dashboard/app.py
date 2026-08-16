@@ -16,6 +16,8 @@ Structure (multi-pages) :
     app_pages/administration_contrats.py -> [Admin] Administration & Contrats
     app_pages/deliverabilite.py     -> [Admin] Délivrabilité
     app_pages/finances.py           -> [Admin] Finances (CA, MRR, activité commerciale B2C)
+                                        (RETIRÉE TEMPORAIREMENT de la navigation, voir
+                                        commentaire dans la section navigation ci-dessous)
     app_pages/suppression_rgpd.py   -> [Admin] Suppression RGPD (droit à l'effacement)
     app_pages/portail_client.py     -> [Client] Vue restreinte à ses propres campagnes
                                         (également accessible à l'admin, en aperçu/test)
@@ -167,11 +169,20 @@ if est_admin():
     )
     page_deliverabilite = st.Page("app_pages/deliverabilite.py", title="Délivrabilité", icon="📶")
     page_suivi = st.Page("app_pages/suivi_resultats.py", title="Suivi & Résultats", icon="📈")
-    # Admin uniquement (jamais côté Portail Client) : CA/MRR/marge sont des
-    # données financières internes à l'agence, pas des données propres à un
-    # client — voir app_pages/finances.py pour le détail du périmètre
-    # (B2C uniquement, le B2B n'a pas de facturation persistée en base).
-    page_finances = st.Page("app_pages/finances.py", title="Finances", icon="💰")
+    # RETIRÉE TEMPORAIREMENT de la navigation (2026-08-17, veille d'une démo
+    # bloquante) : un ImportError sur get_contracts_finances a été signalé
+    # en production (Streamlit Cloud) juste après le déploiement de cette
+    # page. Non reproduit en local (la fonction existe bien dans
+    # data_access.py, le commit est bien sur origin/main, un vrai serveur
+    # Streamlit démarre sans erreur sur ce code) — cause racine probable :
+    # décalage de build/cache côté Streamlit Cloud plutôt qu'un bug de
+    # code, mais retrait de précaution le temps de confirmer calmement.
+    # app_pages/finances.py et data_access.get_contracts_finances restent
+    # en place tels quels (rien à corriger dedans à ce stade) : seule cette
+    # ligne d'enregistrement + la suivante dans st.navigation() ci-dessous
+    # sont commentées, pour pouvoir réactiver la page d'un simple retrait
+    # de commentaire une fois la cause confirmée.
+    # page_finances = st.Page("app_pages/finances.py", title="Finances", icon="💰")
     # Admin uniquement (jamais côté Portail Client) : supprime des données
     # réelles de façon irréversible — voir app_pages/suppression_rgpd.py.
     page_suppression_rgpd = st.Page("app_pages/suppression_rgpd.py", title="Suppression RGPD", icon="🗑️")
@@ -182,7 +193,8 @@ if est_admin():
     pg = st.navigation(
         [
             page_sourcing, page_gestion, page_administration, page_deliverabilite,
-            page_suivi, page_finances, page_suppression_rgpd, page_portail_client,
+            page_suivi, page_suppression_rgpd, page_portail_client,
+            # page_finances,  # voir commentaire ci-dessus — retrait temporaire
         ]
     )
 else:
