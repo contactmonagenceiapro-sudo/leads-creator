@@ -36,3 +36,8 @@
 -- contourne le RLS par conception Supabase).
 
 ALTER TABLE error_log ENABLE ROW LEVEL SECURITY;
+
+-- Appliquée manuellement dans l'éditeur SQL Supabase le 2026-08-18, puis
+-- revérifiée bloquée avec la même méthode (nouvelle ligne factice
+-- "TEST_RLS_VERIF_2" insérée via service_role, invisible via la clé anon,
+-- supprimée immédiatement après) : RLS confirmé actif.

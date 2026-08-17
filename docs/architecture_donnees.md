@@ -8,22 +8,20 @@ son RLS réellement critique. Voir [architecture_integrations.md](architecture_i
 pour le détail des deux clés.
 
 **Statut RLS** — les 20 tables du projet ont désormais toutes été testées en conditions
-réelles avec la clé anon publique (audits du 14/08/2026 et du 18/08/2026, voir
-`sql/fix_rls_leads_kpis.sql`, `sql/fix_rls_5_tables_restantes.sql` et
-`sql/fix_rls_error_log.sql`) :
+réelles avec la clé anon publique et sont **protégées** (audits du 14/08/2026 et du
+18/08/2026, voir `sql/fix_rls_leads_kpis.sql`, `sql/fix_rls_5_tables_restantes.sql` et
+`sql/fix_rls_error_log.sql`) : 🔒 **RLS actif** — testé directement avec la clé anon
+publique (lecture bloquée alors que la table contient des données réelles côté
+service_role, ou test à la ligne factice pour les tables vides) ou confirmé par une
+migration `ENABLE ROW LEVEL SECURITY`.
 
-- 🔒 **RLS actif** — testé directement avec la clé anon publique (lecture bloquée alors que
-  la table contient des données réelles côté service_role, ou test à la ligne factice pour
-  les tables vides) ou confirmé par une migration `ENABLE ROW LEVEL SECURITY`.
-- 🔴 **RLS absent, corrigé** — `error_log` était lisible intégralement via la clé anon
-  (audit du 18/08/2026) ; migration `sql/fix_rls_error_log.sql` préparée, à appliquer une
-  fois dans l'éditeur SQL Supabase (aucune migration précédente de ce projet n'est exécutée
-  automatiquement — voir [architecture_integrations.md](architecture_integrations.md)).
+`error_log` était exposée (lisible intégralement via la clé anon, audit du 18/08/2026) ;
+corrigée le jour même via `sql/fix_rls_error_log.sql`, appliquée manuellement dans
+l'éditeur SQL Supabase puis revérifiée bloquée avec la même méthode.
 
 ```mermaid
 flowchart TD
     classDef protege fill:#1b4332,stroke:#2d6a4f,color:#d8f3dc
-    classDef expose fill:#5c1a1a,stroke:#c0392b,color:#ffe5e0
 
     subgraph B2C_DOM["Domaine B2C — artisans (Expertise Digitale)"]
         LEADS["leads 🔒\nname, email, company, industry,\nscore, status, pitch_commercial,\ncommune, siren, contacted_at..."]
@@ -63,7 +61,7 @@ flowchart TD
         MEMORIES["agent_memories 🔒 (sans policy)\nMémoire vectorielle agents (pgvector)"]
         TASKS["tasks 🔒 (sans policy)\nFile de tâches génériques"]
         KPIS["kpis 🔒 (sans policy)\nKPIs business génériques"]
-        ERRLOG["error_log 🔴 EXPOSÉE (corrigée 18/08,\napplication manuelle requise)\nLog d'erreurs pour\nauto-amélioration"]
+        ERRLOG["error_log 🔒 (corrigée le 18/08,\nvérifiée bloquée après application)\nLog d'erreurs pour\nauto-amélioration"]
     end
 
     LEADS --> INTAKE --> CONTRACTS
@@ -78,8 +76,7 @@ flowchart TD
     LEADS --> EVENTS
     LPRO --> EVENTS
 
-    class LEADS,ARTISANS,DEVIS,CONTRACTS,REGISTRE,MEMORIES,TASKS,KPIS,INTAKE,LPRO,CAMP,REMB,AGCONF,EVENTS,BLACKLIST,MAILLOCK,MAILRUNS,UDASH,UCAMP protege
-    class ERRLOG expose
+    class LEADS,ARTISANS,DEVIS,CONTRACTS,REGISTRE,MEMORIES,TASKS,KPIS,INTAKE,LPRO,CAMP,REMB,AGCONF,EVENTS,BLACKLIST,MAILLOCK,MAILRUNS,UDASH,UCAMP,ERRLOG protege
 ```
 
 ## Qui écrit / lit quoi (principaux flux)
