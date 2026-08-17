@@ -28,10 +28,11 @@ d'entrée et construit SA PROPRE navigation en plus de celle définie ici via
 st.navigation()/st.Page() — les deux mécanismes entrent alors en conflit.
 
 Pages PUBLIQUES (dashboard/pages_publiques.py) : accessibles via un
-paramètre d'URL dédié (?vue=presentation|intake|devis|signature|confidentialite), interceptées ici
-AVANT auth.exiger_connexion() — ce sont les liens envoyés aux prospects par
-e-mail (voir mail_processor.py::envoyer_suivi_positif), qui ne doivent
-évidemment pas nécessiter de compte.
+paramètre d'URL dédié (?vue=presentation|intake|devis|demande_devis|signature|confidentialite),
+interceptées ici AVANT auth.exiger_connexion() — ce sont les liens envoyés
+aux prospects par e-mail (voir mail_processor.py::envoyer_suivi_positif) ou
+partagés publiquement (demande_devis), qui ne doivent évidemment pas
+nécessiter de compte.
 """
 
 import sys
@@ -68,9 +69,10 @@ initialiser_secrets()
 # Routing des pages PUBLIQUES — avant tout gate d'authentification.
 # ---------------------------------------------------------------------
 _vue_publique = st.query_params.get("vue")
-if _vue_publique in ("presentation", "intake", "devis", "signature", "confidentialite"):
+if _vue_publique in ("presentation", "intake", "devis", "demande_devis", "signature", "confidentialite"):
     from pages_publiques import (
         afficher_confidentialite,
+        afficher_demande_devis,
         afficher_devis,
         afficher_intake,
         afficher_presentation,
@@ -85,6 +87,8 @@ if _vue_publique in ("presentation", "intake", "devis", "signature", "confidenti
         afficher_signature(st.query_params.get("token"))
     elif _vue_publique == "confidentialite":
         afficher_confidentialite()
+    elif _vue_publique == "demande_devis":
+        afficher_demande_devis()
     else:
         afficher_devis(st.query_params.get("slug"))
     st.stop()

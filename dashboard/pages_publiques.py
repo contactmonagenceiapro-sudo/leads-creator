@@ -15,6 +15,16 @@ afficher_signature (?vue=signature&token=...) est différente : nouvelle
 page (pas une reprise d'une ancienne route FastAPI), ajoutée le 10/08 pour
 la signature électronique interne (voir signature_interne.py) — résout par
 token, jamais par lead_id, contrairement aux autres vues ci-dessus.
+
+afficher_demande_devis (?vue=demande_devis, PAS de slug requis) est
+également nouvelle — ajoutée le 18/08 (voir sql/init_demandes_devis_particuliers_generique.sql) :
+formulaire public GÉNÉRIQUE de demande de devis, indépendant de toute
+campagne B2B, pensé comme future source de signal de besoin exprimé pour
+les leads B2C vendus aux artisans (aucun mécanisme de mise en relation
+n'est branché à ce stade — cette page ne fait qu'enregistrer la demande).
+Coexiste avec afficher_devis (scopée à une campagne B2B nommée via son
+slug) sans le remplacer : les deux écrivent dans la même table, avec ou
+sans client_final connu à la soumission.
 """
 
 import os
@@ -65,6 +75,49 @@ SIGNATURE_PROVIDER = os.getenv("SIGNATURE_PROVIDER_PAR_DEFAUT", "interne")
 STATUTS_INTAKE_DEJA_ENVOYE = {
     "intake_recu", "contrat_envoye", "contrat_signe", "lien_paiement_envoye", "paye",
 }
+
+# Libellés dupliqués depuis scraper_batiment.py::SECTEURS_NAF (mêmes 6
+# corps de métier, sans les codes NAF, inutiles ici) plutôt qu'importés :
+# ce module est public/léger (formulaire visité par des particuliers sans
+# connexion), scraper_batiment.py est un script de scraping lourd (bs4,
+# retry HTTP, load_dotenv() à l'import...) qu'il serait malvenu de charger
+# juste pour 6 chaînes de caractères — même principe de duplication
+# assumée que scorer_leads.py::SCORES_TRANCHE_EFFECTIF (les segments ne
+# doivent jamais dépendre l'un de l'autre au niveau code). Toute évolution
+# de la liste côté scraping doit être répercutée ici à la main, et
+# inversement — les deux forment ensemble le vocabulaire contrôlé
+# "corps de métier" du projet (contrainte CHECK identique côté SQL, voir
+# sql/init_demandes_devis_particuliers_generique.sql).
+SECTEURS_METIER = [
+    "Bâtiment - Plâtrerie",
+    "Bâtiment - Électricité",
+    "Bâtiment - Isolation / Rénovation Énergétique",
+    "Bâtiment - Gros Œuvre",
+    "Bâtiment - Second Œuvre / Rénovation",
+    "Bâtiment - Plomberie / Chauffage",
+]
+
+# Première option de chaque selectbox corps de métier ci-dessous — jamais
+# une valeur acceptée (voir _corps_metier_saisi), seulement un texte
+# d'invite : st.selectbox impose un index par défaut (pas d'équivalent
+# universel à un <select> HTML sans option pré-sélectionnée sur toutes les
+# versions de Streamlit), donc on ajoute explicitement un placeholder en
+# première position plutôt que de risquer une pré-sélection silencieuse du
+# premier VRAI corps de métier de la liste.
+_PLACEHOLDER_CORPS_METIER = "— Sélectionnez un corps de métier —"
+
+
+def _champ_corps_metier(cle: str) -> str | None:
+    """Selectbox corps de métier partagée par afficher_devis() et
+    afficher_demande_devis() — un seul widget à faire évoluer si la liste
+    SECTEURS_METIER change. Retourne None tant que le placeholder est
+    sélectionné."""
+    choix = st.selectbox(
+        "Corps de métier recherché",
+        options=[_PLACEHOLDER_CORPS_METIER] + SECTEURS_METIER,
+        key=cle,
+    )
+    return None if choix == _PLACEHOLDER_CORPS_METIER else choix
 
 
 def _get_lead(lead_id: str) -> dict | None:
@@ -359,13 +412,12 @@ def afficher_devis(slug: str | None) -> None:
     st.title(f"Demande de devis — {client_final}")
     st.write("Décrivez votre projet, nous revenons vers vous rapidement.")
 
+    corps_metier = _champ_corps_metier(f"corps_metier_devis_{slug}")
+
     with st.form("form_devis_public"):
         nom = st.text_input("Votre nom", max_chars=200)
         email = st.text_input("E-mail", max_chars=200)
         telephone = st.text_input("Téléphone", placeholder="0X XX XX XX XX", max_chars=50)
-        type_projet = st.text_input(
-            "Type de projet", placeholder="Construction, rénovation lourde, extension...", max_chars=300,
-        )
         commune = st.text_input("Commune du projet", max_chars=200)
         budget_estime = st.text_input("Budget estimé (optionnel)", max_chars=100)
         message = st.text_area("Votre message", height=120, max_chars=3000)
@@ -375,6 +427,8 @@ def afficher_devis(slug: str | None) -> None:
     if envoyer:
         if not nom.strip():
             st.warning("Merci de renseigner votre nom.")
+        elif not corps_metier:
+            st.warning("Merci de sélectionner le corps de métier recherché.")
         elif not consentement:
             st.warning("Merci de cocher la case de consentement pour continuer.")
         else:
@@ -383,7 +437,7 @@ def afficher_devis(slug: str | None) -> None:
                 "nom": nom,
                 "email": email or None,
                 "telephone": telephone or None,
-                "type_projet": type_projet or None,
+                "corps_metier": corps_metier,
                 "commune": commune or None,
                 "budget_estime": budget_estime or None,
                 "message": message or None,
@@ -402,6 +456,88 @@ def afficher_devis(slug: str | None) -> None:
                 st.rerun()
 
     st.caption("Vos informations ne sont utilisées que pour traiter cette demande de devis.")
+
+
+def afficher_demande_devis() -> None:
+    """Formulaire public GÉNÉRIQUE de demande de devis (?vue=demande_devis,
+    sans slug de campagne) — contrairement à afficher_devis() ci-dessus, le
+    destinataire n'est PAS connu à la soumission : client_final reste NULL
+    (voir sql/init_demandes_devis_particuliers_generique.sql). Diagnostic
+    exploratoire du 18/08/2026 : source à venir de signal de besoin exprimé
+    pour les leads B2C vendus aux artisans.
+
+    AUCUN mécanisme de mise en relation n'est branché ici — cette page ne
+    fait qu'enregistrer la demande avec le consentement adapté (voir
+    consentement ci-dessous, qui autorise explicitement UNE MISE EN RELATION
+    AVEC PLUSIEURS artisans, contrairement au consentement scopé à un seul
+    client_final nommé de afficher_devis()). Le rapprochement réel avec des
+    artisans clients est une étape ultérieure distincte, volontairement pas
+    encore construite."""
+    cle_envoye = "demande_devis_envoyee"
+    if st.session_state.get(cle_envoye):
+        st.title("Merci pour votre demande !")
+        with st.container(border=True):
+            st.write(
+                "Nous avons bien reçu votre demande de devis et revenons vers vous "
+                "très rapidement avec un ou plusieurs artisans qualifiés."
+            )
+        return
+
+    st.title(f"Demande de devis — {AGENCY_NAME}")
+    st.write("Décrivez votre projet, nous vous mettons en relation avec des artisans qualifiés près de chez vous.")
+
+    corps_metier = _champ_corps_metier("corps_metier_demande_devis")
+
+    with st.form("form_demande_devis_public"):
+        commune = st.text_input("Commune ou code postal du projet", max_chars=200)
+        description = st.text_area(
+            "Décrivez votre besoin", placeholder="Ex : rénovation de salle de bain, extension de 20m²...",
+            height=120, max_chars=1000,
+        )
+        nom = st.text_input("Votre nom", max_chars=200)
+        email = st.text_input("E-mail", max_chars=200)
+        telephone = st.text_input("Téléphone", placeholder="0X XX XX XX XX", max_chars=50)
+        consentement = st.checkbox(
+            "J'accepte que ma demande soit transmise à un ou plusieurs artisans qualifiés "
+            "correspondant à mon besoin, dans le cadre de la mise en relation proposée par "
+            f"{AGENCY_NAME}."
+        )
+        st.caption(f"Voir notre [{LIBELLE_LIEN_CONFIDENTIALITE}]({LIEN_CONFIDENTIALITE}).")
+        envoyer = st.form_submit_button("Envoyer ma demande", type="primary", use_container_width=True)
+
+    if not envoyer:
+        return
+    if not nom.strip():
+        st.warning("Merci de renseigner votre nom.")
+        return
+    if not corps_metier:
+        st.warning("Merci de sélectionner le corps de métier recherché.")
+        return
+    if not email.strip() and not telephone.strip():
+        st.warning("Merci de renseigner au moins un moyen de vous recontacter (e-mail ou téléphone).")
+        return
+    if not consentement:
+        st.warning("Merci de cocher la case de consentement pour continuer.")
+        return
+
+    payload = {
+        "client_final": None,
+        "nom": nom,
+        "email": email or None,
+        "telephone": telephone or None,
+        "corps_metier": corps_metier,
+        "commune": commune or None,
+        "message": description or None,
+        "consentement": True,
+    }
+    try:
+        supabase.table("demandes_devis_particuliers").insert(payload).execute()
+    except Exception:
+        st.error("Erreur lors de l'enregistrement, réessayez plus tard.")
+    else:
+        alerter_discord(f"🔥 Nouvelle demande de devis générique ({corps_metier}, {commune or '?'}) : {nom}")
+        st.session_state[cle_envoye] = True
+        st.rerun()
 
 
 def afficher_confidentialite() -> None:
