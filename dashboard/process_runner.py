@@ -254,6 +254,13 @@ def lancer_relance() -> None:
     lancer("relance", None, [sys.executable, str(RACINE_REPO / "relance_prospects.py")])
 
 
+def lancer_livraison_devis() -> None:
+    """Voir livraison_devis.py : expire les propositions 'à l'unité'
+    périmées PUIS rapproche les demandes en attente avec les artisans
+    clients actifs — même commande par défaut que l'exécution CLI."""
+    lancer("livraison_devis", None, [sys.executable, str(RACINE_REPO / "livraison_devis.py")])
+
+
 def lancer_pipeline_b2b(
     action: str, campagne: str, communes: list[str] | None = None, types_acteur: list[str] | None = None
 ) -> None:

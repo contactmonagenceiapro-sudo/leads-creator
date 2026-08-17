@@ -1035,3 +1035,100 @@ def get_registre_suppressions_rgpd(limit: int = 20) -> dict:
             "(sql/init_registre_suppressions_rgpd.sql) ?"
         ) from e
     return {"suppressions": lignes or []}
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_leads_par_ids(lead_ids: tuple[str, ...]) -> dict:
+    """Résolution ciblée id -> lead (nom d'entreprise notamment), pour
+    l'affichage de get_demandes_devis() ci-dessous sans dépendre de get_leads()
+    (limitée aux 100 plus récents, un artisan destinataire plus ancien
+    pourrait en être absent). `lead_ids` en tuple (pas liste) : @st.cache_data
+    a besoin d'arguments hashables pour mettre le résultat en cache."""
+    lead_ids = [lid for lid in lead_ids if lid]
+    if not lead_ids:
+        return {"leads": []}
+    try:
+        data = supabase.table("leads").select("id,company,email").in_("id", lead_ids).execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture artisans : {e}") from e
+    return {"leads": data}
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_demandes_devis(statut: str | None = None, limit: int = 200) -> dict:
+    """Voir livraison_devis.py pour le mécanisme de rapprochement qui pose
+    ces statuts. lead_id_livraison n'est jamais résolu en nom d'entreprise
+    ici : la page appelante (app_pages/demandes_devis.py) le fait via
+    get_leads()/un lookup ciblé, pour ne pas ajouter une jointure à chaque
+    lecture de cette liste, potentiellement filtrée sans avoir besoin du nom."""
+    try:
+        requete = (
+            supabase.table("demandes_devis_particuliers").select("*")
+            .order("created_at", desc=True).limit(limit)
+        )
+        if statut:
+            requete = requete.eq("statut", statut)
+        data = requete.execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture demandes de devis : {e}") from e
+    return {"demandes": data or []}
+
+
+def marquer_demande_devis_payee_et_livree(demande_id: str, stripe_payment_intent_id: str | None = None) -> dict:
+    """Confirmation MANUELLE du paiement d'une proposition 'à l'unité' —
+    même principe que marquer_contrat_paye ci-dessus (pas de webhook Stripe
+    dans ce projet) : l'admin vérifie lui-même dans Stripe que le paiement
+    de la demande est passé, puis clique ce bouton. C'est CE moment précis
+    qui révèle enfin les coordonnées complètes du particulier à l'artisan
+    (jamais avant, voir livraison_devis.py::_proposer — la proposition
+    initiale ne contenait qu'une description du besoin, pas nom/email/
+    téléphone).
+
+    stripe_payment_intent_id est optionnel (contrairement à
+    marquer_contrat_paye) : une demande de devis n'est jamais remboursée
+    individuellement dans ce projet (seul un contrat l'est, voir
+    sql/init_remboursements.sql), donc rien ne l'exige pour un usage futur
+    — gardé quand même pour la traçabilité si l'admin l'a sous la main."""
+    try:
+        demandes = supabase.table("demandes_devis_particuliers").select("*").eq("id", demande_id).execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture de la demande : {e}") from e
+    if not demandes:
+        raise DataAccessError("Demande introuvable")
+    demande = demandes[0]
+
+    if demande.get("statut") != "proposee":
+        raise DataAccessError(f"Cette demande n'est pas en attente de paiement (statut actuel : {demande.get('statut')}).")
+    if not demande.get("lead_id_livraison"):
+        raise DataAccessError("Aucun artisan destinataire associé à cette proposition.")
+
+    try:
+        leads = supabase.table("leads").select("*").eq("id", demande["lead_id_livraison"]).execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture de l'artisan destinataire : {e}") from e
+    if not leads:
+        raise DataAccessError("Artisan destinataire introuvable (peut-être supprimé depuis, voir RGPD).")
+    artisan = leads[0]
+
+    champs_maj = {"statut": "livree", "livree_le": datetime.now(timezone.utc).isoformat()}
+    if (stripe_payment_intent_id or "").strip():
+        champs_maj["stripe_payment_intent_id"] = stripe_payment_intent_id.strip()
+    try:
+        supabase.table("demandes_devis_particuliers").update(champs_maj).eq("id", demande_id).execute()
+    except Exception as e:
+        raise DataAccessError(f"Échec mise à jour de la demande : {e}") from e
+
+    from ceo_agent import send_email_prospect  # import différé : même raison que contrats_signature.py (cycle au chargement)
+
+    corps = (
+        f"Bonjour,\n\nMerci pour votre paiement ! Voici les coordonnées complètes de votre client :\n\n"
+        f"Nom : {demande.get('nom')}\n"
+        f"E-mail : {demande.get('email') or '—'}\n"
+        f"Téléphone : {demande.get('telephone') or '—'}\n"
+        f"Commune : {demande.get('commune') or '—'}\n"
+        f"Besoin décrit : {demande.get('message') or '—'}\n\nCordialement"
+    )
+    send_email_prospect(artisan["email"], "Vos coordonnées client — paiement confirmé", corps, lead_id=artisan["id"])
+
+    get_demandes_devis.clear()
+    return {"status": "ok"}

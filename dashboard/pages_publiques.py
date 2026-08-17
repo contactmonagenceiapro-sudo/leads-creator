@@ -41,6 +41,7 @@ from generation_contrats import (
     formule_abonnement_par_id,
     fourchette_prix_unite_eur,
 )
+from scraper_batiment import SECTEURS_NAF, VILLES_CIBLES
 from signature_interne import enregistrer_signature, envoyer_contrat_signature_interne, get_contrat_par_token
 from supabase_client import supabase
 
@@ -76,26 +77,20 @@ STATUTS_INTAKE_DEJA_ENVOYE = {
     "intake_recu", "contrat_envoye", "contrat_signe", "lien_paiement_envoye", "paye",
 }
 
-# Libellés dupliqués depuis scraper_batiment.py::SECTEURS_NAF (mêmes 6
-# corps de métier, sans les codes NAF, inutiles ici) plutôt qu'importés :
-# ce module est public/léger (formulaire visité par des particuliers sans
-# connexion), scraper_batiment.py est un script de scraping lourd (bs4,
-# retry HTTP, load_dotenv() à l'import...) qu'il serait malvenu de charger
-# juste pour 6 chaînes de caractères — même principe de duplication
-# assumée que scorer_leads.py::SCORES_TRANCHE_EFFECTIF (les segments ne
-# doivent jamais dépendre l'un de l'autre au niveau code). Toute évolution
-# de la liste côté scraping doit être répercutée ici à la main, et
-# inversement — les deux forment ensemble le vocabulaire contrôlé
-# "corps de métier" du projet (contrainte CHECK identique côté SQL, voir
-# sql/init_demandes_devis_particuliers_generique.sql).
-SECTEURS_METIER = [
-    "Bâtiment - Plâtrerie",
-    "Bâtiment - Électricité",
-    "Bâtiment - Isolation / Rénovation Énergétique",
-    "Bâtiment - Gros Œuvre",
-    "Bâtiment - Second Œuvre / Rénovation",
-    "Bâtiment - Plomberie / Chauffage",
-]
+# Libellés importés depuis scraper_batiment.py::SECTEURS_NAF (mêmes 6
+# corps de métier, sans les codes NAF, inutiles ici) — SOURCE UNIQUE,
+# jamais dupliquée : depuis que ce vocabulaire contraint deux tables par
+# CHECK constraint (demandes_devis_particuliers.corps_metier ET
+# intake_responses.corps_metier, voir livraison_devis.py qui les
+# rapproche), une divergence entre deux copies romprait silencieusement le
+# rapprochement. Même précédent déjà en place côté admin
+# (dashboard/data_access.py importe VILLES_LYON/VILLES_GRAND_EST du même
+# module) : scraper_batiment.py n'a aucun effet de bord réseau à l'import
+# (seulement des constantes + load_dotenv()), l'importer ici n'a donc pas
+# le coût qu'aurait un import de outbound_chantiers/ (B2B, segment
+# volontairement indépendant, voir scorer_leads.py::SCORES_TRANCHE_EFFECTIF
+# pour ce cas de duplication assumée, différent de celui-ci).
+SECTEURS_METIER = [libelle for _, libelle in SECTEURS_NAF]
 
 # Première option de chaque selectbox corps de métier ci-dessous — jamais
 # une valeur acceptée (voir _corps_metier_saisi), seulement un texte
@@ -255,15 +250,27 @@ def afficher_intake(lead_id: str | None) -> None:
     # max_chars sur chaque champ : ce formulaire est public et non authentifié,
     # rien n'empêche un abus (texte massif envoyé en boucle) sans une limite
     # basique — appliquée au niveau du widget, la plus simple à maintenir.
+    #
+    # corps_metier (selectbox, voir _champ_corps_metier) est en dehors du
+    # st.form ci-dessous pour la même raison que type_offre plus haut :
+    # avoir besoin de sa VALEUR avant la soumission n'est pas le cas ici,
+    # mais le placer dans le form fonctionnerait tout aussi bien — gardé à
+    # cet endroit uniquement pour rester visuellement juste après le choix
+    # de formule, avant les champs texte proprement dits.
+    corps_metier = _champ_corps_metier(f"corps_metier_intake_{lead_id}")
+    communes_couvertes = st.multiselect(
+        "Communes couvertes (zone d'intervention exploitable pour le rapprochement)",
+        options=VILLES_CIBLES,
+        key=f"communes_couvertes_{lead_id}",
+    )
+
     with st.form("form_intake_public"):
         description = st.text_area(
             "Décrivez votre activité en quelques phrases", height=120, max_chars=3000,
         )
-        corps_metier = st.text_input(
-            "Votre corps de métier", placeholder="Ex : Plombier, Électricien, Menuisier...", max_chars=200,
-        )
         zone_activite = st.text_input(
-            "Zone d'intervention (villes/rayon)", placeholder="Ex : Reims et 30km alentour", max_chars=300,
+            "Zone d'intervention, en clair (ex: rayon, communes non listées ci-dessus)",
+            placeholder="Ex : Reims et 30km alentour", max_chars=300,
         )
         st.caption(f"En envoyant ce formulaire, vous acceptez notre [{LIBELLE_LIEN_CONFIDENTIALITE}]({LIEN_CONFIDENTIALITE}).")
         envoyer = st.form_submit_button("Envoyer", type="primary", use_container_width=True)
@@ -273,8 +280,8 @@ def afficher_intake(lead_id: str | None) -> None:
     if not description.strip():
         st.warning("Merci de décrire votre activité avant d'envoyer.")
         return
-    if not corps_metier.strip():
-        st.warning("Merci de renseigner votre corps de métier avant d'envoyer.")
+    if not corps_metier:
+        st.warning("Merci de sélectionner votre corps de métier avant d'envoyer.")
         return
 
     payload = {
@@ -282,6 +289,7 @@ def afficher_intake(lead_id: str | None) -> None:
         "description": description,
         "corps_metier": corps_metier,
         "zone_activite": zone_activite,
+        "communes_couvertes": communes_couvertes,
         "type_offre": type_offre,
         "formule_abonnement": formule_abonnement,
     }
