@@ -1,0 +1,38 @@
+-- URGENT — corrige une exposition publique active découverte lors de
+-- l'audit RLS du 2026-08-18 (suite à sql/fix_rls_leads_kpis.sql et
+-- sql/fix_rls_5_tables_restantes.sql, qui n'avaient couvert que 7 des 12
+-- tables alors sans trace de RLS dans les migrations versionnées).
+--
+-- Méthode : les 10 tables encore vides de preuve versionnée ont été
+-- testées directement contre Supabase avec la clé "anon" publique (celle
+-- publiée en clair dans landing/supabase-client.js) :
+--   - 10 tables contenant déjà des données réelles côté service_role
+--     (leads_professionnels, campagnes, intake_responses,
+--     utilisateurs_dashboard, utilisateur_campagnes, emails_blacklistes,
+--     email_events, mail_check_lock, mail_check_runs, agence_config) ont
+--     toutes renvoyé une liste vide via la clé anon (même signature
+--     HTTP 200 + `[]` + `content-range: */0` que `leads`/`artisans`,
+--     déjà confirmées protégées) : RLS actif, aucune action nécessaire.
+--   - `error_log` et `remboursements` étaient vides même côté
+--     service_role : test à la ligne factice ("TEST_RLS_VERIF", insérée
+--     via service_role, lecture tentée via la clé anon, puis supprimée
+--     immédiatement), même méthode que sql/fix_rls_5_tables_restantes.sql.
+--     Résultat :
+--       error_log      : EXPOSÉE — la ligne factice a été intégralement
+--                         lisible via la clé anon (RLS absent).
+--       remboursements : déjà protégée (RLS actif, aucune action).
+--
+-- Vérifié avant cette migration (aucun accès public légitime cassé) :
+-- aucun script Python de ce dépôt (racine, dashboard/, outbound_chantiers/)
+-- ne lit ni n'écrit jamais la table `error_log` — elle fait partie du
+-- scaffolding initial du projet (comme agent_memories/tasks, voir
+-- sql/fix_rls_5_tables_restantes.sql), jamais branchée à un usage réel.
+-- landing/ (pages publiques, clé anon) ne référence que la table
+-- `artisans`, jamais `error_log`.
+--
+-- Même mécanisme que les migrations précédentes : ENABLE ROW LEVEL
+-- SECURITY sans aucune politique bloque anon/authenticated par défaut,
+-- sans affecter service_role (seul rôle utilisé par ce projet, qui
+-- contourne le RLS par conception Supabase).
+
+ALTER TABLE error_log ENABLE ROW LEVEL SECURITY;

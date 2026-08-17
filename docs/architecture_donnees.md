@@ -7,48 +7,52 @@ côté navigateur avec la clé **anon** publique (`landing/supabase-client.js`),
 son RLS réellement critique. Voir [architecture_integrations.md](architecture_integrations.md)
 pour le détail des deux clés.
 
-**Statut RLS** établi à partir des migrations versionnées dans `sql/` (audit du 14/08/2026,
-`sql/fix_rls_leads_kpis.sql` et `sql/fix_rls_5_tables_restantes.sql`) :
+**Statut RLS** — les 20 tables du projet ont désormais toutes été testées en conditions
+réelles avec la clé anon publique (audits du 14/08/2026 et du 18/08/2026, voir
+`sql/fix_rls_leads_kpis.sql`, `sql/fix_rls_5_tables_restantes.sql` et
+`sql/fix_rls_error_log.sql`) :
 
-- 🔒 **RLS actif** — confirmé par une migration `ENABLE ROW LEVEL SECURITY` ou un test d'audit documenté.
-- ⚠️ **RLS non trouvé** dans les migrations versionnées — aucun risque d'exposition publique
-  identifié aujourd'hui (aucune de ces tables n'est appelée avec la clé anon), mais l'état
-  RLS réel n'est pas garanti par le code source seul (a pu être activé manuellement dans
-  l'interface Supabase sans migration associée) — à vérifier directement dans Supabase.
+- 🔒 **RLS actif** — testé directement avec la clé anon publique (lecture bloquée alors que
+  la table contient des données réelles côté service_role, ou test à la ligne factice pour
+  les tables vides) ou confirmé par une migration `ENABLE ROW LEVEL SECURITY`.
+- 🔴 **RLS absent, corrigé** — `error_log` était lisible intégralement via la clé anon
+  (audit du 18/08/2026) ; migration `sql/fix_rls_error_log.sql` préparée, à appliquer une
+  fois dans l'éditeur SQL Supabase (aucune migration précédente de ce projet n'est exécutée
+  automatiquement — voir [architecture_integrations.md](architecture_integrations.md)).
 
 ```mermaid
 flowchart TD
     classDef protege fill:#1b4332,stroke:#2d6a4f,color:#d8f3dc
-    classDef inconnu fill:#4a2c2a,stroke:#9c3d32,color:#ffe5e0
+    classDef expose fill:#5c1a1a,stroke:#c0392b,color:#ffe5e0
 
     subgraph B2C_DOM["Domaine B2C — artisans (Expertise Digitale)"]
         LEADS["leads 🔒\nname, email, company, industry,\nscore, status, pitch_commercial,\ncommune, siren, contacted_at..."]
-        INTAKE["intake_responses ⚠️\nRéponses formulaire post-contact\n(description, zone, photos, GBP)"]
+        INTAKE["intake_responses 🔒\nRéponses formulaire post-contact\n(description, zone, photos, GBP)"]
         ARTISANS["artisans 🔒 (policy dédiée)\nEspace self-service artisans\n(auth Supabase, RLS artisans_select_own)"]
     end
 
     subgraph B2B_DOM["Domaine B2B — outbound_chantiers (multi-clients)"]
-        LPRO["leads_professionnels ⚠️\nArchitectes/promoteurs/MO,\nscore_activite_chantiers, score_final,\nstatut, signale_invalide"]
-        CAMP["campagnes ⚠️\n1 ligne = 1 client/secteur/zone,\ntypes_acteur_cibles (codes NAF + poids)"]
+        LPRO["leads_professionnels 🔒\nArchitectes/promoteurs/MO,\nscore_activite_chantiers, score_final,\nstatut, signale_invalide"]
+        CAMP["campagnes 🔒\n1 ligne = 1 client/secteur/zone,\ntypes_acteur_cibles (codes NAF + poids)"]
         DEVIS["demandes_devis_particuliers 🔒\nFormulaire inbound (maîtres d'ouvrage,\nconsentement explicite)"]
     end
 
     subgraph CONTRAT_DOM["Contrats, paiement, remboursements"]
         CONTRACTS["contracts 🔒\nCycle intake→Yousign/interne→Stripe\nyousign_status, payment_status,\nsignature_token, signature_ip..."]
-        REMB["remboursements ⚠️\nRemboursement Stripe réel (B2C)\nOU avoir commercial (B2B)"]
-        AGCONF["agence_config ⚠️\nNom/adresse/SIRET agence\n(pré-remplissage bons de commande)"]
+        REMB["remboursements 🔒\nRemboursement Stripe réel (B2C)\nOU avoir commercial (B2B)"]
+        AGCONF["agence_config 🔒\nNom/adresse/SIRET agence\n(pré-remplissage bons de commande)"]
     end
 
     subgraph EMAIL_DOM["Suivi e-mail"]
-        EVENTS["email_events ⚠️\n1 ligne / événement envoyé\n(ouverture/clic retirés)"]
-        BLACKLIST["emails_blacklistes ⚠️\nHard bounce ou STOP,\nindépendante des leads"]
-        MAILLOCK["mail_check_lock ⚠️\nVerrou mono-ligne relève IMAP"]
-        MAILRUNS["mail_check_runs ⚠️\nHistorique des relèves\n(manuelle vs auto)"]
+        EVENTS["email_events 🔒\n1 ligne / événement envoyé\n(ouverture/clic retirés)"]
+        BLACKLIST["emails_blacklistes 🔒\nHard bounce ou STOP,\nindépendante des leads"]
+        MAILLOCK["mail_check_lock 🔒\nVerrou mono-ligne relève IMAP"]
+        MAILRUNS["mail_check_runs 🔒\nHistorique des relèves\n(manuelle vs auto)"]
     end
 
     subgraph PORTAIL_DOM["Portail Client (auth dashboard)"]
-        UDASH["utilisateurs_dashboard ⚠️\nComptes admin/client,\nmot_de_passe_hash (bcrypt)"]
-        UCAMP["utilisateur_campagnes ⚠️\nLiaison compte ↔ campagnes\nautorisées (many-to-many)"]
+        UDASH["utilisateurs_dashboard 🔒\nComptes admin/client,\nmot_de_passe_hash (bcrypt)"]
+        UCAMP["utilisateur_campagnes 🔒\nLiaison compte ↔ campagnes\nautorisées (many-to-many)"]
     end
 
     subgraph RGPD_DOM["Conformité RGPD"]
@@ -59,7 +63,7 @@ flowchart TD
         MEMORIES["agent_memories 🔒 (sans policy)\nMémoire vectorielle agents (pgvector)"]
         TASKS["tasks 🔒 (sans policy)\nFile de tâches génériques"]
         KPIS["kpis 🔒 (sans policy)\nKPIs business génériques"]
-        ERRLOG["error_log ⚠️\nLog d'erreurs pour\nauto-amélioration"]
+        ERRLOG["error_log 🔴 EXPOSÉE (corrigée 18/08,\napplication manuelle requise)\nLog d'erreurs pour\nauto-amélioration"]
     end
 
     LEADS --> INTAKE --> CONTRACTS
@@ -74,8 +78,8 @@ flowchart TD
     LEADS --> EVENTS
     LPRO --> EVENTS
 
-    class LEADS,ARTISANS,DEVIS,CONTRACTS,REGISTRE,MEMORIES,TASKS,KPIS protege
-    class INTAKE,LPRO,CAMP,REMB,AGCONF,EVENTS,BLACKLIST,MAILLOCK,MAILRUNS,UDASH,UCAMP,ERRLOG inconnu
+    class LEADS,ARTISANS,DEVIS,CONTRACTS,REGISTRE,MEMORIES,TASKS,KPIS,INTAKE,LPRO,CAMP,REMB,AGCONF,EVENTS,BLACKLIST,MAILLOCK,MAILRUNS,UDASH,UCAMP protege
+    class ERRLOG expose
 ```
 
 ## Qui écrit / lit quoi (principaux flux)
