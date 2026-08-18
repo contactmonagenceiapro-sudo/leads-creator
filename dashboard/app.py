@@ -29,11 +29,19 @@ d'entrée et construit SA PROPRE navigation en plus de celle définie ici via
 st.navigation()/st.Page() — les deux mécanismes entrent alors en conflit.
 
 Pages PUBLIQUES (dashboard/pages_publiques.py) : accessibles via un
-paramètre d'URL dédié (?vue=presentation|intake|devis|demande_devis|signature|confidentialite),
+paramètre d'URL dédié (?vue=presentation|intake|devis|demande_devis|signature|confidentialite|accueil|comment_ca_marche|tarifs|a_propos),
 interceptées ici AVANT auth.exiger_connexion() — ce sont les liens envoyés
 aux prospects par e-mail (voir mail_processor.py::envoyer_suivi_positif) ou
 partagés publiquement (demande_devis), qui ne doivent évidemment pas
 nécessiter de compte.
+
+accueil/comment_ca_marche/tarifs/a_propos (ajoutées le 19/08) sont le site
+vitrine public — voir dashboard/pages_publiques.py pour la navigation
+commune à ces 4 pages + demande_devis. Volontairement PAS le routing par
+défaut de la racine sans ?vue=... : cette dernière reste l'écran de
+connexion admin/client existant (?vue absent = comportement inchangé),
+pour ne rien casser côté auth avec cet ajout — accueil est jointe via
+?vue=accueil comme les autres vues publiques.
 """
 
 import sys
@@ -70,14 +78,22 @@ initialiser_secrets()
 # Routing des pages PUBLIQUES — avant tout gate d'authentification.
 # ---------------------------------------------------------------------
 _vue_publique = st.query_params.get("vue")
-if _vue_publique in ("presentation", "intake", "devis", "demande_devis", "signature", "confidentialite"):
+_VUES_PUBLIQUES = (
+    "presentation", "intake", "devis", "demande_devis", "signature", "confidentialite",
+    "accueil", "comment_ca_marche", "tarifs", "a_propos",
+)
+if _vue_publique in _VUES_PUBLIQUES:
     from pages_publiques import (
+        afficher_a_propos,
+        afficher_accueil,
+        afficher_comment_ca_marche,
         afficher_confidentialite,
         afficher_demande_devis,
         afficher_devis,
         afficher_intake,
         afficher_presentation,
         afficher_signature,
+        afficher_tarifs,
     )
 
     if _vue_publique == "presentation":
@@ -90,6 +106,14 @@ if _vue_publique in ("presentation", "intake", "devis", "demande_devis", "signat
         afficher_confidentialite()
     elif _vue_publique == "demande_devis":
         afficher_demande_devis()
+    elif _vue_publique == "accueil":
+        afficher_accueil()
+    elif _vue_publique == "comment_ca_marche":
+        afficher_comment_ca_marche()
+    elif _vue_publique == "tarifs":
+        afficher_tarifs()
+    elif _vue_publique == "a_propos":
+        afficher_a_propos()
     else:
         afficher_devis(st.query_params.get("slug"))
     st.stop()
