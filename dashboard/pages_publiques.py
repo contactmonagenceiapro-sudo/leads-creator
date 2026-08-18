@@ -66,6 +66,13 @@ from generation_contrats import (
 from scraper_batiment import SECTEURS_NAF, VILLES_CIBLES
 from signature_interne import enregistrer_signature, envoyer_contrat_signature_interne, get_contrat_par_token
 from supabase_client import supabase
+from verification_pro import (
+    STATUT_EN_ATTENTE,
+    STATUT_VERIFIE,
+    normaliser_siret,
+    siret_format_valide,
+    verifier_siret_sirene,
+)
 
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
 # Adresse de contact publique (footer vitrine, page de confidentialité) —
@@ -176,6 +183,28 @@ def _get_campagne_active_par_slug(slug: str) -> str | None:
 # que du HTML/CSS injecté via unsafe_allow_html : aucune page de ce fichier
 # n'en utilise, on ne casse pas cette convention pour la vitrine.
 # ---------------------------------------------------------------------
+
+def badge_verification_pro(statut_verification_pro: str | None) -> str | None:
+    """Badge de confiance à afficher à côté du nom d'un artisan sur une page
+    publique — UNIQUEMENT si statut_verification_pro == 'verifie' (jamais
+    pour 'en_attente'/'refuse'/'non_verifie', qui ne doivent jamais
+    transparaître publiquement comme une forme de vérification partielle :
+    voir verification_pro.py pour la logique de vérification elle-même).
+    Renvoie None sinon, pour que l'appelant n'affiche rien plutôt qu'un
+    badge vide.
+
+    PAS ENCORE BRANCHÉ EN PRODUCTION : à ce jour, aucune page publique de ce
+    fichier n'affiche l'identité d'un artisan précis à un particulier — le
+    formulaire /demande-devis est générique (aucun artisan choisi avant
+    soumission), et /devis/{slug} n'affiche que campagnes.nom_client (une
+    chaîne de caractères, pas un lead_id précis). Prêt à être branché le
+    jour où une telle page existe (ex. une future liste/fiche d'artisans
+    publique) — voir aussi Contenu_Site_Vitrine.md, qui anticipe déjà une
+    future page "Témoignages"."""
+    if statut_verification_pro != STATUT_VERIFIE:
+        return None
+    return "✅ Vérifié"
+
 
 _NAVIGATION_VITRINE = [
     ("accueil", "🏠 Accueil"),
@@ -566,6 +595,20 @@ def afficher_intake(lead_id: str | None) -> None:
             "Zone d'intervention, en clair (ex: rayon, communes non listées ci-dessus)",
             placeholder="Ex : Reims et 30km alentour", max_chars=300,
         )
+        st.divider()
+        st.markdown("**Vérification professionnelle**")
+        st.caption(
+            "Ces informations nous permettent de vérifier votre entreprise et, une fois "
+            "contrôlées, d'afficher un badge « Vérifié » — un argument de confiance pour "
+            "les particuliers qui vous contactent."
+        )
+        siret_saisi = st.text_input(
+            "Numéro SIRET de votre entreprise (14 chiffres)",
+            placeholder="Ex : 123 456 789 00012", max_chars=20,
+        )
+        assurance_decennale = st.checkbox(
+            "Je déclare disposer d'une assurance décennale en cours de validité pour mon activité."
+        )
         st.caption(f"En envoyant ce formulaire, vous acceptez notre [{LIBELLE_LIEN_CONFIDENTIALITE}]({LIEN_CONFIDENTIALITE}).")
         envoyer = st.form_submit_button("Envoyer", type="primary", use_container_width=True)
 
@@ -577,6 +620,13 @@ def afficher_intake(lead_id: str | None) -> None:
     if not corps_metier:
         st.warning("Merci de sélectionner votre corps de métier avant d'envoyer.")
         return
+    siret_declare = normaliser_siret(siret_saisi)
+    if not siret_format_valide(siret_declare):
+        st.warning("Merci de renseigner un numéro SIRET valide (14 chiffres).")
+        return
+    if not assurance_decennale:
+        st.warning("Merci de confirmer que vous disposez d'une assurance décennale en cours de validité.")
+        return
 
     payload = {
         "lead_id": lead_id,
@@ -587,9 +637,30 @@ def afficher_intake(lead_id: str | None) -> None:
         "type_offre": type_offre,
         "formule_abonnement": formule_abonnement,
     }
+    # Contrôle automatique du SIRET (API SIRENE publique, voir
+    # verification_pro.py) — ne fait jamais échouer la soumission (fonction
+    # sans exception, voir sa docstring) : au pire, siret_verifie_sirene
+    # reste False et statut_verification_pro n'avance pas, l'artisan garde
+    # la main pour être vérifié manuellement ensuite (voir "Vérification
+    # pro" dans Administration & Contrats).
+    resultat_siret = verifier_siret_sirene(siret_declare)
+    maj_leads = {
+        "status": "intake_recu",
+        "siret_declare": siret_declare,
+        "assurance_decennale_declaree": assurance_decennale,
+        "siret_verifie_sirene": resultat_siret["trouve"] and resultat_siret["actif"],
+        "siret_raison_sociale_sirene": resultat_siret["nom_entreprise"],
+    }
+    if resultat_siret["trouve"] and resultat_siret["actif"]:
+        # Pré-qualification automatique uniquement — jamais 'verifie'
+        # directement : l'assurance décennale reste déclarative, son
+        # contrôle manuel par un admin est seul habilité à débloquer le
+        # badge public (voir statut_verification_pro sur `leads`).
+        maj_leads["statut_verification_pro"] = STATUT_EN_ATTENTE
+
     try:
         supabase.table("intake_responses").insert(payload).execute()
-        supabase.table("leads").update({"status": "intake_recu"}).eq("id", lead_id).execute()
+        supabase.table("leads").update(maj_leads).eq("id", lead_id).execute()
     except Exception:
         st.error("Erreur lors de l'enregistrement, réessayez plus tard.")
         return

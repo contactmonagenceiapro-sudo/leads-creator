@@ -31,7 +31,7 @@ from datetime import date, datetime, timezone
 import streamlit as st
 
 from common import liste_noms_campagnes, safe_call
-from data_access import get_campagnes
+from data_access import get_campagnes, get_leads_verification_pro, maj_statut_verification_pro
 from generation_contrats import (
     DEFAULTS_AGENCE,
     aide_memoire_grille_complete,
@@ -43,6 +43,7 @@ from generation_contrats import (
     slugifier_reference,
 )
 from supabase_client import supabase
+from verification_pro import LIBELLE_STATUT_VERIFICATION_PRO, STATUT_NON_VERIFIE, STATUTS_VERIFICATION_PRO
 
 
 # ---------------------------------------------------------------------
@@ -284,3 +285,56 @@ if donnees:
                 mime="text/plain",
                 use_container_width=True,
             )
+
+st.divider()
+st.subheader("🛂 Vérification pro (SIRET / assurance décennale)")
+st.caption(
+    "Artisans ayant déclaré un SIRET à l'intake (dashboard/pages_publiques.py::afficher_intake). "
+    "Le SIRET est contrôlé automatiquement via l'API SIRENE dès la soumission — l'assurance "
+    "décennale reste une simple déclaration de l'artisan : contrôle le justificatif toi-même "
+    "avant de passer le statut à « Vérifié », seule action qui débloque le badge public."
+)
+
+artisans_verif, erreur_verif = safe_call(get_leads_verification_pro)
+if erreur_verif:
+    st.error(erreur_verif)
+elif not artisans_verif["leads"]:
+    st.info("Aucun artisan n'a encore déclaré de SIRET à l'intake.")
+else:
+    for artisan in artisans_verif["leads"]:
+        statut_actuel = artisan.get("statut_verification_pro") or STATUT_NON_VERIFIE
+        with st.container(border=True):
+            col_info, col_action = st.columns([3, 1])
+            with col_info:
+                st.markdown(f"**{artisan.get('company') or artisan.get('email') or artisan['id']}**")
+                st.caption(f"SIRET déclaré : {artisan.get('siret_declare') or '—'}")
+                if artisan.get("siret_verifie_sirene"):
+                    st.caption(
+                        f"✅ SIRET confirmé automatiquement par SIRENE — "
+                        f"{artisan.get('siret_raison_sociale_sirene') or 'raison sociale non renvoyée'}"
+                    )
+                elif artisan.get("siret_verifie_sirene") is False:
+                    st.caption("⚠️ SIRET non confirmé automatiquement (introuvable/inactif chez SIRENE, ou pas encore vérifié) — à contrôler manuellement.")
+                st.caption(
+                    "✅ Assurance décennale déclarée par l'artisan (déclaratif, non vérifié automatiquement)"
+                    if artisan.get("assurance_decennale_declaree")
+                    else "❌ Assurance décennale NON déclarée"
+                )
+                st.markdown(f"Statut actuel : **{LIBELLE_STATUT_VERIFICATION_PRO.get(statut_actuel, statut_actuel)}**")
+                if artisan.get("date_verification"):
+                    st.caption(f"Dernière décision le {artisan['date_verification']}")
+            with col_action:
+                nouveau_statut = st.selectbox(
+                    "Nouveau statut",
+                    options=STATUTS_VERIFICATION_PRO,
+                    format_func=lambda s: LIBELLE_STATUT_VERIFICATION_PRO.get(s, s),
+                    index=STATUTS_VERIFICATION_PRO.index(statut_actuel),
+                    key=f"statut_verif_{artisan['id']}",
+                )
+                if st.button("💾 Enregistrer", key=f"maj_verif_{artisan['id']}", use_container_width=True):
+                    _, erreur_maj = safe_call(maj_statut_verification_pro, artisan["id"], nouveau_statut)
+                    if erreur_maj:
+                        st.error(erreur_maj)
+                    else:
+                        st.success("Statut mis à jour.")
+                        st.rerun()

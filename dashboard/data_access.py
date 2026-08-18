@@ -44,6 +44,10 @@ from scraper_batiment import VILLES_GRAND_EST, VILLES_LYON
 # recréerait une ligne pour la même entreprise/personne.
 from email_blacklist import blacklister_email
 
+# Même module que dashboard/pages_publiques.py (contrôle automatique du
+# SIRET à l'intake) — voir sql/init_verification_pro_artisans.sql.
+from verification_pro import STATUT_REFUSE, STATUT_VERIFIE
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [DASHBOARD] %(message)s")
 log = logging.getLogger(__name__)
 
@@ -252,6 +256,57 @@ def get_leads(limit: int = 100) -> dict:
     except Exception as e:
         raise DataAccessError(f"Erreur lecture leads : {e}") from e
     return {"leads": data}
+
+
+# ---------------------------------------------------------------------
+# Vérification pro (SIRET / assurance décennale) des artisans clients —
+# voir sql/init_verification_pro_artisans.sql (colonnes sur `leads`) et
+# verification_pro.py (constantes de statut, contrôle SIRENE). Vue admin
+# dans app_pages/administration_contrats.py, section "Vérification pro".
+# ---------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_leads_verification_pro() -> dict:
+    """Artisans ayant déclaré un SIRET à l'intake (voir dashboard/pages_publiques.py
+    ::afficher_intake) — candidats à la vérification manuelle de l'assurance
+    décennale. Le contrôle automatique du SIRET (siret_verifie_sirene) a
+    déjà eu lieu à la soumission de l'intake ; cette fonction ne fait que
+    LIRE son résultat pour l'afficher à l'admin, jamais un nouvel appel
+    réseau à SIRENE."""
+    try:
+        data = (
+            supabase.table("leads")
+            .select(
+                "id,company,email,siret_declare,siret_verifie_sirene,"
+                "siret_raison_sociale_sirene,assurance_decennale_declaree,"
+                "statut_verification_pro,date_verification,created_at"
+            )
+            .not_.is_("siret_declare", "null")
+            .not_.in_("id", LEADS_TEST_A_EXCLURE)
+            .order("created_at", desc=True)
+            .limit(500)
+            .execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture vérification pro : {e}") from e
+    return {"leads": data}
+
+
+def maj_statut_verification_pro(lead_id: str, statut: str) -> dict:
+    """Changement manuel du statut de vérification d'un artisan (les 4
+    valeurs possibles sont définies dans verification_pro.STATUTS_VERIFICATION_PRO)
+    — date_verification est posée à la date de CETTE décision admin
+    ('verifie' ou 'refuse'), distincte de siret_verifie_sirene (contrôle
+    automatique, déjà horodaté implicitement par la soumission de l'intake)."""
+    corps = {"statut_verification_pro": statut}
+    if statut in (STATUT_VERIFIE, STATUT_REFUSE):
+        corps["date_verification"] = datetime.now(timezone.utc).isoformat()
+    try:
+        supabase.table("leads").update(corps).eq("id", lead_id).execute()
+    except Exception as e:
+        raise DataAccessError(f"Erreur mise à jour du statut de vérification : {e}") from e
+    get_leads_verification_pro.clear()
+    return corps
 
 
 def _zone_pour_commune(commune: str | None) -> str:
