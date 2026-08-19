@@ -46,6 +46,9 @@ Ce document contient les textes prêts à intégrer, page par page. Les emplacem
 **Texte :**
 > Décrivez votre besoin en 2 minutes, nous vous mettons en relation avec un professionnel qualifié de votre secteur. Gratuit, sans engagement.
 
+**Engagement de délai (réassurance) :**
+> Un professionnel qualifié vous recontacte sous 48h maximum, ou votre demande est automatiquement proposée à un autre professionnel de votre secteur.
+
 **Appel à l'action :**
 > [Demander un devis]
 
@@ -78,6 +81,9 @@ Ce document contient les textes prêts à intégrer, page par page. Les emplacem
 1. **Décrivez votre projet.** Type de travaux, votre commune, quelques mots sur votre besoin.
 2. **On vous met en relation.** Un professionnel qualifié de votre secteur reçoit votre demande.
 3. **Il vous recontacte directement.** Par téléphone ou email, pour discuter de votre projet et vous proposer un devis.
+
+**Engagement de délai (mis en avant, type badge de réassurance) :**
+> Notre engagement : un professionnel qualifié vous recontacte sous 48h maximum. Si le premier professionnel contacté ne répond pas dans ce délai, votre demande est automatiquement proposée à un autre professionnel de votre secteur.
 
 **Note de réassurance en bas de page :**
 > Vos coordonnées ne sont transmises qu'aux professionnels correspondant à votre demande, jamais revendues à des fins publicitaires.
@@ -129,8 +135,16 @@ Ce document contient les textes prêts à intégrer, page par page. Les emplacem
 **Texte d'intro :**
 > Décrivez votre projet, nous le transmettons à un professionnel qualifié près de chez vous. Réponse rapide, sans engagement de votre part.
 
+**Engagement de délai (affiché à proximité du formulaire) :**
+> Notre engagement : un professionnel qualifié vous recontacte sous 48h maximum. Si le premier professionnel contacté ne répond pas dans ce délai, votre demande est automatiquement proposée à un autre professionnel de votre secteur.
+
 **Texte sous la case de consentement (rappel court, en complément du texte légal complet) :**
 > Vos informations sont utilisées uniquement pour vous mettre en relation avec un professionnel adapté à votre demande.
+
+**Message de confirmation après soumission :**
+> Nous avons bien reçu votre demande de devis et revenons vers vous très rapidement avec un ou plusieurs artisans qualifiés.
+>
+> Notre engagement : un professionnel qualifié vous recontacte sous 48h maximum. Si le premier professionnel contacté ne répond pas dans ce délai, nous proposons automatiquement votre demande à un autre professionnel de votre secteur.
 
 ---
 

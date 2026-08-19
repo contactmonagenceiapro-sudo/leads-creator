@@ -313,6 +313,10 @@ def afficher_accueil() -> None:
         "Décrivez votre besoin en 2 minutes, nous vous mettons en relation avec un "
         "professionnel qualifié de votre secteur. Gratuit, sans engagement."
     )
+    st.caption(
+        "Un professionnel qualifié vous recontacte sous 48h maximum, ou votre demande "
+        "est automatiquement proposée à un autre professionnel de votre secteur."
+    )
     st.link_button("Demander un devis", "?vue=demande_devis", type="primary", use_container_width=True)
 
     _footer_publique()
@@ -372,6 +376,11 @@ def afficher_comment_ca_marche() -> None:
     _etape_parcours(
         3, "Il vous recontacte directement.",
         "Par téléphone ou email, pour discuter de votre projet et vous proposer un devis.",
+    )
+    st.success(
+        "**Notre engagement : un professionnel qualifié vous recontacte sous 48h maximum.** "
+        "Si le premier professionnel contacté ne répond pas dans ce délai, votre demande "
+        "est automatiquement proposée à un autre professionnel de votre secteur."
     )
     st.info(
         "Vos coordonnées ne sont transmises qu'aux professionnels correspondant à votre "
@@ -861,6 +870,12 @@ def afficher_demande_devis() -> None:
                 "Nous avons bien reçu votre demande de devis et revenons vers vous "
                 "très rapidement avec un ou plusieurs artisans qualifiés."
             )
+            st.write(
+                "**Notre engagement : un professionnel qualifié vous recontacte sous 48h "
+                "maximum.** Si le premier professionnel contacté ne répond pas dans ce "
+                "délai, nous proposons automatiquement votre demande à un autre "
+                "professionnel de votre secteur."
+            )
         _footer_publique()
         return
 
@@ -868,6 +883,12 @@ def afficher_demande_devis() -> None:
 
     st.title("Obtenez un devis gratuit")
     st.write("Décrivez votre projet, nous le transmettons à un professionnel qualifié près de chez vous. Réponse rapide, sans engagement de votre part.")
+    st.info(
+        "**Notre engagement : un professionnel qualifié vous recontacte sous 48h "
+        "maximum.** Si le premier professionnel contacté ne répond pas dans ce délai, "
+        "votre demande est automatiquement proposée à un autre professionnel de votre "
+        "secteur."
+    )
 
     corps_metier = _champ_corps_metier("corps_metier_demande_devis")
 
