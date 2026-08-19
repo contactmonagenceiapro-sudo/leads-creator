@@ -17,6 +17,8 @@ import process_runner
 from common import afficher_suivi, executer_avec_spinner, liste_noms_campagnes, safe_call, to_dataframe
 from contrats_signature import creer_et_envoyer_lien_paiement
 from data_access import (
+    SEUIL_ALERTE_TAUX_RECLAMATION,
+    calculer_taux_reclamation,
     compter_relances_envoyees_depuis,
     creer_remboursement,
     enrichir_lead_pro,
@@ -147,6 +149,24 @@ if campagne_selectionnee:
         col_k4.metric("Opportunités / chantiers ouverts", campagne_stats.get("opportunites", 0))
         col_k5.metric("🌟 Ultra-qualifiés", campagne_stats.get("leads_ultra_qualifies", 0))
 
+    # Taux de réclamation (90j) — voir app_pages/reclamations.py pour le
+    # détail des réclamations individuelles ; ici uniquement le signal
+    # agrégé, à cet endroit précis parce que c'est la seule "fiche client"
+    # B2B existante dans ce dashboard (pas de page dédiée par client_final).
+    taux_reclam, taux_reclam_error = safe_call(calculer_taux_reclamation, None, campagne_selectionnee)
+    if not taux_reclam_error and taux_reclam and taux_reclam["livres"] > 0:
+        if taux_reclam["alerte"]:
+            st.error(
+                f"🔴 Taux de réclamation élevé (90j) : {taux_reclam['taux'] * 100:.0f} % "
+                f"({taux_reclam['reclamations']}/{taux_reclam['livres']} leads livrés) — "
+                f"au-dessus du seuil de {SEUIL_ALERTE_TAUX_RECLAMATION * 100:.0f} %, à revoir manuellement."
+            )
+        else:
+            st.caption(
+                f"Taux de réclamation (90j) : {taux_reclam['taux'] * 100:.0f} % "
+                f"({taux_reclam['reclamations']}/{taux_reclam['livres']} leads livrés)"
+            )
+
     st.divider()
 
 
@@ -166,6 +186,22 @@ with tab_leads:
         if df_leads.empty:
             st.info("Aucun lead pour le moment.")
         else:
+            # Taux de réclamation (90j) par artisan payant — calculé un par
+            # un (échelle actuelle : quelques dizaines d'artisans payants
+            # tout au plus, pas besoin d'agrégation SQL dédiée). N'a de sens
+            # que pour un artisan déjà client (status='paye') ; les autres
+            # affichent "—".
+            if "status" in df_leads.columns and "id" in df_leads.columns:
+                def _taux_reclam_affiche(row):
+                    if row.get("status") != "paye":
+                        return "—"
+                    info, err = safe_call(calculer_taux_reclamation, row["id"], None)
+                    if err or not info or info["livres"] == 0:
+                        return "—"
+                    prefixe = "🔴 " if info["alerte"] else ""
+                    return f"{prefixe}{info['taux'] * 100:.0f} %"
+
+                df_leads["Taux réclam. (90j)"] = df_leads.apply(_taux_reclam_affiche, axis=1)
             st.dataframe(df_leads, use_container_width=True, hide_index=True)
             st.caption(f"{len(df_leads)} lead(s)")
 

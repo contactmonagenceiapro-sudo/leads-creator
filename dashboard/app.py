@@ -16,6 +16,7 @@ Structure (multi-pages) :
     app_pages/administration_contrats.py -> [Admin] Administration & Contrats
     app_pages/deliverabilite.py     -> [Admin] Délivrabilité
     app_pages/demandes_devis.py     -> [Admin] Demandes de devis (rapprochement avec les artisans clients)
+    app_pages/reclamations.py       -> [Admin] Réclamations (Article 4 des CGV, B2C + B2B)
     app_pages/finances.py           -> [Admin] Finances (CA, MRR, activité commerciale B2C)
                                         (RETIRÉE TEMPORAIREMENT de la navigation, voir
                                         commentaire dans la section navigation ci-dessous)
@@ -198,6 +199,7 @@ if est_admin():
     )
     page_deliverabilite = st.Page("app_pages/deliverabilite.py", title="Délivrabilité", icon="📶")
     page_demandes_devis = st.Page("app_pages/demandes_devis.py", title="Demandes de devis", icon="📮")
+    page_reclamations = st.Page("app_pages/reclamations.py", title="Réclamations", icon="🚨")
     page_suivi = st.Page("app_pages/suivi_resultats.py", title="Suivi & Résultats", icon="📈")
     # RETIRÉE TEMPORAIREMENT de la navigation (2026-08-17, veille d'une démo
     # bloquante) : un ImportError sur get_contracts_finances a été signalé
@@ -223,7 +225,7 @@ if est_admin():
     pg = st.navigation(
         [
             page_sourcing, page_gestion, page_administration, page_deliverabilite,
-            page_demandes_devis, page_suivi, page_suppression_rgpd, page_portail_client,
+            page_demandes_devis, page_reclamations, page_suivi, page_suppression_rgpd, page_portail_client,
             # page_finances,  # voir commentaire ci-dessus — retrait temporaire
         ]
     )

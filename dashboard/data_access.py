@@ -23,7 +23,7 @@ import glob
 import hashlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -1187,3 +1187,331 @@ def marquer_demande_devis_payee_et_livree(demande_id: str, stripe_payment_intent
 
     get_demandes_devis.clear()
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------
+# Réclamations (B2C + B2B) — Article 4 des CGV (construire_articles_cgv_b2c
+# et son équivalent B2B), voir sql/init_reclamations.sql pour le schéma
+# complet et la justification des choix de modélisation (lead_id polymorphe,
+# client_lead_id vs client_final selon type_lead).
+#
+# Coexiste avec le mécanisme B2B déjà en place (signaler_lead_pro_invalide
+# ci-dessus, leads_professionnels.signale_invalide + remboursements) —
+# volontairement pas remplacé : cette table est le point d'entrée formel
+# (délai vérifié, motif contrôlé, décision tracée), pas encore reliée à un
+# remboursement/avoir effectif (étape ultérieure distincte, jamais couplée
+# automatiquement ici).
+# ---------------------------------------------------------------------
+
+MOTIFS_RECLAMATION = ("email_invalide", "telephone_errone", "zone_non_conforme", "type_non_conforme", "doublon")
+
+LIBELLES_MOTIFS_RECLAMATION = {
+    "email_invalide": "E-mail invalide",
+    "telephone_errone": "Téléphone erroné",
+    "zone_non_conforme": "Zone non conforme",
+    "type_non_conforme": "Type non conforme (corps de métier / typologie de projet)",
+    "doublon": "Doublon",
+}
+
+# Délai contractuel de réclamation (Article 4 des CGV) — l'absence de
+# réponse du prospect est explicitement exclue comme motif valide par les
+# CGV, ce qui est déjà garanti structurellement : elle n'existe pas dans
+# MOTIFS_RECLAMATION, un client ne peut donc pas la sélectionner.
+DELAI_RECLAMATION_JOURS = 7
+
+# Fenêtre glissante et seuil pour calculer_taux_reclamation() ci-dessous —
+# au-delà, revue manuelle du client par l'admin (jamais d'action bloquante
+# automatique, voir la demande d'origine).
+FENETRE_TAUX_RECLAMATION_JOURS = 90
+SEUIL_ALERTE_TAUX_RECLAMATION = 0.20
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_leads_payants() -> dict:
+    """Artisans clients actifs (status='paye') — pour le sélecteur d'aperçu
+    admin du Portail Client B2C (voir app_pages/portail_client.py), même
+    filtre que livraison_devis.py::_artisans_clients_actifs (sans les
+    intake/contrats associés, juste de quoi peupler un sélecteur)."""
+    try:
+        data = (
+            supabase.table("leads").select("id,company,email").eq("status", "paye")
+            .not_.in_("id", LEADS_TEST_A_EXCLURE).order("company").execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture artisans payants : {e}") from e
+    return {"leads": data}
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_demandes_devis_livrees_pour_lead(lead_id: str) -> dict:
+    """Demandes de devis (B2C) livrées à CET artisan (lead_id_livraison=lead_id,
+    statut='livree') — alimente à la fois la liste "Vos demandes de devis"
+    du Portail Client et le sélecteur du formulaire de réclamation associé."""
+    try:
+        data = (
+            supabase.table("demandes_devis_particuliers").select("*")
+            .eq("lead_id_livraison", lead_id).eq("statut", "livree")
+            .order("livree_le", desc=True).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture des demandes de devis livrées : {e}") from e
+    return {"demandes": data or []}
+
+
+def get_demandes_devis_par_ids(demande_ids: tuple[str, ...]) -> dict:
+    """Résolution ciblée id -> demande de devis (nom du particulier, corps de
+    métier...), pour l'affichage de get_reclamations() sans dépendre de
+    get_demandes_devis() (limitée aux 200 plus récentes) — même principe que
+    get_leads_par_ids ci-dessus."""
+    demande_ids = [d for d in demande_ids if d]
+    if not demande_ids:
+        return {"demandes": []}
+    try:
+        data = (
+            supabase.table("demandes_devis_particuliers")
+            .select("id,nom,corps_metier,commune,email,telephone")
+            .in_("id", demande_ids).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture demandes de devis : {e}") from e
+    return {"demandes": data}
+
+
+def get_leads_pro_par_ids(lead_pro_ids: tuple[str, ...]) -> dict:
+    """Équivalent get_demandes_devis_par_ids() ci-dessus, côté B2B
+    (leads_professionnels) — même principe que get_leads_par_ids."""
+    lead_pro_ids = [l for l in lead_pro_ids if l]
+    if not lead_pro_ids:
+        return {"leads_pro": []}
+    try:
+        data = (
+            supabase.table("leads_professionnels").select("id,nom_entreprise,type_acteur,commune")
+            .in_("id", lead_pro_ids).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture leads professionnels : {e}") from e
+    return {"leads_pro": data}
+
+
+def _dans_les_delais_reclamation(date_livraison_iso: str | None) -> bool:
+    if not date_livraison_iso:
+        return False
+    try:
+        date_livraison = datetime.fromisoformat(date_livraison_iso.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return (datetime.now(timezone.utc) - date_livraison) <= timedelta(days=DELAI_RECLAMATION_JOURS)
+
+
+def creer_reclamation(
+    type_lead: str, lead_id: str, motif: str, description_libre: str | None,
+    est_admin: bool, client_lead_id: str | None = None, client_final: str | None = None,
+) -> dict:
+    """Crée une réclamation (B2C ou B2B), avec vérification CÔTÉ SERVEUR
+    (pas seulement côté formulaire, voir demande d'origine) :
+    - motif parmi les 5 valeurs objectives de l'Article 4 des CGV
+      (MOTIFS_RECLAMATION) ;
+    - le lead existe bien, a bien été livré, et l'a bien été à CE client
+      (client_lead_id pour le B2C, client_final pour le B2B) — sauf pour un
+      admin (est_admin=True), qui peut créer une réclamation pour n'importe
+      quel client, même bypass de principe que
+      signaler_lead_pro_invalide(est_admin=True) ci-dessus.
+
+    Le délai de 7 jours N'EST PAS bloquant : au-delà, dans_les_delais=False
+    est simplement posé sur la ligne créée — la réclamation est quand même
+    enregistrée (seule l'absence de réponse du prospect est exclue comme
+    motif valide par les CGV, jamais un dépassement de délai côté client).
+
+    Renvoie {"reclamation": <ligne créée>, "dans_les_delais": bool}."""
+    if type_lead not in ("b2c", "b2b"):
+        raise DataAccessError("type_lead invalide.")
+    if motif not in MOTIFS_RECLAMATION:
+        raise DataAccessError("Motif invalide.")
+
+    if type_lead == "b2c":
+        try:
+            demandes = supabase.table("demandes_devis_particuliers").select("*").eq("id", lead_id).execute().data
+        except Exception as e:
+            raise DataAccessError(f"Erreur lecture de la demande de devis : {e}") from e
+        if not demandes:
+            raise DataAccessError("Demande de devis introuvable.")
+        demande = demandes[0]
+        if demande.get("statut") != "livree" or not demande.get("lead_id_livraison"):
+            raise DataAccessError("Cette demande de devis n'a pas encore été livrée.")
+        if not est_admin and demande["lead_id_livraison"] != client_lead_id:
+            raise DataAccessError("Cette demande de devis ne vous a pas été livrée.")
+        client_lead_id_final = demande["lead_id_livraison"]
+        client_final_final = None
+        date_livraison = demande.get("livree_le")
+    else:
+        try:
+            leads_pro = supabase.table("leads_professionnels").select("*").eq("id", lead_id).execute().data
+        except Exception as e:
+            raise DataAccessError(f"Erreur lecture du lead professionnel : {e}") from e
+        if not leads_pro:
+            raise DataAccessError("Lead professionnel introuvable.")
+        lead_pro = leads_pro[0]
+        if not est_admin and lead_pro.get("client_final") != client_final:
+            raise DataAccessError("Ce lead ne vous a pas été livré.")
+        client_lead_id_final = None
+        client_final_final = lead_pro.get("client_final")
+        date_livraison = lead_pro.get("created_at")
+
+    if not date_livraison:
+        raise DataAccessError("Date de livraison introuvable pour ce lead — réclamation impossible.")
+
+    dans_delais = _dans_les_delais_reclamation(date_livraison)
+
+    payload = {
+        "type_lead": type_lead,
+        "lead_id": lead_id,
+        "client_lead_id": client_lead_id_final,
+        "client_final": client_final_final,
+        "motif": motif,
+        "description_libre": (description_libre or "").strip() or None,
+        "date_livraison_lead": date_livraison,
+        "dans_les_delais": dans_delais,
+        "statut": "en_attente",
+    }
+    try:
+        resultat = supabase.table("reclamations").insert(payload).execute()
+    except Exception as e:
+        raise DataAccessError(f"Échec d'enregistrement de la réclamation : {e}") from e
+
+    get_reclamations.clear()
+    log.info(f"Réclamation créée ({type_lead}, motif={motif}, dans_les_delais={dans_delais}) pour le lead {lead_id}")
+    return {"reclamation": resultat.data[0] if resultat.data else None, "dans_les_delais": dans_delais}
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_reclamations(
+    statut: str | None = None, client_lead_id: str | None = None, client_final: str | None = None,
+) -> dict:
+    try:
+        requete = supabase.table("reclamations").select("*").order("date_reclamation", desc=True)
+        if statut:
+            requete = requete.eq("statut", statut)
+        if client_lead_id:
+            requete = requete.eq("client_lead_id", client_lead_id)
+        if client_final:
+            requete = requete.eq("client_final", client_final)
+        data = requete.execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture réclamations : {e}") from e
+    return {"reclamations": data or []}
+
+
+def traiter_reclamation(reclamation_id: str, decision: str, traite_par: str, commentaire: str | None = None) -> dict:
+    """Décision admin : 'acceptee' ou 'refusee'. Ne construit AUCUNE logique
+    de remboursement/compensation (voir sql/init_reclamations.sql et la
+    demande d'origine) — se contente de changer le statut et de tracer la
+    décision (date_traitement, traite_par, commentaire_traitement). Un motif
+    de refus est obligatoire (contrainte reclamation_refus_trace en base,
+    revérifiée ici en amont pour un message d'erreur clair côté UI plutôt
+    que de laisser Supabase renvoyer une violation de contrainte brute)."""
+    if decision not in ("acceptee", "refusee"):
+        raise DataAccessError("Décision invalide.")
+    if not (traite_par or "").strip():
+        raise DataAccessError("Merci d'indiquer qui traite cette réclamation.")
+    if decision == "refusee" and not (commentaire or "").strip():
+        raise DataAccessError("Un motif de refus est requis.")
+
+    try:
+        reclamations = supabase.table("reclamations").select("*").eq("id", reclamation_id).execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture de la réclamation : {e}") from e
+    if not reclamations:
+        raise DataAccessError("Réclamation introuvable.")
+    if reclamations[0].get("statut") != "en_attente":
+        raise DataAccessError(f"Cette réclamation a déjà été traitée (statut actuel : {reclamations[0]['statut']}).")
+
+    champs_maj = {
+        "statut": decision,
+        "date_traitement": datetime.now(timezone.utc).isoformat(),
+        "traite_par": traite_par.strip(),
+        "commentaire_traitement": (commentaire or "").strip() or None,
+    }
+    try:
+        supabase.table("reclamations").update(champs_maj).eq("id", reclamation_id).execute()
+    except Exception as e:
+        raise DataAccessError(f"Échec mise à jour de la réclamation : {e}") from e
+
+    get_reclamations.clear()
+    log.info(f"Réclamation {reclamation_id} {decision} par {traite_par}")
+    return champs_maj
+
+
+def calculer_taux_reclamation(
+    client_lead_id: str | None = None, client_final: str | None = None, jours: int = FENETRE_TAUX_RECLAMATION_JOURS,
+) -> dict:
+    """Taux de réclamation d'un client sur les `jours` derniers jours =
+    (réclamations reçues / leads livrés) sur la même fenêtre glissante.
+    Renvoie taux=0.0 avec livres=0 si aucun lead livré sur la période
+    (pas assez de données pour qu'un taux ait un sens — jamais présenté
+    comme une alerte dans ce cas, voir "alerte" ci-dessous)."""
+    if not client_lead_id and not client_final:
+        raise DataAccessError("client_lead_id ou client_final requis.")
+    seuil = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+
+    try:
+        if client_lead_id:
+            livres = (
+                supabase.table("demandes_devis_particuliers").select("id", count="exact")
+                .eq("lead_id_livraison", client_lead_id).eq("statut", "livree")
+                .gte("livree_le", seuil).execute()
+            )
+        else:
+            livres = (
+                supabase.table("leads_professionnels").select("id", count="exact")
+                .eq("client_final", client_final).gte("created_at", seuil).execute()
+            )
+
+        requete_reclamations = supabase.table("reclamations").select("id", count="exact")
+        if client_lead_id:
+            requete_reclamations = requete_reclamations.eq("client_lead_id", client_lead_id)
+        else:
+            requete_reclamations = requete_reclamations.eq("client_final", client_final)
+        reclamations = requete_reclamations.gte("date_reclamation", seuil).execute()
+    except Exception as e:
+        raise DataAccessError(f"Erreur calcul du taux de réclamation : {e}") from e
+
+    nb_livres = livres.count or 0
+    nb_reclamations = reclamations.count or 0
+    taux = (nb_reclamations / nb_livres) if nb_livres else 0.0
+    return {
+        "taux": taux,
+        "livres": nb_livres,
+        "reclamations": nb_reclamations,
+        "alerte": nb_livres > 0 and taux > SEUIL_ALERTE_TAUX_RECLAMATION,
+    }
+
+
+def get_clients_taux_reclamation_eleve(jours: int = FENETRE_TAUX_RECLAMATION_JOURS) -> dict:
+    """Calcule le taux de réclamation de TOUS les clients ayant au moins une
+    réclamation sur la fenêtre, et renvoie ceux au-dessus du seuil d'alerte
+    (SEUIL_ALERTE_TAUX_RECLAMATION) — pour la bannière de la vue d'ensemble
+    de la page admin Réclamations. Une seule passe par client concerné
+    plutôt qu'un calcul répété pour tous les clients existants (dont la
+    grande majorité n'a jamais eu de réclamation)."""
+    seuil = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+    try:
+        reclamations = (
+            supabase.table("reclamations").select("client_lead_id,client_final")
+            .gte("date_reclamation", seuil).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture réclamations : {e}") from e
+
+    clients_b2c = {r["client_lead_id"] for r in reclamations if r.get("client_lead_id")}
+    clients_b2b = {r["client_final"] for r in reclamations if r.get("client_final")}
+
+    alertes = []
+    for client_lead_id in clients_b2c:
+        taux_info = calculer_taux_reclamation(client_lead_id=client_lead_id, jours=jours)
+        if taux_info["alerte"]:
+            alertes.append({"type_lead": "b2c", "client_lead_id": client_lead_id, **taux_info})
+    for client_final in clients_b2b:
+        taux_info = calculer_taux_reclamation(client_final=client_final, jours=jours)
+        if taux_info["alerte"]:
+            alertes.append({"type_lead": "b2b", "client_final": client_final, **taux_info})
+    return {"alertes": alertes}

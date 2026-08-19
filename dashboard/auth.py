@@ -18,7 +18,7 @@ import streamlit as st
 from data_access import DataAccessError
 from supabase_client import supabase
 
-_CLES_SESSION = ("auth_connecte", "auth_role", "auth_campagnes", "auth_email")
+_CLES_SESSION = ("auth_connecte", "auth_role", "auth_campagnes", "auth_leads", "auth_email")
 
 # Volontairement permissif (pas de RFC 5322 complet) : sert juste à
 # rejeter les fautes de frappe évidentes ("test", "a@b") avant d'aller
@@ -60,6 +60,14 @@ def campagnes_autorisees() -> list[str]:
     return st.session_state.get("auth_campagnes") or []
 
 
+def mes_leads_autorises() -> list[str]:
+    """Leads (artisans B2C, table `leads`) accessibles au compte connecté —
+    équivalent B2C de campagnes_autorisees() (voir sql/init_utilisateur_leads.sql).
+    Vide pour un admin (aucune restriction) ou pour un compte client purement
+    B2B (aucun lead lié)."""
+    return st.session_state.get("auth_leads") or []
+
+
 def deconnexion() -> None:
     for cle in _CLES_SESSION:
         st.session_state.pop(cle, None)
@@ -92,12 +100,21 @@ def _connecter(email: str, mot_de_passe: str) -> None:
     )
     campagnes_autorisees_ = [l["client_final"] for l in liens]
 
-    if utilisateur["role"] == "client" and not campagnes_autorisees_:
-        raise DataAccessError("Aucune campagne associée à ce compte — contactez l'administrateur.")
+    liens_leads = _lecture_supabase_protegee(
+        supabase.table("utilisateur_leads").select("lead_id").eq("utilisateur_id", utilisateur["id"])
+    )
+    leads_autorises_ = [l["lead_id"] for l in liens_leads]
+
+    # Un compte client doit être rattaché à AU MOINS UNE chose (campagne B2B
+    # OU lead B2C, éventuellement les deux) — sinon la connexion aboutit à
+    # une page vide sans qu'aucune erreur explicite n'explique pourquoi.
+    if utilisateur["role"] == "client" and not campagnes_autorisees_ and not leads_autorises_:
+        raise DataAccessError("Aucune campagne ni aucun lead associé à ce compte — contactez l'administrateur.")
 
     st.session_state["auth_connecte"] = True
     st.session_state["auth_role"] = utilisateur["role"]
     st.session_state["auth_campagnes"] = campagnes_autorisees_
+    st.session_state["auth_leads"] = leads_autorises_
     st.session_state["auth_email"] = utilisateur["email"]
 
 

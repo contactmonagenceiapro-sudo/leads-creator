@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 """Crée ou met à jour un compte du Portail Client (table utilisateurs_dashboard),
-et le lie éventuellement à une ou plusieurs campagnes (utilisateur_campagnes).
+et le lie éventuellement à une ou plusieurs campagnes B2B (utilisateur_campagnes)
+et/ou à un ou plusieurs leads B2C (utilisateur_leads, voir
+sql/init_utilisateur_leads.sql — artisans acheteurs de devis, table `leads`).
 
 Le mot de passe n'est jamais stocké en clair : hashé avec bcrypt avant
 l'insertion en base (voir sql/init_portail_client.sql, vérifié par
 api/main.py::login).
 
 Usage :
-    # Compte admin (accès total, aucune campagne à lier)
+    # Compte admin (accès total, aucune campagne/lead à lier)
     python3 creer_utilisateur_dashboard.py --email moi@expertise-digitale.fr --role admin
 
-    # Compte client, lié à une campagne (mot de passe demandé de façon masquée)
+    # Compte client B2B, lié à une campagne (mot de passe demandé de façon masquée)
     python3 creer_utilisateur_dashboard.py --email contact@sbg-travaux.fr --role client --campagne "S.B.G Travaux"
 
     # Client lié à plusieurs campagnes
     python3 creer_utilisateur_dashboard.py --email x@y.fr --role client --campagne "Client A" --campagne "Client B"
+
+    # Compte client B2C (artisan acheteur de devis), lié par son e-mail dans `leads`
+    python3 creer_utilisateur_dashboard.py --email artisan@exemple.fr --role client --lead-email artisan@exemple.fr
 
 Ré-exécutable sans risque : un même e-mail met à jour le mot de passe/rôle
 existant plutôt que de dupliquer la ligne (upsert sur la colonne UNIQUE email).
@@ -62,8 +67,15 @@ def main() -> None:
         default=[],
         dest="campagnes",
         metavar="NOM_CLIENT",
-        help="nom_client (table campagnes) à lier à ce compte — répétable. "
-        "Requis pour un compte client, ignoré pour un compte admin.",
+        help="nom_client (table campagnes, B2B) à lier à ce compte — répétable.",
+    )
+    parser.add_argument(
+        "--lead-email",
+        action="append",
+        default=[],
+        dest="leads_emails",
+        metavar="EMAIL_ARTISAN",
+        help="e-mail exact (colonne leads.email, B2C) de l'artisan à lier à ce compte — répétable.",
     )
     args = parser.parse_args()
 
@@ -71,8 +83,11 @@ def main() -> None:
         sys.exit("❌ SUPABASE_URL / SUPABASE_KEY manquants (vérifie ton .env).")
 
     email = args.email.strip().lower()
-    if args.role == "client" and not args.campagnes:
-        sys.exit("❌ Un compte client doit être lié à au moins une campagne (--campagne \"Nom exact\").")
+    if args.role == "client" and not args.campagnes and not args.leads_emails:
+        sys.exit(
+            "❌ Un compte client doit être lié à au moins une campagne (--campagne \"Nom exact\") "
+            "ou à au moins un artisan (--lead-email \"email@exemple.fr\")."
+        )
 
     mot_de_passe = args.password or getpass.getpass("Mot de passe : ")
     if not mot_de_passe:
@@ -108,6 +123,29 @@ def main() -> None:
             print(f"⚠️  Échec liaison campagne « {campagne} » : {res.status_code} {res.text}")
         else:
             print(f"🔗 Lié à la campagne « {campagne} »")
+
+    for lead_email in args.leads_emails:
+        res_lookup = requests.get(
+            f"{SUPABASE_URL}/rest/v1/leads",
+            headers=_headers(),
+            params={"email": f"eq.{lead_email.strip().lower()}", "select": "id,company,email"},
+            timeout=15,
+        )
+        if res_lookup.status_code != 200 or not res_lookup.json():
+            print(f"⚠️  Aucun artisan trouvé dans `leads` avec l'e-mail « {lead_email} » — liaison ignorée.")
+            continue
+        lead = res_lookup.json()[0]
+        res_lien = requests.post(
+            f"{SUPABASE_URL}/rest/v1/utilisateur_leads",
+            headers=_headers(),
+            params={"on_conflict": "utilisateur_id,lead_id"},
+            json={"utilisateur_id": utilisateur_id, "lead_id": lead["id"]},
+            timeout=15,
+        )
+        if res_lien.status_code not in (200, 201):
+            print(f"⚠️  Échec liaison artisan « {lead_email} » : {res_lien.status_code} {res_lien.text}")
+        else:
+            print(f"🔗 Lié à l'artisan « {lead.get('company') or lead_email} » (lead_id={lead['id']})")
 
 
 if __name__ == "__main__":
