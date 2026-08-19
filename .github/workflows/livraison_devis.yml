@@ -1,0 +1,59 @@
+name: Réattribution automatique des demandes de devis expirées
+
+# Exécute livraison_devis.py à intervalle régulier, indépendamment du
+# dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de
+# rester éveillé) — sans ce déclenchement automatique, l'engagement de
+# délai affiché publiquement ("un professionnel qualifié vous recontacte
+# sous 48h maximum, ou votre demande est automatiquement proposée à un
+# autre professionnel", voir dashboard/pages_publiques.py) ne serait vrai
+# que si un admin pense à cliquer le bouton manuel du dashboard au bon
+# moment — pas une vraie garantie.
+#
+# Fréquence horaire, cohérente avec l'engagement 48h affiché (un écart d'au
+# plus ~1h par rapport à l'échéance annoncée) et avec la fréquence déjà
+# retenue pour mail_check.yml. Décalée de 15 minutes par rapport à
+# mail_check.yml ("0 * * * *") pour ne pas partir en même temps qu'elle.
+#
+# Même commande par défaut que le bouton manuel du dashboard (voir
+# dashboard/process_runner.py::lancer_livraison_devis) : expire d'abord les
+# propositions périmées (expirer_propositions_perimees, ré-attribution au
+# candidat suivant) PUIS rapproche les demandes en attente avec les
+# artisans clients actifs (traiter_demandes_en_attente) — le bouton manuel
+# n'est PAS modifié, il continue de fonctionner exactement comme avant, en
+# plus de ce déclenchement automatique (utile pour forcer une vérification
+# immédiate sans attendre la prochaine heure pleine).
+
+on:
+  schedule:
+    - cron: "15 * * * *"  # toutes les heures, à :15 (UTC)
+  workflow_dispatch: {}   # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: livraison-devis
+  cancel-in-progress: false  # jamais annuler un run en cours, seulement en éviter un doublon en attente
+
+jobs:
+  livraison-devis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Expirer les propositions périmées et traiter les demandes en attente
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          AGENCY_NAME: ${{ secrets.AGENCY_NAME }}
+        run: python3 livraison_devis.py
