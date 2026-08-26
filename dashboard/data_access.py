@@ -69,8 +69,10 @@ CACHE_TTL_SECONDES = 30
 # supprimés pour autant, ce lead sert toujours à valider le tunnel.
 LEADS_TEST_A_EXCLURE = (
     "a51d80c8-8363-42a6-87c8-7481911ecc2b",  # __TEST_E2E_TUNNEL__
-    "ce66b08a-e8f4-456b-a3f5-035dccf292cc",  # "entreprise de test"
-    "b45fc2f7-60ff-4871-bb5a-8a514c2fdcc2",  # "test"
+    # "entreprise de test"/"test" (ce66b08a.../b45fc2f7...) supprimées le
+    # 27/08/2026 (nettoyage données de test résiduelles, voir contrôle
+    # santé donnees_test_residuelles) — retirées d'ici plutôt que laissées
+    # en référence à des lignes qui n'existent plus.
 )
 
 
@@ -1715,4 +1717,194 @@ def calculer_ca_du_mois(annee: int, mois: int) -> dict:
         "nb_demandes_unite": len(demandes),
         "contrats": contrats,
         "demandes": demandes,
+    }
+
+
+# ---------------------------------------------------------------------
+# Module 8 (pilotage) — qualité des données leads. Volontairement SANS
+# table dédiée (contrairement aux autres modules) : à l'échelle actuelle
+# (~600 leads B2C, ~75 leads pro), tout est recalculable à la volée à
+# chaque consultation — pas de valeur à figer un historique ici comme pour
+# sante_base_donnees (pas de dérive lente à surveiller, juste un état
+# courant à corriger). Réutilisé à l'identique par
+# scripts/controle_qualite_leads.py (cron optionnel ou lancement à la
+# demande) et par dashboard/app_pages/qualite_leads.py.
+# ---------------------------------------------------------------------
+
+STATUTS_LEADS_MORTS = ("invalide",)
+STATUTS_LEADS_PRO_MORTS = ("invalide",)
+SEUIL_JOURS_ENRICHISSEMENT_STAGNANT = 7
+
+
+def _normaliser_nom(texte: str | None) -> str:
+    """Normalisation volontairement simple (casse, espaces, ponctuation
+    courante) — pas de correspondance floue/Levenshtein : à cette échelle,
+    la variance réelle observée est "Dupont SARL" vs "dupont sarl " vs
+    "Dupont, SARL", pas des fautes de frappe qui nécessiteraient un vrai
+    algorithme de distance."""
+    if not texte:
+        return ""
+    t = texte.lower().strip()
+    for car in (",", ".", "  "):
+        t = t.replace(car, " ")
+    return " ".join(t.split())
+
+
+def _grouper_doublons(lignes: list[dict], champ: str, normaliser: bool = False) -> list[dict]:
+    groupes: dict[str, list[dict]] = {}
+    for ligne in lignes:
+        valeur = ligne.get(champ)
+        if not valeur:
+            continue
+        cle = _normaliser_nom(valeur) if normaliser else str(valeur).strip().lower()
+        if not cle:
+            continue
+        groupes.setdefault(cle, []).append(ligne)
+    return [
+        {"valeur": cle, "champ": champ, "lignes": groupe}
+        for cle, groupe in groupes.items() if len(groupe) > 1
+    ]
+
+
+def detecter_doublons_leads() -> dict:
+    """Doublons potentiels sur `leads` — email/company exacts sont déjà
+    impossibles (contraintes UNIQUE idx_leads_email_unique/
+    idx_leads_company_unique, voir sql/init.sql) : ne reste à détecter que
+    ce que ces contraintes ne couvrent pas — même téléphone, même SIREN, ou
+    company quasi-identique après normalisation légère."""
+    try:
+        lignes = (
+            supabase.table("leads").select("id,company,telephone,siren,status,email")
+            .not_.in_("id", LEADS_TEST_A_EXCLURE).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture leads (doublons) : {e}") from e
+    return {
+        "telephone": _grouper_doublons(lignes, "telephone"),
+        "siren": _grouper_doublons(lignes, "siren"),
+        "company_normalisee": _grouper_doublons(lignes, "company", normaliser=True),
+    }
+
+
+def detecter_doublons_leads_professionnels() -> dict:
+    """Comme detecter_doublons_leads, mais SCOPÉ PAR client_final : la même
+    entreprise (même architecte, même promoteur) sourcée pour deux clients
+    B2B différents est un cas normal de cette plateforme multi-clients, pas
+    un doublon — voir campagnes/outbound_chantiers. Comparer uniquement au
+    sein d'une même campagne évite ce faux positif systématique."""
+    try:
+        lignes = (
+            supabase.table("leads_professionnels")
+            .select("id,nom_entreprise,telephone,siren,client_final,statut,email")
+            .execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture leads_professionnels (doublons) : {e}") from e
+    par_client: dict[str, list[dict]] = {}
+    for ligne in lignes:
+        par_client.setdefault(ligne["client_final"], []).append(ligne)
+    resultat = {"telephone": [], "siren": [], "nom_entreprise_normalise": []}
+    for client_final, sous_lignes in par_client.items():
+        for cle, groupes in (
+            ("telephone", _grouper_doublons(sous_lignes, "telephone")),
+            ("siren", _grouper_doublons(sous_lignes, "siren")),
+            ("nom_entreprise_normalise", _grouper_doublons(sous_lignes, "nom_entreprise", normaliser=True)),
+        ):
+            for g in groupes:
+                g["client_final"] = client_final
+            resultat[cle].extend(groupes)
+    return resultat
+
+
+def champs_manquants_leads_actifs() -> dict:
+    """Sur les leads NON invalides (voir STATUTS_LEADS_MORTS) : l'e-mail est
+    le SEUL canal de prospection utilisé par ce projet (aucun appel/SMS,
+    voir ceo_agent.py/lead_worker.py) — un lead actif sans email n'est
+    contactable par AUCUN mécanisme existant, priorité absolue. Téléphone
+    manquant est secondaire (donnée commerciale utile à la revente, pas un
+    canal de prospection)."""
+    try:
+        lignes = (
+            supabase.table("leads").select("id,company,status,email,telephone")
+            .not_.in_("status", list(STATUTS_LEADS_MORTS))
+            .not_.in_("id", LEADS_TEST_A_EXCLURE)
+            .execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture leads (champs manquants) : {e}") from e
+    sans_email = [l for l in lignes if not l.get("email")]
+    sans_telephone = [l for l in lignes if not l.get("telephone")]
+    return {
+        "total_actifs": len(lignes),
+        "sans_email": sans_email,
+        "sans_telephone": sans_telephone,
+    }
+
+
+def champs_manquants_leads_pro_actifs() -> dict:
+    try:
+        lignes = (
+            supabase.table("leads_professionnels").select("id,nom_entreprise,statut,email,telephone,client_final")
+            .not_.in_("statut", list(STATUTS_LEADS_PRO_MORTS)).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture leads_professionnels (champs manquants) : {e}") from e
+    sans_email = [l for l in lignes if not l.get("email")]
+    sans_telephone = [l for l in lignes if not l.get("telephone")]
+    return {
+        "total_actifs": len(lignes),
+        "sans_email": sans_email,
+        "sans_telephone": sans_telephone,
+    }
+
+
+def taux_enrichissement_leads_pro(seuil_jours: int = SEUIL_JOURS_ENRICHISSEMENT_STAGNANT) -> dict:
+    seuil = (datetime.now(timezone.utc) - timedelta(days=seuil_jours)).isoformat()
+    try:
+        total = supabase.table("leads_professionnels").select("id", count="exact").execute().count or 0
+        stagnants = (
+            supabase.table("leads_professionnels").select("id,nom_entreprise,client_final,created_at")
+            .eq("enrichissement_statut", "non_tente").lt("created_at", seuil).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture enrichissement leads_professionnels : {e}") from e
+    return {
+        "total": total,
+        "seuil_jours": seuil_jours,
+        "nb_stagnants": len(stagnants),
+        "pourcentage_stagnants": round(len(stagnants) / total * 100, 1) if total else 0.0,
+        "stagnants": stagnants,
+    }
+
+
+def score_qualite_leads() -> dict:
+    """Synthèse 0-100 des 4 signaux ci-dessus, pondérée simplement (pas de
+    prétention statistique) — sert de repère visuel unique en haut de la
+    page, le détail par signal reste la vraie information actionnable."""
+    doublons_leads = detecter_doublons_leads()
+    doublons_pro = detecter_doublons_leads_professionnels()
+    manquants_leads = champs_manquants_leads_actifs()
+    manquants_pro = champs_manquants_leads_pro_actifs()
+    enrichissement = taux_enrichissement_leads_pro()
+
+    nb_doublons = sum(len(g) for g in doublons_leads.values()) + sum(len(g) for g in doublons_pro.values())
+    total_actifs = manquants_leads["total_actifs"] + manquants_pro["total_actifs"]
+    nb_sans_email = len(manquants_leads["sans_email"]) + len(manquants_pro["sans_email"])
+    taux_sans_email = (nb_sans_email / total_actifs) if total_actifs else 0.0
+
+    penalite_doublons = min(30, nb_doublons * 3)
+    penalite_email = min(50, taux_sans_email * 100 * 0.6)
+    penalite_enrichissement = min(20, enrichissement["pourcentage_stagnants"] * 0.4)
+    score = round(max(0, 100 - penalite_doublons - penalite_email - penalite_enrichissement))
+
+    return {
+        "score": score,
+        "nb_groupes_doublons": nb_doublons,
+        "taux_sans_email_pct": round(taux_sans_email * 100, 1),
+        "pourcentage_enrichissement_stagnant": enrichissement["pourcentage_stagnants"],
+        "doublons_leads": doublons_leads,
+        "doublons_leads_professionnels": doublons_pro,
+        "manquants_leads": manquants_leads,
+        "manquants_leads_professionnels": manquants_pro,
+        "enrichissement": enrichissement,
     }

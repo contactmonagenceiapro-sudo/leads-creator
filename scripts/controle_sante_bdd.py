@@ -68,10 +68,10 @@ FK_RE = re.compile(r"<fk table='([^']+)' column='([^']+)'/>")
 # 'attention' pour vérification manuelle, jamais validée 'ok' à tort.
 TABLES_AUDITEES_MANUELLEMENT = {
     "agence_config", "agent_memories", "articles", "artisans", "campagnes",
-    "ceo_reports", "contracts", "demandes_devis_particuliers", "email_events",
-    "emails_blacklistes", "error_log", "intake_responses", "journal_audit_admin",
-    "kpis", "leads", "leads_professionnels", "mail_check_lock", "mail_check_runs",
-    "migrations_appliquees", "reclamations", "registre_suppressions_rgpd",
+    "ceo_reports", "contracts", "couts_infrastructure", "demandes_devis_particuliers",
+    "email_events", "emails_blacklistes", "error_log", "intake_responses",
+    "journal_audit_admin", "kpis", "leads", "leads_professionnels", "mail_check_lock",
+    "mail_check_runs", "migrations_appliquees", "reclamations", "registre_suppressions_rgpd",
     "remboursements", "sante_base_donnees", "tasks", "utilisateur_campagnes",
     "utilisateur_leads", "utilisateurs_dashboard",
 }

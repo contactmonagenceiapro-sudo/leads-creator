@@ -137,6 +137,14 @@ MODULES_PILOTAGE: list[str] = [
         "(`data_access.calculer_ca_du_mois`, réutilisable par le futur module 1 finances) — "
         "page `dashboard/app_pages/couts_infrastructure.py`."
     ),
+    (
+        "**Module 8 — Qualité des leads** (27/08/2026) : score global calculé à la volée "
+        "(`data_access.score_qualite_leads`, pas de table dédiée) — doublons potentiels "
+        "(téléphone/SIREN/nom normalisé, scopés par campagne côté B2B), champs manquants sur "
+        "les leads actifs (e-mail en priorité, seul canal de prospection), enrichissement B2B "
+        "stagnant. Page `dashboard/app_pages/qualite_leads.py` + script CLI/cron optionnel "
+        "`scripts/controle_qualite_leads.py`."
+    ),
 ]
 
 
