@@ -26,6 +26,8 @@ Structure (multi-pages) :
     app_pages/qualite_leads.py      -> [Admin] Qualité des leads (doublons, champs manquants,
                                         enrichissement B2B stagnant — voir aussi
                                         scripts/controle_qualite_leads.py)
+    app_pages/echeances.py          -> [Admin] Échéances légales/administratives (alerte
+                                        hebdomadaire <30j, voir scripts/controle_echeances.py)
     app_pages/finances.py           -> [Admin] Finances (CA, MRR, activité commerciale B2C)
                                         (RETIRÉE TEMPORAIREMENT de la navigation, voir
                                         commentaire dans la section navigation ci-dessous)
@@ -214,6 +216,7 @@ if est_admin():
     page_journal_audit = st.Page("app_pages/journal_audit.py", title="Journal d'audit", icon="🗂️")
     page_couts_infrastructure = st.Page("app_pages/couts_infrastructure.py", title="Coûts d'infrastructure", icon="💰")
     page_qualite_leads = st.Page("app_pages/qualite_leads.py", title="Qualité des leads", icon="🧹")
+    page_echeances = st.Page("app_pages/echeances.py", title="Échéances", icon="📅")
     # RETIRÉE TEMPORAIREMENT de la navigation (2026-08-17, veille d'une démo
     # bloquante) : un ImportError sur get_contracts_finances a été signalé
     # en production (Streamlit Cloud) juste après le déploiement de cette
@@ -239,7 +242,7 @@ if est_admin():
         [
             page_sourcing, page_gestion, page_administration, page_deliverabilite,
             page_demandes_devis, page_reclamations, page_suivi, page_sante_bdd,
-            page_journal_audit, page_couts_infrastructure, page_qualite_leads,
+            page_journal_audit, page_couts_infrastructure, page_qualite_leads, page_echeances,
             page_suppression_rgpd, page_portail_client,
             # page_finances,  # voir commentaire ci-dessus — retrait temporaire
         ]

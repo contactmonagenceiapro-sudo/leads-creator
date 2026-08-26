@@ -1,0 +1,45 @@
+name: Contrôle hebdomadaire des échéances
+
+# Exécute scripts/controle_echeances.py une fois par semaine — alerte
+# (Discord ou e-mail en repli) sur toute échéance légale/administrative
+# encore 'a_traiter' à moins de 30 jours (voir sql/init_echeances.sql).
+#
+# Lundi 8h00 UTC — hebdomadaire (pas quotidien comme controle_sante_bdd.yml,
+# une échéance à 30 jours ne bouge pas assez vite pour justifier un contrôle
+# plus fréquent) ; décalé des crons horaires (mail_check.yml, à :00,
+# livraison_devis.yml, à :15) et du cron quotidien controle_sante_bdd.yml
+# (4h30 UTC) pour ne jamais les chevaucher.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1" # tous les lundis, 8h00 UTC
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: controle-echeances
+  cancel-in-progress: false
+
+jobs:
+  controle-echeances:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Vérifier les échéances à venir
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          CEO_EMAIL: ${{ secrets.CEO_EMAIL }}
+        run: python3 scripts/controle_echeances.py

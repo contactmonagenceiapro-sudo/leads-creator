@@ -1908,3 +1908,94 @@ def score_qualite_leads() -> dict:
         "manquants_leads_professionnels": manquants_pro,
         "enrichissement": enrichissement,
     }
+
+
+# ---------------------------------------------------------------------
+# Module 5 (pilotage) — échéances légales et administratives (voir
+# sql/init_echeances.sql). Inclut la vérification récurrente de l'usage
+# Supabase (fusion du module 11 — API de gestion Supabase inaccessible avec
+# SUPABASE_KEY, vérification manuelle retenue).
+# ---------------------------------------------------------------------
+
+SEUIL_ALERTE_ECHEANCE_JOURS = 30
+
+
+def get_echeances(inclure_traitees: bool = True) -> dict:
+    try:
+        requete = supabase.table("echeances").select("*").order("date_echeance")
+        if not inclure_traitees:
+            requete = requete.eq("statut", "a_traiter")
+        data = requete.execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture échéances : {e}") from e
+    return {"echeances": data or []}
+
+
+def ajouter_echeance(
+    type_echeance: str, description: str, date_echeance: str,
+    recurrence_jours: int | None = None, notes: str | None = None,
+) -> dict:
+    type_echeance = (type_echeance or "").strip()
+    description = (description or "").strip()
+    if not type_echeance or not description:
+        raise DataAccessError("Type et description sont requis.")
+    corps = {
+        "type": type_echeance,
+        "description": description,
+        "date_echeance": date_echeance,
+        "recurrence_jours": recurrence_jours,
+        "notes": (notes or "").strip() or None,
+    }
+    try:
+        data = supabase.table("echeances").insert(corps).execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur ajout échéance : {e}") from e
+    return data[0] if data else corps
+
+
+def terminer_echeance(echeance_id: str) -> dict:
+    """Clôture l'échéance ; si recurrence_jours est renseigné, recrée
+    automatiquement la suivante decalée de N jours À PARTIR DE L'ÉCHÉANCE
+    D'ORIGINE (pas de la date du jour) — voir sql/init_echeances.sql pour
+    le raisonnement anti-dérive."""
+    try:
+        lignes = supabase.table("echeances").select("*").eq("id", echeance_id).execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture échéance : {e}") from e
+    if not lignes:
+        raise DataAccessError("Échéance introuvable.")
+    echeance = lignes[0]
+
+    try:
+        supabase.table("echeances").update({
+            "statut": "traite",
+            "date_traitement": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", echeance_id).execute()
+    except Exception as e:
+        raise DataAccessError(f"Erreur clôture échéance : {e}") from e
+
+    nouvelle = None
+    if echeance.get("recurrence_jours"):
+        date_origine = datetime.strptime(echeance["date_echeance"], "%Y-%m-%d").date()
+        nouvelle_date = date_origine + timedelta(days=echeance["recurrence_jours"])
+        nouvelle = ajouter_echeance(
+            echeance["type"], echeance["description"], nouvelle_date.isoformat(),
+            echeance["recurrence_jours"], echeance.get("notes"),
+        )
+    return {"statut": "ok", "nouvelle_echeance": nouvelle}
+
+
+def get_echeances_a_relancer(seuil_jours: int = SEUIL_ALERTE_ECHEANCE_JOURS) -> dict:
+    """Échéances encore 'a_traiter' à moins de seuil_jours (y compris déjà
+    dépassées, statut != 'traite') — utilisé par scripts/controle_echeances.py
+    (cron hebdomadaire) et par la page dashboard."""
+    limite = (datetime.now(timezone.utc).date() + timedelta(days=seuil_jours)).isoformat()
+    try:
+        data = (
+            supabase.table("echeances").select("*")
+            .eq("statut", "a_traiter").lte("date_echeance", limite)
+            .order("date_echeance").execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture échéances à relancer : {e}") from e
+    return {"echeances": data or [], "seuil_jours": seuil_jours}

@@ -145,6 +145,14 @@ MODULES_PILOTAGE: list[str] = [
         "stagnant. Page `dashboard/app_pages/qualite_leads.py` + script CLI/cron optionnel "
         "`scripts/controle_qualite_leads.py`."
     ),
+    (
+        "**Module 5 — Échéances légales/administratives** (27/08/2026) : table `echeances` "
+        "(récurrence optionnelle, ex. vérification mensuelle de l'usage Supabase — fusion du "
+        "module 11, son API de gestion étant inaccessible avec `SUPABASE_KEY`), alerte "
+        "hebdomadaire (`scripts/controle_echeances.py`, `.github/workflows/controle_echeances.yml`, "
+        "lundi 8h UTC) sur toute échéance à moins de 30 jours — page "
+        "`dashboard/app_pages/echeances.py`."
+    ),
 ]
 
 
