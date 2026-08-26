@@ -1,0 +1,72 @@
+name: Génération automatique de l'architecture technique
+
+# Se déclenche sur tout push main touchant les sources de vérité lues par
+# scripts/generer_architecture.py : schéma de base (sql/**, même si le
+# script interroge le schéma LIVE via l'API Supabase — un changement dans
+# sql/** signale qu'une migration vient probablement d'être appliquée),
+# workflows (.github/workflows/**) et pages dashboard
+# (dashboard/app_pages/**). Volontairement PAS sur docs/architecture_globale.md
+# lui-même : c'est ce fichier que ce workflow écrit.
+#
+# Ce déclenchement par push (plutôt qu'un cron) régénère le document au
+# moment du changement structurant, pas seulement à intervalle régulier —
+# cohérent avec l'objectif "toujours à jour" plutôt que "à jour au pire il y
+# a X heures".
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sql/**"
+      - ".github/workflows/**"
+      - "dashboard/app_pages/**"
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+permissions:
+  contents: write # nécessaire pour committer/pousser docs/architecture_globale.md ci-dessous
+
+concurrency:
+  group: generer-architecture
+  cancel-in-progress: false # jamais annuler un run en cours, seulement en éviter un doublon en attente
+
+jobs:
+  generer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Régénérer docs/architecture_globale.md
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python3 scripts/generer_architecture.py
+
+      - name: Committer si le document a changé
+        # GITHUB_TOKEN par défaut (avec `permissions: contents: write`
+        # déclaré ci-dessus au niveau du workflow) suffit ici — pas besoin
+        # d'un PAT dédié : ce job pousse sur LA MÊME branche (main) que
+        # celle qui a déclenché le run, via le token éphémère fourni
+        # automatiquement à chaque run par GitHub. Un push fait avec
+        # GITHUB_TOKEN ne redéclenche jamais d'autre workflow (limitation
+        # anti-boucle volontaire de GitHub) — sans conséquence ici puisque
+        # ce commit ne touche que docs/architecture_globale.md, en dehors
+        # des chemins surveillés par `on.push.paths` ci-dessus.
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- docs/architecture_globale.md; then
+            echo "Rien à committer — document déjà à jour."
+            exit 0
+          fi
+          git add docs/architecture_globale.md
+          git commit -m "docs: mise à jour automatique de l'architecture"
+          git push

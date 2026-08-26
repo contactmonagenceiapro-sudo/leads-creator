@@ -1,0 +1,414 @@
+# Architecture technique globale — leads-creator
+
+> Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
+
+Généré le : 2026-08-26 20:59 UTC
+
+## 1. Schéma de la base de données
+
+25 tables, 1 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
+
+```mermaid
+erDiagram
+    agence_config {
+        text cle PK
+        text nom
+        text adresse
+        text email
+        text siret_statut
+        text siret_numero
+        timestamp_with_time_zone updated_at
+    }
+    agent_memories {
+        uuid id PK
+        text agent_id
+        text content
+        extensions_vector_768_ embedding
+        jsonb metadata
+        text memory_type
+        double_precision importance
+        timestamp_with_time_zone created_at
+    }
+    articles {
+        uuid id PK
+        text keyword
+        text content
+        int32 word_count
+        double_precision quality_score
+        uuid client_id
+        text status
+        timestamp_with_time_zone created_at
+    }
+    artisans {
+        uuid id PK
+        text email
+        text nom_entreprise
+        text nom_complet
+        text siret
+        text corps_metier
+        timestamp_with_time_zone created_at
+    }
+    campagnes {
+        uuid id PK
+        text nom_client
+        text slug
+        text secteur
+        text description_services
+        jsonb communes_cibles
+        jsonb types_acteur_cibles
+        text statut
+        timestamp_with_time_zone created_at
+        timestamp_with_time_zone updated_at
+    }
+    ceo_reports {
+        int64 id PK
+        timestamp_with_time_zone created_at
+        text title
+        text content
+        text summary
+        text date
+        text rapport
+        text stats
+    }
+    contracts {
+        uuid id PK
+        uuid lead_id
+        text yousign_request_id
+        text yousign_status
+        text stripe_payment_link_id
+        text stripe_payment_url
+        text payment_status
+        int32 montant_centimes
+        timestamp_with_time_zone signed_at
+        timestamp_with_time_zone paid_at
+        timestamp_with_time_zone created_at
+        text stripe_payment_intent_id
+        text signature_provider
+        text signature_token
+        text signature_nom_saisi
+        text signature_ip
+        text signature_user_agent
+        text signature_document_hash
+        text signature_document_pdf_base64
+        text type_offre
+        text formule_abonnement
+    }
+    demandes_devis_particuliers {
+        uuid id PK
+        text client_final
+        text nom
+        text email
+        text telephone
+        text commune
+        text budget_estime
+        text message
+        boolean consentement
+        text statut
+        timestamp_with_time_zone created_at
+        text corps_metier
+        uuid lead_id_livraison
+        timestamp_with_time_zone proposee_le
+        timestamp_with_time_zone livree_le
+        text stripe_payment_link_id
+        text stripe_payment_url
+        int32 montant_centimes
+        text stripe_payment_intent_id
+        text statut_confirmation
+        uuid token_confirmation
+        timestamp_with_time_zone date_envoi_confirmation
+        timestamp_with_time_zone date_confirmation
+    }
+    email_events {
+        uuid id PK
+        uuid tracking_id
+        text type_evenement
+        text lead_type
+        uuid lead_id
+        text client_final
+        text url_cible
+        timestamp_with_time_zone created_at
+    }
+    emails_blacklistes {
+        text email PK
+        text domaine
+        text raison
+        text code_statut
+        text diagnostic
+        text lead_type
+        uuid lead_id
+        timestamp_with_time_zone blackliste_at
+    }
+    error_log {
+        uuid id PK
+        text agent_id
+        text error_type
+        text error_message
+        jsonb context
+        boolean resolved
+        timestamp_with_time_zone created_at
+    }
+    intake_responses {
+        uuid id PK
+        uuid lead_id
+        text description
+        text zone_activite
+        timestamp_with_time_zone created_at
+        text corps_metier
+        text type_offre
+        text formule_abonnement
+        jsonb communes_couvertes
+    }
+    kpis {
+        uuid id PK
+        text metric_name
+        double_precision metric_value
+        timestamp_with_time_zone recorded_at
+    }
+    leads {
+        uuid id PK
+        text name
+        text email
+        text company
+        text secteur
+        text status
+        int32 score
+        text source
+        text notes
+        timestamp_with_time_zone created_at
+        text nom_entreprise
+        text faiblesse
+        text pitch
+        text pitch_commercial
+        text statut
+        boolean contacted
+        text industry
+        text weakness
+        text telephone
+        text siren
+        text adresse
+        timestamp_with_time_zone contacted_at
+        int32 relance_count
+        timestamp_with_time_zone last_relance_at
+        text email_alternatif
+        int32 nb_delais_livraison
+        timestamp_with_time_zone dernier_delai_livraison_at
+        text email_status
+        text commune
+        text tranche_effectif_salarie
+        text statut_verification_pro
+        timestamp_with_time_zone date_verification
+        text siret_declare
+        boolean assurance_decennale_declaree
+        boolean siret_verifie_sirene
+        text siret_raison_sociale_sirene
+    }
+    leads_professionnels {
+        uuid id PK
+        text client_final
+        text type_acteur
+        text nom_entreprise
+        text siren
+        text commune
+        text code_postal
+        text adresse
+        text site_web
+        text email
+        text telephone
+        numeric score_activite_chantiers
+        numeric score_final
+        text statut
+        boolean contacted
+        timestamp_with_time_zone contacted_at
+        int32 relance_count
+        timestamp_with_time_zone last_relance_at
+        text notes
+        timestamp_with_time_zone created_at
+        boolean signale_invalide
+        text motif_invalidite
+        text linkedin_url
+        jsonb reseaux_sociaux
+        text enrichissement_statut
+        timestamp_with_time_zone enrichi_at
+        text email_alternatif
+        int32 nb_delais_livraison
+        timestamp_with_time_zone dernier_delai_livraison_at
+        text email_status
+        text tranche_effectif_salarie
+    }
+    mail_check_lock {
+        int32 id PK
+        timestamp_with_time_zone locked_at
+        text locked_by
+    }
+    mail_check_runs {
+        int64 id PK
+        timestamp_with_time_zone executed_at
+        text source
+        text statut
+        int32 messages_scannes
+        int32 bounces_total
+        int32 bounces_blackliste
+        text erreur
+    }
+    migrations_appliquees {
+        uuid id PK
+        text nom
+        timestamp_with_time_zone appliquee_le
+    }
+    reclamations {
+        uuid id PK
+        text type_lead
+        uuid lead_id
+        uuid client_lead_id
+        text client_final
+        text motif
+        text description_libre
+        timestamp_with_time_zone date_livraison_lead
+        timestamp_with_time_zone date_reclamation
+        boolean dans_les_delais
+        text statut
+        timestamp_with_time_zone date_traitement
+        text traite_par
+        text commentaire_traitement
+        timestamp_with_time_zone created_at
+    }
+    registre_suppressions_rgpd {
+        uuid id PK
+        text email_hash
+        text table_source
+        timestamp_with_time_zone date_demande
+        timestamp_with_time_zone date_traitement
+        text traite_par
+        timestamp_with_time_zone created_at
+    }
+    remboursements {
+        uuid id PK
+        uuid contract_id
+        uuid lead_professionnel_id
+        text client_final
+        int32 montant_centimes
+        text motif
+        text type_remboursement
+        text statut
+        text stripe_refund_id
+        text demande_par
+        timestamp_with_time_zone created_at
+        timestamp_with_time_zone traite_at
+    }
+    tasks {
+        uuid id PK
+        text agent_id
+        text task_type
+        text status
+        jsonb input_data
+        jsonb output_data
+        double_precision quality_score
+        int32 tokens_used
+        timestamp_with_time_zone created_at
+        timestamp_with_time_zone completed_at
+    }
+    utilisateur_campagnes {
+        uuid utilisateur_id PK
+        text client_final PK
+    }
+    utilisateur_leads {
+        uuid utilisateur_id PK
+        uuid lead_id PK
+    }
+    utilisateurs_dashboard {
+        uuid id PK
+        text email
+        text mot_de_passe_hash
+        text role
+        boolean actif
+        timestamp_with_time_zone created_at
+    }
+    leads ||--o{ contracts : "lead_id"
+    leads ||--o{ demandes_devis_particuliers : "lead_id_livraison"
+    leads ||--o{ intake_responses : "lead_id"
+    leads ||--o{ reclamations : "client_lead_id"
+    contracts ||--o{ remboursements : "contract_id"
+    leads_professionnels ||--o{ remboursements : "lead_professionnel_id"
+    utilisateurs_dashboard ||--o{ utilisateur_campagnes : "utilisateur_id"
+    utilisateurs_dashboard ||--o{ utilisateur_leads : "utilisateur_id"
+    leads ||--o{ utilisateur_leads : "lead_id"
+```
+
+**Vues** (non représentées dans le diagramme ci-dessus, lecture seule) :
+
+- `v_score_vs_conversion_pro`
+
+## 2. Pipelines et automatisations
+
+```mermaid
+flowchart LR
+    subgraph CRON["GitHub Actions (cron)"]
+        livraison_devis_yml["Réattribution automatique des demandes de devis expirées<br/>(15 * * * *)"] --> livraison_devis_yml_script(["livraison_devis.py"])
+        mail_check_yml["Relève automatique des mails (bounces / réponses)<br/>(0 * * * *)"] --> mail_check_yml_script(["mail_processor.py"])
+    end
+    subgraph SYNC["Déclenchement synchrone (pas de cron)"]
+        sync_0["Confirmation par e-mail d'une demande de devis"]
+    end
+```
+
+### Déclenchées par cron (GitHub Actions)
+
+| Workflow | Fréquence | Script | Rôle |
+|---|---|---|---|
+| `livraison_devis.yml` | `15 * * * *` | `livraison_devis.py` | Exécute livraison_devis.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — sans ce déclenchement automatique, l'engagement de délai affiché publiquement ("un professionnel qualifié vous recontacte sous 48h maximum, ou votre demande est automatiquement proposée à un autre professionnel", voir dashboard/pages_publiques.py) ne serait vrai que si un admin pense à cliquer le bouton manuel du dashboard au bon moment — pas une vraie garantie. |
+| `mail_check.yml` | `0 * * * *` | `mail_processor.py` | Exécute mail_processor.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — voir mail_processor.py::check_for_replies pour le verrou partagé (table Supabase mail_check_lock) qui empêche ce run automatique de se chevaucher avec un clic simultané sur le bouton manuel "Vérifier mails" du dashboard. |
+
+### Déclenchées de façon synchrone (pas de cron)
+
+- **Confirmation par e-mail d'une demande de devis** (`dashboard/pages_publiques.py`) — Envoyée directement au dépôt du formulaire public (afficher_demande_devis / afficher_intake), PAS par cron — voir sql/init_demandes_devis_particuliers_confirmation.sql. Le rapprochement round-robin qui suit, lui, reste piloté par livraison_devis.yml (cron horaire).
+
+## 3. Pages et rôles du dashboard
+
+```mermaid
+flowchart TD
+    subgraph ADMIN["Espace Admin"]
+        administration_contrats_py["administration_contrats.py"]
+        deliverabilite_py["deliverabilite.py"]
+        demandes_devis_py["demandes_devis.py"]
+        finances_py["finances.py"]
+        gestion_clients_py["gestion_clients.py"]
+        reclamations_py["reclamations.py"]
+        sourcing_py["sourcing.py"]
+        suivi_resultats_py["suivi_resultats.py"]
+        suppression_rgpd_py["suppression_rgpd.py"]
+    end
+    subgraph CLIENT["Portail Client"]
+        portail_client_py["portail_client.py"]
+    end
+```
+
+| Page | Espace | Rôle |
+|---|---|---|
+| `administration_contrats.py` | Admin | Interface "Administration & Contrats" — génération d'un document contractuel (bon de commande / contrat de prestation) pré-rempli avec les informations d'un client de l'agence, quel qu'il soit, prêt à copier ou télécharger en PDF. Le PDF intègre directement le corps des Conditions Générales de Prestation (CGV) de l'agence : le document généré est prêt à être envoyé tel quel à un client (ex. S.B.G Travaux) avec le devis ou le bon de commande. |
+| `deliverabilite.py` | Admin | Interface "Délivrabilité" — suivi de la montée en charge progressive (warmup) du domaine d'envoi B2B et vérification live des enregistrements DNS (SPF/DKIM/DMARC) indispensables à la délivrabilité. |
+| `demandes_devis.py` | Admin | Interface "Demandes de devis" — suivi du mécanisme de livraison qui rapproche les demandes publiques (formulaire générique /demande-devis, voir dashboard/pages_publiques.py::afficher_demande_devis) avec les artisans clients actifs (leads.status='paye'), voir livraison_devis.py pour la logique complète (round-robin, quota abonnement, proposition/paiement à l'unité, expiration à 48h). Conception validée le 18/08/2026. |
+| `finances.py` | Admin | Interface "Finances" — chiffre d'affaires, MRR et activité commerciale dans le temps (24h / 7j / 30j / total). |
+| `gestion_clients.py` | Admin | Interface "Gestion & Réponse aux clients" — suivi des leads, visualisation des scores, et pilotage des campagnes d'e-mailing / relances, filtrable par client/campagne (plateforme multi-clients / multi-secteurs). |
+| `portail_client.py` | Client | Portail Client — vue en lecture seule, strictement limitée aux campagnes B2B (dashboard/auth.py::campagnes_autorisees()) et/ou aux leads B2C (dashboard/auth.py::mes_leads_autorises(), voir sql/init_utilisateur_leads.sql) de l'utilisateur connecté. Un même compte peut être lié à l'un, l'autre, ou les deux — chaque section ci-dessous ne s'affiche que si le compte a quelque chose à y voir. |
+| `reclamations.py` | Admin | Interface admin "Réclamations" — traitement des réclamations Article 4 des CGV (construire_articles_cgv_b2c et son équivalent B2B), B2C et B2B confondues (voir sql/init_reclamations.sql, dashboard/data_access.py). |
+| `sourcing.py` | Admin | Interface "Sourcing / Scraping" — recherche de futurs clients ET configuration des campagnes (plateforme multi-clients / multi-secteurs). |
+| `suivi_resultats.py` | Admin | Interface "Suivi et Résultats des Actions" — vue centralisée du statut, des logs et de l'historique de chaque action de fond (scraping, traitement IA, campagnes, relances, vérification IMAP), déclenchées en subprocess par process_runner.py (voir sa docstring). |
+| `suppression_rgpd.py` | Admin | [Admin] Suppression RGPD — droit à l'effacement (art. 17 RGPD). |
+
+## 4. Intégrations externes
+
+Détectées par recherche des imports/appels réels dans le code (pas une liste maintenue à la main).
+
+| Service | Rôle dans le projet | Utilisé dans |
+|---|---|---|
+| Supabase (Postgres + Auth) | Base de données applicative (toutes les tables métier) et authentification native pour l'espace Artisans (landing/). Accès serveur exclusivement via la clé service_role (bypass RLS). | `ceo_agent.py`, `dashboard/supabase_client.py`, `livraison_devis.py`, `mail_processor.py`, `relance_prospects.py` |
+| Stripe | Lien de paiement (Payment Links) généré à la signature du contrat B2C, et remboursements (Refunds API). Confirmation de paiement 100% manuelle côté admin (pas de webhook). | `dashboard/contrats_signature.py`, `dashboard/data_access.py`, `livraison_devis.py` |
+| Zoho Mail (SMTP/IMAP) | Envoi des campagnes/relances/e-mails transactionnels (SMTP) et relève des bounces/réponses (IMAP). | `alertes.py`, `mail_processor.py`, `outbound_chantiers/outbound_pro_btp.py` |
+| Signature électronique interne | Provider de signature par défaut (art. 1367 code civil, lien token + preuve IP/user-agent). | `alertes.py`, `dashboard/app_pages/gestion_clients.py`, `dashboard/contrats_signature.py`, `dashboard/pages_publiques.py`, `dashboard/signature_interne.py`, … (+1) |
+| Yousign | Provider de signature électronique alternatif (sandbox), activable via SIGNATURE_PROVIDER_PAR_DEFAUT. | `dashboard/app_pages/gestion_clients.py`, `dashboard/contrats_signature.py`, `dashboard/data_access.py`, `dashboard/finances_calc.py`, `dashboard/pages_publiques.py`, … (+1) |
+| API SIRENE (recherche-entreprises.api.gouv.fr) | Recherche/enrichissement d'entreprises (SIREN, adresse) — données publiques, sans clé. | `outbound_chantiers/config.py`, `outbound_chantiers/sourcing_acteurs_pro.py`, `phone_enricher.py`, `scraper_batiment.py`, `verification_pro.py` |
+| Google Places API | Dernier recours pour trouver un téléphone d'entreprise (payant) — voir phone_enricher.py. | `outbound_chantiers/enrichir_acteurs_pro.py`, `phone_enricher.py` |
+| DNS-over-HTTPS (dns.google) | Vérification live des enregistrements SPF/DKIM/DMARC (app_pages/deliverabilite.py), gratuit. | `dashboard/app_pages/deliverabilite.py` |
+| Discord (webhook) | Alertes temps réel (lead ultra-qualifié, erreurs) — voir alertes.py. | `alertes.py`, `dashboard/data_access.py`, `mail_processor.py`, `scraper_batiment.py` |
+| Ollama | Génération des pitchs de prospection (LLM local, avec repli générique si injoignable). | `dashboard/data_access.py`, `lead_worker.py`, `llm_config.py`, `outbound_chantiers/config.py` |
+| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `livraison_devis.yml`, `mail_check.yml` |
