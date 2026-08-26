@@ -79,6 +79,31 @@ class DataAccessError(Exception):
     pass
 
 
+def journaliser_action_admin(action: str, cible_type: str, cible_id: str | None, detail: dict | None = None) -> None:
+    """Journal d'audit (module 10 pilotage, voir sql/init_journal_audit_admin.sql)
+    — à appeler à la toute fin d'une fonction qui vient de RÉUSSIR une action
+    admin sensible (jamais avant, pour ne jamais logger une action qui a en
+    fait échoué). Lit l'identité de l'appelant directement dans
+    st.session_state (auth_utilisateur_id/auth_email, voir auth.py) plutôt
+    que de forcer chaque appelant à les repasser en paramètre.
+
+    Ne lève JAMAIS d'exception : un échec d'écriture du journal (réseau,
+    table pas encore migrée...) ne doit jamais faire échouer l'action métier
+    réelle déjà effectuée — même philosophie que alertes.alerter_discord()
+    (best effort, jamais bloquant)."""
+    try:
+        supabase.table("journal_audit_admin").insert({
+            "utilisateur_id": st.session_state.get("auth_utilisateur_id"),
+            "utilisateur_email": st.session_state.get("auth_email"),
+            "action": action,
+            "cible_type": cible_type,
+            "cible_id": cible_id,
+            "detail": detail or {},
+        }).execute()
+    except Exception as e:
+        log.error(f"Échec écriture journal_audit_admin (action={action}, cible={cible_type}/{cible_id}) : {e}")
+
+
 def _slugifier(texte: str) -> str:
     import re
     slug = re.sub(r"[^a-z0-9]+", "-", (texte or "").lower()).strip("-")
@@ -306,6 +331,7 @@ def maj_statut_verification_pro(lead_id: str, statut: str) -> dict:
     except Exception as e:
         raise DataAccessError(f"Erreur mise à jour du statut de vérification : {e}") from e
     get_leads_verification_pro.clear()
+    journaliser_action_admin("maj_statut_verification_pro", "lead", lead_id, {"nouveau_statut": statut})
     return corps
 
 
@@ -766,6 +792,7 @@ def marquer_contrat_signe(contract_id: str) -> dict:
     except Exception as e:
         raise DataAccessError(f"Échec mise à jour contrat : {e}") from e
     get_contracts.clear()
+    journaliser_action_admin("marquer_contrat_signe", "contract", contract_id, {"lead_id": contrat["lead_id"]})
     return {"status": "ok"}
 
 
@@ -795,6 +822,10 @@ def marquer_contrat_paye(contract_id: str, stripe_payment_intent_id: str) -> dic
     except Exception as e:
         raise DataAccessError(f"Échec mise à jour contrat : {e}") from e
     get_contracts.clear()
+    journaliser_action_admin(
+        "marquer_contrat_paye", "contract", contract_id,
+        {"lead_id": contrat["lead_id"], "stripe_payment_intent_id": stripe_payment_intent_id.strip()},
+    )
     return {"status": "ok"}
 
 
@@ -934,6 +965,10 @@ def executer_remboursement(remboursement_id: str) -> dict:
     }).eq("id", remboursement_id).execute()
     get_remboursements.clear()
     log.info(f"💸 Remboursement Stripe exécuté : {remboursement_id} (refund={refund.id})")
+    journaliser_action_admin(
+        "executer_remboursement", "remboursement", remboursement_id,
+        {"montant_centimes": remb["montant_centimes"], "stripe_refund_id": refund.id},
+    )
     return {"status": "success", "stripe_refund_id": refund.id}
 
 
@@ -1438,6 +1473,10 @@ def traiter_reclamation(reclamation_id: str, decision: str, traite_par: str, com
 
     get_reclamations.clear()
     log.info(f"Réclamation {reclamation_id} {decision} par {traite_par}")
+    journaliser_action_admin(
+        "traiter_reclamation", "reclamation", reclamation_id,
+        {"decision": decision, "traite_par": traite_par.strip(), "commentaire": champs_maj["commentaire_traitement"]},
+    )
     return champs_maj
 
 
@@ -1561,3 +1600,27 @@ def get_sante_bdd_derniers_par_type() -> dict:
     for ligne in data or []:
         derniers.setdefault(ligne["type_controle"], ligne)
     return {"derniers": derniers}
+
+
+# Module 10 (pilotage) — journal d'audit admin (voir journaliser_action_admin
+# ci-dessus et sql/init_journal_audit_admin.sql)
+
+
+def get_journal_audit(
+    utilisateur_email: str | None = None, action: str | None = None, limit: int = 200
+) -> dict:
+    try:
+        requete = (
+            supabase.table("journal_audit_admin")
+            .select("*")
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if utilisateur_email:
+            requete = requete.eq("utilisateur_email", utilisateur_email)
+        if action:
+            requete = requete.eq("action", action)
+        data = requete.execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture journal d'audit : {e}") from e
+    return {"entrees": data or []}

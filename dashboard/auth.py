@@ -18,7 +18,7 @@ import streamlit as st
 from data_access import DataAccessError
 from supabase_client import supabase
 
-_CLES_SESSION = ("auth_connecte", "auth_role", "auth_campagnes", "auth_leads", "auth_email")
+_CLES_SESSION = ("auth_connecte", "auth_role", "auth_campagnes", "auth_leads", "auth_email", "auth_utilisateur_id")
 
 # Volontairement permissif (pas de RFC 5322 complet) : sert juste à
 # rejeter les fautes de frappe évidentes ("test", "a@b") avant d'aller
@@ -116,6 +116,11 @@ def _connecter(email: str, mot_de_passe: str) -> None:
     st.session_state["auth_campagnes"] = campagnes_autorisees_
     st.session_state["auth_leads"] = leads_autorises_
     st.session_state["auth_email"] = utilisateur["email"]
+    # Stable dans le temps contrairement à l'email (peut changer) — utilisé
+    # par data_access.py::journaliser_action_admin (voir
+    # sql/init_journal_audit_admin.sql) pour identifier l'auteur d'une
+    # action admin sensible sans dépendre d'un champ modifiable.
+    st.session_state["auth_utilisateur_id"] = utilisateur["id"]
 
 
 def _creer_compte(email: str, mot_de_passe: str) -> str:

@@ -19,6 +19,8 @@ Structure (multi-pages) :
     app_pages/reclamations.py       -> [Admin] Réclamations (Article 4 des CGV, B2C + B2B)
     app_pages/sante_bdd.py          -> [Admin] Santé de la base (surveillance continue Supabase,
                                         voir scripts/controle_sante_bdd.py)
+    app_pages/journal_audit.py      -> [Admin] Journal d'audit (actions admin sensibles,
+                                        voir data_access.journaliser_action_admin)
     app_pages/finances.py           -> [Admin] Finances (CA, MRR, activité commerciale B2C)
                                         (RETIRÉE TEMPORAIREMENT de la navigation, voir
                                         commentaire dans la section navigation ci-dessous)
@@ -204,6 +206,7 @@ if est_admin():
     page_reclamations = st.Page("app_pages/reclamations.py", title="Réclamations", icon="🚨")
     page_suivi = st.Page("app_pages/suivi_resultats.py", title="Suivi & Résultats", icon="📈")
     page_sante_bdd = st.Page("app_pages/sante_bdd.py", title="Santé de la base", icon="🩺")
+    page_journal_audit = st.Page("app_pages/journal_audit.py", title="Journal d'audit", icon="🗂️")
     # RETIRÉE TEMPORAIREMENT de la navigation (2026-08-17, veille d'une démo
     # bloquante) : un ImportError sur get_contracts_finances a été signalé
     # en production (Streamlit Cloud) juste après le déploiement de cette
@@ -229,7 +232,7 @@ if est_admin():
         [
             page_sourcing, page_gestion, page_administration, page_deliverabilite,
             page_demandes_devis, page_reclamations, page_suivi, page_sante_bdd,
-            page_suppression_rgpd, page_portail_client,
+            page_journal_audit, page_suppression_rgpd, page_portail_client,
             # page_finances,  # voir commentaire ci-dessus — retrait temporaire
         ]
     )

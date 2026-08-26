@@ -120,6 +120,19 @@ INTEGRATIONS = [
     },
 ]
 
+# Modules de pilotage construits (voir section 6 de generer_markdown) — une
+# ligne ajoutée à la main à la fin de la construction de chaque module,
+# volontairement pas déduite du code (rien de spécifique à introspecter
+# pour distinguer "module construit" d'un simple ensemble de fichiers).
+MODULES_PILOTAGE: list[str] = [
+    (
+        "**Module 10 — Journal d'audit admin** (27/08/2026) : chaque action admin sensible "
+        "(traiter une réclamation, changer un statut de vérification pro, marquer un contrat "
+        "signé/payé, exécuter un remboursement) est tracée dans `journal_audit_admin` — voir "
+        "`data_access.journaliser_action_admin`, page `dashboard/app_pages/journal_audit.py`."
+    ),
+]
+
 
 def recuperer_schema_supabase() -> dict:
     load_dotenv(RACINE / ".env")
@@ -430,6 +443,26 @@ def generer_markdown() -> str:
         if workflow_sante:
             parties.append(f"- Déclenchement automatique : `.github/workflows/{workflow_sante['fichier']}`.")
         parties.append("")
+
+    # --- 6. Modules de pilotage ---
+    # Contrairement aux sections précédentes, cette liste n'est PAS déduite
+    # du code (rien à introspecter pour un module "prévu mais pas encore
+    # construit") : mise à jour à la main au fil de la construction de
+    # chaque module (voir échange du 27/08/2026), une ligne par module créé
+    # + le statut du module 12 (en attente, dépendance externe).
+    parties.append("## 6. Modules de pilotage (économique, opérationnel, qualité)\n")
+    parties.append(
+        "Chantier en cours (27/08/2026) : 12 modules de pilotage complétant la "
+        "surveillance technique (section 5) — construits un par un, chacun avec sa "
+        "table Supabase (RLS actif) et sa page dashboard admin dédiée.\n"
+    )
+    for ligne in MODULES_PILOTAGE:
+        parties.append(f"- {ligne}")
+    parties.append(
+        "- **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, "
+        "nom de domaine pas encore acheté) — volontairement non construit."
+    )
+    parties.append("")
 
     return "\n".join(parties)
 

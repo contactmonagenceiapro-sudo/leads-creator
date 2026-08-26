@@ -69,8 +69,8 @@ FK_RE = re.compile(r"<fk table='([^']+)' column='([^']+)'/>")
 TABLES_AUDITEES_MANUELLEMENT = {
     "agence_config", "agent_memories", "articles", "artisans", "campagnes",
     "ceo_reports", "contracts", "demandes_devis_particuliers", "email_events",
-    "emails_blacklistes", "error_log", "intake_responses", "kpis", "leads",
-    "leads_professionnels", "mail_check_lock", "mail_check_runs",
+    "emails_blacklistes", "error_log", "intake_responses", "journal_audit_admin",
+    "kpis", "leads", "leads_professionnels", "mail_check_lock", "mail_check_runs",
     "migrations_appliquees", "reclamations", "registre_suppressions_rgpd",
     "remboursements", "sante_base_donnees", "tasks", "utilisateur_campagnes",
     "utilisateur_leads", "utilisateurs_dashboard",
@@ -157,6 +157,76 @@ def enregistrer(resultat: dict) -> dict:
 
 # --- a) Couverture RLS --------------------------------------------------
 
+# Une expression USING/WITH CHECK vide (NULL) ou littéralement 'true' (avec
+# ou sans parenthèses) équivaut à "toujours vrai" — aucun filtrage réel.
+_MOTIF_QUAL_TOUJOURS_VRAI = re.compile(r"^\(*\s*true\s*\)*$", re.IGNORECASE)
+
+
+def _expression_toujours_vraie(expr: str | None) -> bool:
+    return expr is None or bool(_MOTIF_QUAL_TOUJOURS_VRAI.match(expr.strip()))
+
+
+def _politique_est_permissive(p: dict) -> bool:
+    """qual (clause USING) ne s'applique jamais à un INSERT pur, et
+    with_check (clause WITH CHECK) ne s'applique jamais à un SELECT/DELETE
+    pur — Postgres renvoie systématiquement NULL pour la clause non
+    pertinente, ce qui n'a RIEN d'une policy permissive (ex :
+    artisans_select_own, cmd=SELECT, with_check=NULL par construction,
+    qual correctement scopé à `auth.uid() = id`). Ne juger que la clause
+    réellement pertinente pour le cmd de la policy, jamais les deux
+    aveuglément."""
+    cmd = (p.get("cmd") or "").upper()
+    qual, with_check = p.get("qual"), p.get("with_check")
+    if cmd in ("SELECT", "DELETE"):
+        return _expression_toujours_vraie(qual)
+    if cmd == "INSERT":
+        return _expression_toujours_vraie(with_check)
+    # UPDATE (qual ET with_check pertinents) ou ALL (couvre les 4 cmd) :
+    # permissif si l'une ou l'autre clause pertinente laisse tout passer.
+    return _expression_toujours_vraie(qual) or _expression_toujours_vraie(with_check)
+
+
+def _policies_trop_permissives() -> tuple[list[dict], bool]:
+    """Lit public.v_policies_rls (voir sql/init_vue_policies_rls.sql) et
+    remonte toute policy accessible à public/anon dont la condition
+    (USING ou WITH CHECK) n'exclut en pratique personne — exactement le
+    problème rencontré sur ceo_reports (RLS activé, mais policy "Allow all"
+    roles={public} qual=true qui la rendait inutile ; un simple test "RLS
+    activé ?" ne peut PAS détecter ça). Renvoie (policies_suspectes,
+    vue_disponible) : si la vue n'existe pas encore (migration pas encore
+    appliquée), renvoie ([], False) plutôt que de faire échouer tout le
+    contrôle — mais ce cas doit rester visible dans le detail plutôt que
+    silencieusement confondu avec "aucune policy permissive trouvée"."""
+    try:
+        lignes = supabase.table("v_policies_rls").select("*").execute().data
+    except Exception as e:
+        log.warning(
+            f"v_policies_rls indisponible ({e}) — vérification des policies RLS "
+            "individuelles désactivée pour ce run. Voir sql/init_vue_policies_rls.sql."
+        )
+        return [], False
+
+    suspectes = []
+    for p in lignes:
+        roles_bruts = p.get("roles") or []
+        if isinstance(roles_bruts, str):
+            roles_bruts = roles_bruts.strip("{}").split(",")
+        roles = {str(r).strip().strip('"').lower() for r in roles_bruts}
+        if not ({"public", "anon"} & roles):
+            continue
+        if _politique_est_permissive(p):
+            suspectes.append(
+                {
+                    "table": p.get("tablename"),
+                    "policy": p.get("policyname"),
+                    "roles": sorted(roles),
+                    "cmd": p.get("cmd"),
+                    "qual": p.get("qual"),
+                    "with_check": p.get("with_check"),
+                }
+            )
+    return suspectes, True
+
 
 def controler_couverture_rls(tables_pk: dict[str, str | None]) -> dict:
     anon_key = _cle_anon()
@@ -180,7 +250,9 @@ def controler_couverture_rls(tables_pk: dict[str, str | None]) -> dict:
         elif table not in TABLES_AUDITEES_MANUELLEMENT:
             non_auditees.append(table)
 
-    statut = "critique" if exposees else ("attention" if non_auditees else "ok")
+    policies_permissives, vue_policies_disponible = _policies_trop_permissives()
+
+    statut = "critique" if (exposees or policies_permissives) else ("attention" if non_auditees else "ok")
     return {
         "type_controle": "couverture_rls",
         "statut": statut,
@@ -188,9 +260,14 @@ def controler_couverture_rls(tables_pk: dict[str, str | None]) -> dict:
             "tables_controlees": len(tables_pk),
             "tables_exposees_via_anon": exposees,
             "tables_non_auditees_non_confirmables": non_auditees,
+            "policies_trop_permissives": policies_permissives,
+            "verification_policies_disponible": vue_policies_disponible,
             "note": (
                 "articles (exposition découverte le 24/08/2026, corrigée par "
-                "sql/fix_rls_articles.sql) fait partie des tables auditées ci-dessus."
+                "sql/fix_rls_articles.sql) fait partie des tables auditées ci-dessus. "
+                "ceo_reports (27/08/2026) avait RLS activé MAIS une policy 'Allow all' "
+                "(roles={public}, qual=true) qui l'annulait — d'où la vérification "
+                "explicite des policies elles-mêmes, pas seulement du flag RLS."
             ),
         },
     }
@@ -480,7 +557,7 @@ def controler_fk_non_indexees(fks: list[tuple[str, str]]) -> dict:
 # --- Actions concrètes par type de contrôle (page dashboard) --------------
 
 ACTIONS_CONCRETES = {
-    "couverture_rls": "Exécuter le RLS manquant dans l'éditeur SQL Supabase (voir modèle sql/fix_rls_articles.sql) pour chaque table listée dans tables_exposees_via_anon ; pour tables_non_auditees_non_confirmables, vérifier manuellement (advisors Supabase ou ligne de test factice, voir sql/fix_rls_5_tables_restantes.sql).",
+    "couverture_rls": "Pour tables_exposees_via_anon : activer RLS (voir modèle sql/fix_rls_articles.sql). Pour policies_trop_permissives : supprimer ou restreindre la policy listée (DROP POLICY, voir l'incident ceo_reports/sql/fix_rls_ceo_reports.sql) — RLS activé ne suffit pas si une policy roles={public|anon} avec qual/with_check vide ou 'true' la neutralise. Pour tables_non_auditees_non_confirmables : vérifier manuellement (advisors Supabase ou ligne de test factice, voir sql/fix_rls_5_tables_restantes.sql).",
     "fonctions_rpc_exposees": "Vérifier chaque fonction listée dans fonctions_nouvelles_a_revoir : si elle n'a pas besoin d'être publique, révoquer EXECUTE pour anon/authenticated (garder service_role/postgres).",
     "demandes_devis_bloquees": "Vérifier l'envoi d'e-mail de confirmation (dashboard/pages_publiques.py::_envoyer_email_confirmation_demande) et le cron livraison_devis.yml — relancer/confirmer manuellement les demandes listées si nécessaire.",
     "reclamations_en_retard": "Traiter les réclamations listées depuis la page dashboard/app_pages/reclamations.py — le délai contractuel (7 jours) est engageant vis-à-vis du client.",

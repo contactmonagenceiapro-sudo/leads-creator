@@ -2,11 +2,11 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-26 22:35 UTC
+Généré le : 2026-08-26 23:23 UTC
 
 ## 1. Schéma de la base de données
 
-26 tables, 1 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
+27 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
 
 ```mermaid
 erDiagram
@@ -157,6 +157,16 @@ erDiagram
         text type_offre
         text formule_abonnement
         jsonb communes_couvertes
+    }
+    journal_audit_admin {
+        uuid id PK
+        uuid utilisateur_id
+        text utilisateur_email
+        text action
+        text cible_type
+        uuid cible_id
+        jsonb detail
+        timestamp_with_time_zone created_at
     }
     kpis {
         uuid id PK
@@ -334,6 +344,7 @@ erDiagram
     leads ||--o{ contracts : "lead_id"
     leads ||--o{ demandes_devis_particuliers : "lead_id_livraison"
     leads ||--o{ intake_responses : "lead_id"
+    utilisateurs_dashboard ||--o{ journal_audit_admin : "utilisateur_id"
     leads ||--o{ reclamations : "client_lead_id"
     contracts ||--o{ remboursements : "contract_id"
     leads_professionnels ||--o{ remboursements : "lead_professionnel_id"
@@ -344,6 +355,7 @@ erDiagram
 
 **Vues** (non représentées dans le diagramme ci-dessus, lecture seule) :
 
+- `v_policies_rls`
 - `v_score_vs_conversion_pro`
 
 ## 2. Pipelines et automatisations
@@ -382,6 +394,7 @@ flowchart TD
         demandes_devis_py["demandes_devis.py"]
         finances_py["finances.py"]
         gestion_clients_py["gestion_clients.py"]
+        journal_audit_py["journal_audit.py"]
         reclamations_py["reclamations.py"]
         sante_bdd_py["sante_bdd.py"]
         sourcing_py["sourcing.py"]
@@ -400,6 +413,7 @@ flowchart TD
 | `demandes_devis.py` | Admin | Interface "Demandes de devis" — suivi du mécanisme de livraison qui rapproche les demandes publiques (formulaire générique /demande-devis, voir dashboard/pages_publiques.py::afficher_demande_devis) avec les artisans clients actifs (leads.status='paye'), voir livraison_devis.py pour la logique complète (round-robin, quota abonnement, proposition/paiement à l'unité, expiration à 48h). Conception validée le 18/08/2026. |
 | `finances.py` | Admin | Interface "Finances" — chiffre d'affaires, MRR et activité commerciale dans le temps (24h / 7j / 30j / total). |
 | `gestion_clients.py` | Admin | Interface "Gestion & Réponse aux clients" — suivi des leads, visualisation des scores, et pilotage des campagnes d'e-mailing / relances, filtrable par client/campagne (plateforme multi-clients / multi-secteurs). |
+| `journal_audit.py` | Admin | Interface admin "Journal d'audit" — historique consultable/filtrable des actions admin sensibles (voir sql/init_journal_audit_admin.sql, data_access.journaliser_action_admin). Branché directement dans les fonctions existantes qui font déjà ces actions (traiter_reclamation, maj_statut_verification_pro, marquer_contrat_signe, marquer_contrat_paye, executer_remboursement) — pas un système de log séparé. |
 | `portail_client.py` | Client | Portail Client — vue en lecture seule, strictement limitée aux campagnes B2B (dashboard/auth.py::campagnes_autorisees()) et/ou aux leads B2C (dashboard/auth.py::mes_leads_autorises(), voir sql/init_utilisateur_leads.sql) de l'utilisateur connecté. Un même compte peut être lié à l'un, l'autre, ou les deux — chaque section ci-dessous ne s'affiche que si le compte a quelque chose à y voir. |
 | `reclamations.py` | Admin | Interface admin "Réclamations" — traitement des réclamations Article 4 des CGV (construire_articles_cgv_b2c et son équivalent B2B), B2C et B2B confondues (voir sql/init_reclamations.sql, dashboard/data_access.py). |
 | `sante_bdd.py` | Admin | Interface admin "Santé de la base" — vue du système de surveillance continue de Supabase (voir sql/init_sante_base_donnees.sql, scripts/controle_sante_bdd.py, .github/workflows/controle_sante_bdd.yml, cron quotidien). Objectif : rendre visible ici ce que le cron détecte déjà tout seul (RLS manquant, demandes de devis bloquées, réclamations en retard...) plutôt que de le découvrir par hasard lors d'un test manuel — voir sql/init_demandes_devis_particuliers_confirmation.sql pour l'incident qui a motivé ce système. |
@@ -432,3 +446,10 @@ Un contrôle de santé automatisé (`scripts/controle_sante_bdd.py`) tourne quot
 - Historique complet des contrôles : table `sante_base_donnees`.
 - Vue dashboard (statut, tendance 30 jours, actions à prendre) : `dashboard/app_pages/sante_bdd.py` (espace admin).
 - Déclenchement automatique : `.github/workflows/controle_sante_bdd.yml`.
+
+## 6. Modules de pilotage (économique, opérationnel, qualité)
+
+Chantier en cours (27/08/2026) : 12 modules de pilotage complétant la surveillance technique (section 5) — construits un par un, chacun avec sa table Supabase (RLS actif) et sa page dashboard admin dédiée.
+
+- **Module 10 — Journal d'audit admin** (27/08/2026) : chaque action admin sensible (traiter une réclamation, changer un statut de vérification pro, marquer un contrat signé/payé, exécuter un remboursement) est tracée dans `journal_audit_admin` — voir `data_access.journaliser_action_admin`, page `dashboard/app_pages/journal_audit.py`.
+- **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, nom de domaine pas encore acheté) — volontairement non construit.
