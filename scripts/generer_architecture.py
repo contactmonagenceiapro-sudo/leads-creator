@@ -131,6 +131,12 @@ MODULES_PILOTAGE: list[str] = [
         "signé/payé, exécuter un remboursement) est tracée dans `journal_audit_admin` — voir "
         "`data_access.journaliser_action_admin`, page `dashboard/app_pages/journal_audit.py`."
     ),
+    (
+        "**Module 3 — Coûts d'infrastructure** (27/08/2026) : coûts remplis manuellement "
+        "(`couts_infrastructure`, montant fixe ou % du CA) comparés au CA réel du mois "
+        "(`data_access.calculer_ca_du_mois`, réutilisable par le futur module 1 finances) — "
+        "page `dashboard/app_pages/couts_infrastructure.py`."
+    ),
 ]
 
 

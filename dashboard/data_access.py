@@ -19,6 +19,7 @@ le `st.rerun()` qui suit une modification affiche immédiatement la donnée à
 jour plutôt que la version mise en cache jusqu'à CACHE_TTL_SECONDES plus tard.
 """
 
+import calendar
 import glob
 import hashlib
 import logging
@@ -1624,3 +1625,94 @@ def get_journal_audit(
     except Exception as e:
         raise DataAccessError(f"Erreur lecture journal d'audit : {e}") from e
     return {"entrees": data or []}
+
+
+# Module 3 (pilotage) — coûts d'infrastructure (voir sql/init_couts_infrastructure.sql)
+
+
+def get_couts_infrastructure(inclure_termines: bool = True) -> dict:
+    try:
+        requete = supabase.table("couts_infrastructure").select("*").order("date_debut", desc=True)
+        if not inclure_termines:
+            requete = requete.is_("date_fin", "null")
+        data = requete.execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture coûts d'infrastructure : {e}") from e
+    return {"couts": data or []}
+
+
+def ajouter_cout_infrastructure(
+    service: str, cout_mensuel_centimes: int | None, pourcentage_du_ca: float | None,
+    date_debut: str, notes: str | None = None,
+) -> dict:
+    service = (service or "").strip()
+    if not service:
+        raise DataAccessError("Le nom du service est requis.")
+    if (cout_mensuel_centimes is None) == (pourcentage_du_ca is None):
+        raise DataAccessError("Renseigner soit un coût mensuel fixe, soit un pourcentage du CA — jamais les deux, ni aucun des deux.")
+    corps = {
+        "service": service,
+        "cout_mensuel_centimes": cout_mensuel_centimes,
+        "pourcentage_du_ca": pourcentage_du_ca,
+        "date_debut": date_debut,
+        "notes": (notes or "").strip() or None,
+    }
+    try:
+        data = supabase.table("couts_infrastructure").insert(corps).execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur ajout coût d'infrastructure : {e}") from e
+    return data[0] if data else corps
+
+
+def terminer_cout_infrastructure(cout_id: str, date_fin: str) -> dict:
+    try:
+        data = supabase.table("couts_infrastructure").update({"date_fin": date_fin}).eq("id", cout_id).execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur clôture coût d'infrastructure : {e}") from e
+    if not data:
+        raise DataAccessError("Coût introuvable.")
+    return data[0]
+
+
+def calculer_ca_du_mois(annee: int, mois: int) -> dict:
+    """CA réel encaissé sur le mois — deux sources, jamais confondues avec
+    du CA "engagé" (contrat signé mais pas payé, proposition envoyée mais
+    pas honorée) :
+    - contracts.montant_centimes où payment_status='paye', daté par paid_at
+      (formules abonnement B2C ET achats à l'unité passés par le tunnel
+      intake/contrat) ;
+    - demandes_devis_particuliers.montant_centimes où
+      stripe_payment_intent_id IS NOT NULL (paiement à l'unité via le
+      formulaire public /demande-devis, hors tunnel intake), daté par
+      livree_le — pas de colonne de date de paiement dédiée sur cette
+      table ; livree_le est fiable ici car SEULES les livraisons "à
+      l'unité" ont un stripe_payment_intent_id (les livraisons formule
+      abonnement sont gratuites — incluses dans le contrat déjà payé,
+      voir livraison_devis.py::_livrer_directement — donc jamais comptées
+      deux fois)."""
+    debut = f"{annee:04d}-{mois:02d}-01"
+    dernier_jour = calendar.monthrange(annee, mois)[1]
+    fin = f"{annee:04d}-{mois:02d}-{dernier_jour:02d}T23:59:59"
+    try:
+        contrats = (
+            supabase.table("contracts").select("montant_centimes,type_offre,formule_abonnement")
+            .eq("payment_status", "paye").gte("paid_at", debut).lte("paid_at", fin).execute().data
+        )
+        demandes = (
+            supabase.table("demandes_devis_particuliers").select("montant_centimes,corps_metier")
+            .not_.is_("stripe_payment_intent_id", "null").gte("livree_le", debut).lte("livree_le", fin).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur calcul du CA du mois : {e}") from e
+    ca_contrats = sum(c["montant_centimes"] or 0 for c in contrats)
+    ca_demandes = sum(d["montant_centimes"] or 0 for d in demandes)
+    return {
+        "annee": annee, "mois": mois,
+        "ca_total_centimes": ca_contrats + ca_demandes,
+        "ca_contrats_centimes": ca_contrats,
+        "ca_demandes_unite_centimes": ca_demandes,
+        "nb_contrats": len(contrats),
+        "nb_demandes_unite": len(demandes),
+        "contrats": contrats,
+        "demandes": demandes,
+    }

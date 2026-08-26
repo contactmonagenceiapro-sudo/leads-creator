@@ -2,11 +2,11 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-26 23:23 UTC
+Généré le : 2026-08-26 23:35 UTC
 
 ## 1. Schéma de la base de données
 
-27 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
+28 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
 
 ```mermaid
 erDiagram
@@ -92,6 +92,16 @@ erDiagram
         text signature_document_pdf_base64
         text type_offre
         text formule_abonnement
+    }
+    couts_infrastructure {
+        uuid id PK
+        text service
+        int32 cout_mensuel_centimes
+        numeric pourcentage_du_ca
+        date date_debut
+        date date_fin
+        text notes
+        timestamp_with_time_zone created_at
     }
     demandes_devis_particuliers {
         uuid id PK
@@ -390,6 +400,7 @@ flowchart LR
 flowchart TD
     subgraph ADMIN["Espace Admin"]
         administration_contrats_py["administration_contrats.py"]
+        couts_infrastructure_py["couts_infrastructure.py"]
         deliverabilite_py["deliverabilite.py"]
         demandes_devis_py["demandes_devis.py"]
         finances_py["finances.py"]
@@ -409,6 +420,7 @@ flowchart TD
 | Page | Espace | Rôle |
 |---|---|---|
 | `administration_contrats.py` | Admin | Interface "Administration & Contrats" — génération d'un document contractuel (bon de commande / contrat de prestation) pré-rempli avec les informations d'un client de l'agence, quel qu'il soit, prêt à copier ou télécharger en PDF. Le PDF intègre directement le corps des Conditions Générales de Prestation (CGV) de l'agence : le document généré est prêt à être envoyé tel quel à un client (ex. S.B.G Travaux) avec le devis ou le bon de commande. |
+| `couts_infrastructure.py` | Admin | Interface admin "Coûts d'infrastructure" — module 3 de pilotage. Coûts remplis manuellement (pas d'API de facturation branchée dans un premier temps, voir sql/init_couts_infrastructure.sql) : Supabase, Streamlit Cloud, Zoho, futur nom de domaine, frais Stripe (en pourcentage du CA réel, pas un montant fixe). |
 | `deliverabilite.py` | Admin | Interface "Délivrabilité" — suivi de la montée en charge progressive (warmup) du domaine d'envoi B2B et vérification live des enregistrements DNS (SPF/DKIM/DMARC) indispensables à la délivrabilité. |
 | `demandes_devis.py` | Admin | Interface "Demandes de devis" — suivi du mécanisme de livraison qui rapproche les demandes publiques (formulaire générique /demande-devis, voir dashboard/pages_publiques.py::afficher_demande_devis) avec les artisans clients actifs (leads.status='paye'), voir livraison_devis.py pour la logique complète (round-robin, quota abonnement, proposition/paiement à l'unité, expiration à 48h). Conception validée le 18/08/2026. |
 | `finances.py` | Admin | Interface "Finances" — chiffre d'affaires, MRR et activité commerciale dans le temps (24h / 7j / 30j / total). |
@@ -452,4 +464,5 @@ Un contrôle de santé automatisé (`scripts/controle_sante_bdd.py`) tourne quot
 Chantier en cours (27/08/2026) : 12 modules de pilotage complétant la surveillance technique (section 5) — construits un par un, chacun avec sa table Supabase (RLS actif) et sa page dashboard admin dédiée.
 
 - **Module 10 — Journal d'audit admin** (27/08/2026) : chaque action admin sensible (traiter une réclamation, changer un statut de vérification pro, marquer un contrat signé/payé, exécuter un remboursement) est tracée dans `journal_audit_admin` — voir `data_access.journaliser_action_admin`, page `dashboard/app_pages/journal_audit.py`.
+- **Module 3 — Coûts d'infrastructure** (27/08/2026) : coûts remplis manuellement (`couts_infrastructure`, montant fixe ou % du CA) comparés au CA réel du mois (`data_access.calculer_ca_du_mois`, réutilisable par le futur module 1 finances) — page `dashboard/app_pages/couts_infrastructure.py`.
 - **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, nom de domaine pas encore acheté) — volontairement non construit.
