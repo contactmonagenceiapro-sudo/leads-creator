@@ -1,0 +1,49 @@
+name: Contrôle de santé de la base de données
+
+# Exécute scripts/controle_sante_bdd.py quotidiennement — sécurité
+# (couverture RLS, fonctions exposées), opérationnel (demandes de devis
+# bloquées, réclamations en retard) et dérive (croissance anormale,
+# données de test résiduelles, FK non indexées). Objectif : détecter une
+# régression avant qu'un utilisateur ou un test manuel ne la découvre par
+# hasard (voir sql/init_demandes_devis_particuliers_confirmation.sql pour
+# l'incident qui a motivé ce système).
+#
+# Horaire quotidien à 4h30 UTC — volontairement décalé des crons horaires
+# déjà en place (mail_check.yml "0 * * * *", livraison_devis.yml
+# "15 * * * *") pour ne jamais les chevaucher, et placé en heure creuse
+# (peu de trafic/écritures en cours, moins de risque de lire un état
+# transitoire pendant les contrôles de comptage).
+
+on:
+  schedule:
+    - cron: "30 4 * * *" # une fois par jour, 4h30 UTC
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: controle-sante-bdd
+  cancel-in-progress: false # jamais annuler un run en cours, seulement en éviter un doublon en attente
+
+jobs:
+  controle-sante-bdd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Lancer les contrôles de santé
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          CEO_EMAIL: ${{ secrets.CEO_EMAIL }}
+        run: python3 scripts/controle_sante_bdd.py

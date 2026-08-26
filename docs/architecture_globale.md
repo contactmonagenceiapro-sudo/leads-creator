@@ -2,11 +2,11 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-26 21:15 UTC
+Généré le : 2026-08-26 22:35 UTC
 
 ## 1. Schéma de la base de données
 
-25 tables, 1 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
+26 tables, 1 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
 
 ```mermaid
 erDiagram
@@ -295,6 +295,14 @@ erDiagram
         timestamp_with_time_zone created_at
         timestamp_with_time_zone traite_at
     }
+    sante_base_donnees {
+        uuid id PK
+        timestamp_with_time_zone date_controle
+        text type_controle
+        text statut
+        jsonb detail
+        timestamp_with_time_zone created_at
+    }
     tasks {
         uuid id PK
         text agent_id
@@ -343,8 +351,12 @@ erDiagram
 ```mermaid
 flowchart LR
     subgraph CRON["GitHub Actions (cron)"]
+        controle_sante_bdd_yml["Contrôle de santé de la base de données<br/>(30 4 * * *)"] --> controle_sante_bdd_yml_script(["scripts/controle_sante_bdd.py"])
         livraison_devis_yml["Réattribution automatique des demandes de devis expirées<br/>(15 * * * *)"] --> livraison_devis_yml_script(["livraison_devis.py"])
         mail_check_yml["Relève automatique des mails (bounces / réponses)<br/>(0 * * * *)"] --> mail_check_yml_script(["mail_processor.py"])
+    end
+    subgraph SYNC["Déclenchement synchrone (pas de cron)"]
+        sync_0["Confirmation par e-mail d'une demande de devis"]
     end
 ```
 
@@ -352,8 +364,13 @@ flowchart LR
 
 | Workflow | Fréquence | Script | Rôle |
 |---|---|---|---|
+| `controle_sante_bdd.yml` | `30 4 * * *` | `scripts/controle_sante_bdd.py` | Exécute scripts/controle_sante_bdd.py quotidiennement — sécurité (couverture RLS, fonctions exposées), opérationnel (demandes de devis bloquées, réclamations en retard) et dérive (croissance anormale, données de test résiduelles, FK non indexées). Objectif : détecter une régression avant qu'un utilisateur ou un test manuel ne la découvre par hasard (voir sql/init_demandes_devis_particuliers_confirmation.sql pour l'incident qui a motivé ce système). |
 | `livraison_devis.yml` | `15 * * * *` | `livraison_devis.py` | Exécute livraison_devis.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — sans ce déclenchement automatique, l'engagement de délai affiché publiquement ("un professionnel qualifié vous recontacte sous 48h maximum, ou votre demande est automatiquement proposée à un autre professionnel", voir dashboard/pages_publiques.py) ne serait vrai que si un admin pense à cliquer le bouton manuel du dashboard au bon moment — pas une vraie garantie. |
 | `mail_check.yml` | `0 * * * *` | `mail_processor.py` | Exécute mail_processor.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — voir mail_processor.py::check_for_replies pour le verrou partagé (table Supabase mail_check_lock) qui empêche ce run automatique de se chevaucher avec un clic simultané sur le bouton manuel "Vérifier mails" du dashboard. |
+
+### Déclenchées de façon synchrone (pas de cron)
+
+- **Confirmation par e-mail d'une demande de devis** (`dashboard/pages_publiques.py`) — Envoyée directement au dépôt du formulaire public (afficher_demande_devis / afficher_intake), PAS par cron — voir sql/init_demandes_devis_particuliers_confirmation.sql. Le rapprochement round-robin qui suit, lui, reste piloté par livraison_devis.yml (cron horaire).
 
 ## 3. Pages et rôles du dashboard
 
@@ -366,6 +383,7 @@ flowchart TD
         finances_py["finances.py"]
         gestion_clients_py["gestion_clients.py"]
         reclamations_py["reclamations.py"]
+        sante_bdd_py["sante_bdd.py"]
         sourcing_py["sourcing.py"]
         suivi_resultats_py["suivi_resultats.py"]
         suppression_rgpd_py["suppression_rgpd.py"]
@@ -384,6 +402,7 @@ flowchart TD
 | `gestion_clients.py` | Admin | Interface "Gestion & Réponse aux clients" — suivi des leads, visualisation des scores, et pilotage des campagnes d'e-mailing / relances, filtrable par client/campagne (plateforme multi-clients / multi-secteurs). |
 | `portail_client.py` | Client | Portail Client — vue en lecture seule, strictement limitée aux campagnes B2B (dashboard/auth.py::campagnes_autorisees()) et/ou aux leads B2C (dashboard/auth.py::mes_leads_autorises(), voir sql/init_utilisateur_leads.sql) de l'utilisateur connecté. Un même compte peut être lié à l'un, l'autre, ou les deux — chaque section ci-dessous ne s'affiche que si le compte a quelque chose à y voir. |
 | `reclamations.py` | Admin | Interface admin "Réclamations" — traitement des réclamations Article 4 des CGV (construire_articles_cgv_b2c et son équivalent B2B), B2C et B2B confondues (voir sql/init_reclamations.sql, dashboard/data_access.py). |
+| `sante_bdd.py` | Admin | Interface admin "Santé de la base" — vue du système de surveillance continue de Supabase (voir sql/init_sante_base_donnees.sql, scripts/controle_sante_bdd.py, .github/workflows/controle_sante_bdd.yml, cron quotidien). Objectif : rendre visible ici ce que le cron détecte déjà tout seul (RLS manquant, demandes de devis bloquées, réclamations en retard...) plutôt que de le découvrir par hasard lors d'un test manuel — voir sql/init_demandes_devis_particuliers_confirmation.sql pour l'incident qui a motivé ce système. |
 | `sourcing.py` | Admin | Interface "Sourcing / Scraping" — recherche de futurs clients ET configuration des campagnes (plateforme multi-clients / multi-secteurs). |
 | `suivi_resultats.py` | Admin | Interface "Suivi et Résultats des Actions" — vue centralisée du statut, des logs et de l'historique de chaque action de fond (scraping, traitement IA, campagnes, relances, vérification IMAP), déclenchées en subprocess par process_runner.py (voir sa docstring). |
 | `suppression_rgpd.py` | Admin | [Admin] Suppression RGPD — droit à l'effacement (art. 17 RGPD). |
@@ -394,7 +413,7 @@ Détectées par recherche des imports/appels réels dans le code (pas une liste 
 
 | Service | Rôle dans le projet | Utilisé dans |
 |---|---|---|
-| Supabase (Postgres + Auth) | Base de données applicative (toutes les tables métier) et authentification native pour l'espace Artisans (landing/). Accès serveur exclusivement via la clé service_role (bypass RLS). | `ceo_agent.py`, `dashboard/supabase_client.py`, `livraison_devis.py`, `mail_processor.py`, `relance_prospects.py` |
+| Supabase (Postgres + Auth) | Base de données applicative (toutes les tables métier) et authentification native pour l'espace Artisans (landing/). Accès serveur exclusivement via la clé service_role (bypass RLS). | `ceo_agent.py`, `dashboard/supabase_client.py`, `livraison_devis.py`, `mail_processor.py`, `relance_prospects.py`, … (+1) |
 | Stripe | Lien de paiement (Payment Links) généré à la signature du contrat B2C, et remboursements (Refunds API). Confirmation de paiement 100% manuelle côté admin (pas de webhook). | `dashboard/contrats_signature.py`, `dashboard/data_access.py`, `livraison_devis.py` |
 | Zoho Mail (SMTP/IMAP) | Envoi des campagnes/relances/e-mails transactionnels (SMTP) et relève des bounces/réponses (IMAP). | `alertes.py`, `mail_processor.py`, `outbound_chantiers/outbound_pro_btp.py` |
 | Signature électronique interne | Provider de signature par défaut (art. 1367 code civil, lien token + preuve IP/user-agent). | `alertes.py`, `dashboard/app_pages/gestion_clients.py`, `dashboard/contrats_signature.py`, `dashboard/pages_publiques.py`, `dashboard/signature_interne.py`, … (+1) |
@@ -402,6 +421,14 @@ Détectées par recherche des imports/appels réels dans le code (pas une liste 
 | API SIRENE (recherche-entreprises.api.gouv.fr) | Recherche/enrichissement d'entreprises (SIREN, adresse) — données publiques, sans clé. | `outbound_chantiers/config.py`, `outbound_chantiers/sourcing_acteurs_pro.py`, `phone_enricher.py`, `scraper_batiment.py`, `verification_pro.py` |
 | Google Places API | Dernier recours pour trouver un téléphone d'entreprise (payant) — voir phone_enricher.py. | `outbound_chantiers/enrichir_acteurs_pro.py`, `phone_enricher.py` |
 | DNS-over-HTTPS (dns.google) | Vérification live des enregistrements SPF/DKIM/DMARC (app_pages/deliverabilite.py), gratuit. | `dashboard/app_pages/deliverabilite.py` |
-| Discord (webhook) | Alertes temps réel (lead ultra-qualifié, erreurs) — voir alertes.py. | `alertes.py`, `dashboard/data_access.py`, `mail_processor.py`, `scraper_batiment.py` |
+| Discord (webhook) | Alertes temps réel (lead ultra-qualifié, erreurs) — voir alertes.py. | `alertes.py`, `dashboard/data_access.py`, `mail_processor.py`, `scraper_batiment.py`, `scripts/controle_sante_bdd.py` |
 | Ollama | Génération des pitchs de prospection (LLM local, avec repli générique si injoignable). | `dashboard/data_access.py`, `lead_worker.py`, `llm_config.py`, `outbound_chantiers/config.py` |
-| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `livraison_devis.yml`, `mail_check.yml` |
+| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `controle_sante_bdd.yml`, `livraison_devis.yml`, `mail_check.yml` |
+
+## 5. Surveillance continue de la base
+
+Un contrôle de santé automatisé (`scripts/controle_sante_bdd.py`) tourne quotidiennement (30 4 * * *, UTC) et vérifie la couverture RLS, les fonctions SECURITY DEFINER exposées, les demandes de devis bloquées, les réclamations en retard, les erreurs non résolues, la croissance anormale des tables, les données de test résiduelles et les FK non indexées — objectif : détecter une régression avant qu'un utilisateur ou un test manuel ne la découvre par hasard.
+
+- Historique complet des contrôles : table `sante_base_donnees`.
+- Vue dashboard (statut, tendance 30 jours, actions à prendre) : `dashboard/app_pages/sante_bdd.py` (espace admin).
+- Déclenchement automatique : `.github/workflows/controle_sante_bdd.yml`.

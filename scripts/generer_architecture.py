@@ -408,6 +408,29 @@ def generer_markdown() -> str:
         )
     parties.append("")
 
+    # --- 5. Surveillance continue ---
+    table_sante = "sante_base_donnees" in tables
+    page_sante = (RACINE / "dashboard" / "app_pages" / "sante_bdd.py").exists()
+    workflow_sante = next((wf for wf in workflows if wf["fichier"] == "controle_sante_bdd.yml"), None)
+    if table_sante or page_sante:
+        parties.append("## 5. Surveillance continue de la base\n")
+        parties.append(
+            "Un contrôle de santé automatisé (`scripts/controle_sante_bdd.py`) tourne "
+            + (f"quotidiennement ({', '.join(workflow_sante['crons'])}, UTC)" if workflow_sante and workflow_sante["crons"] else "périodiquement")
+            + " et vérifie la couverture RLS, les fonctions SECURITY DEFINER exposées, "
+            "les demandes de devis bloquées, les réclamations en retard, les erreurs non "
+            "résolues, la croissance anormale des tables, les données de test résiduelles "
+            "et les FK non indexées — objectif : détecter une régression avant qu'un "
+            "utilisateur ou un test manuel ne la découvre par hasard.\n"
+        )
+        if table_sante:
+            parties.append("- Historique complet des contrôles : table `sante_base_donnees`.")
+        if page_sante:
+            parties.append("- Vue dashboard (statut, tendance 30 jours, actions à prendre) : `dashboard/app_pages/sante_bdd.py` (espace admin).")
+        if workflow_sante:
+            parties.append(f"- Déclenchement automatique : `.github/workflows/{workflow_sante['fichier']}`.")
+        parties.append("")
+
     return "\n".join(parties)
 
 

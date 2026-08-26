@@ -1515,3 +1515,49 @@ def get_clients_taux_reclamation_eleve(jours: int = FENETRE_TAUX_RECLAMATION_JOU
         if taux_info["alerte"]:
             alertes.append({"type_lead": "b2b", "client_final": client_final, **taux_info})
     return {"alertes": alertes}
+
+
+# Surveillance continue de la base (voir sql/init_sante_base_donnees.sql,
+# scripts/controle_sante_bdd.py, .github/workflows/controle_sante_bdd.yml)
+
+
+def get_sante_bdd_historique(jours: int = 30) -> dict:
+    """Tout l'historique des contrôles sur la fenêtre demandée, le plus
+    récent en premier — sert à la fois au statut instantané (première ligne
+    de chaque type_controle) et à la tendance affichée par
+    app_pages/sante_bdd.py."""
+    seuil = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+    try:
+        data = (
+            supabase.table("sante_base_donnees")
+            .select("*")
+            .gte("date_controle", seuil)
+            .order("date_controle", desc=True)
+            .execute()
+            .data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture santé base de données : {e}") from e
+    return {"controles": data or []}
+
+
+def get_sante_bdd_derniers_par_type() -> dict:
+    """Le résultat le plus récent de chaque type_controle (pas juste les 30
+    derniers jours : un contrôle qui n'a pas tourné depuis longtemps doit
+    quand même apparaître, avec sa date, plutôt que de disparaître
+    silencieusement de la page)."""
+    try:
+        data = (
+            supabase.table("sante_base_donnees")
+            .select("*")
+            .order("date_controle", desc=True)
+            .limit(500)
+            .execute()
+            .data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture santé base de données : {e}") from e
+    derniers: dict[str, dict] = {}
+    for ligne in data or []:
+        derniers.setdefault(ligne["type_controle"], ligne)
+    return {"derniers": derniers}
