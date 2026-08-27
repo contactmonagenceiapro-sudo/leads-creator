@@ -524,6 +524,13 @@ def generer_markdown() -> str:
     for ligne in MODULES_PILOTAGE:
         parties.append(f"- {ligne}")
     parties.append(
+        "- **Module 6 — Acquisition** : en attente (27/08/2026) — aucune colonne \"canal "
+        "d'acquisition\" n'est actuellement remplie en base (`leads.source` existe mais n'est "
+        "jamais écrit par le scraper). Nécessiterait d'instrumenter un nouveau point de capture "
+        "(ex. champ dans le formulaire d'intake public) qui n'existe pas encore — décision "
+        "explicite de l'utilisateur de reporter plutôt que d'inventer une source non fiable."
+    )
+    parties.append(
         "- **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, "
         "nom de domaine pas encore acheté) — volontairement non construit."
     )

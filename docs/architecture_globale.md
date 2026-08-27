@@ -2,7 +2,7 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-27 13:35 UTC
+Généré le : 2026-08-27 13:36 UTC
 
 ## 1. Schéma de la base de données
 
@@ -522,4 +522,5 @@ Chantier en cours (27/08/2026) : 12 modules de pilotage complétant la surveilla
 - **Module 2 — Pipeline de conversion** (27/08/2026) : répartition B2C/B2B par statut actuel + taux de contact/intérêt/signature (`data_access.get_pipeline_conversion`, aucune nouvelle table). Photo de l'état courant, pas une cohorte temporelle — leads.status/leads_professionnels.statut sont écrasés à chaque changement d'étape, aucun historique en base (approche confirmée par l'utilisateur). Pas d'alerte automatique : pas de seuil "anormalement bas" fiable sur le volume actuel. Page `dashboard/app_pages/pipeline_conversion.py`.
 - **Module 9 — Performance des artisans** (27/08/2026) : formule à l'unité uniquement. Table `propositions_expirees` (voir sql/init_propositions_expirees.sql) journalise chaque proposition expirée sans action — nécessite une petite modification de `livraison_devis.py::expirer_propositions_perimees()` (une info calculée puis jetée à chaque run devient persistée). Combinée aux livraisons payées (`data_access.get_performance_artisans`) : taux de réactivité et délai moyen de paiement par artisan — page `dashboard/app_pages/performance_artisans.py`.
 - **Module 4 — Satisfaction client** (27/08/2026) : enquête envoyée automatiquement 1 semaine après le premier paiement d'un artisan (`scripts/envoyer_enquetes_satisfaction.py`, `.github/workflows/envoyer_enquetes_satisfaction.yml`, quotidien 5h UTC) — table `satisfaction_enquetes` (voir sql/init_satisfaction_enquetes.sql). Réponse saisie manuellement par un admin (pas de webhook/formulaire public — la réponse arrive par e-mail) : page `dashboard/app_pages/satisfaction.py`.
+- **Module 6 — Acquisition** : en attente (27/08/2026) — aucune colonne "canal d'acquisition" n'est actuellement remplie en base (`leads.source` existe mais n'est jamais écrit par le scraper). Nécessiterait d'instrumenter un nouveau point de capture (ex. champ dans le formulaire d'intake public) qui n'existe pas encore — décision explicite de l'utilisateur de reporter plutôt que d'inventer une source non fiable.
 - **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, nom de domaine pas encore acheté) — volontairement non construit.
