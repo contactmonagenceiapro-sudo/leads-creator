@@ -1,0 +1,46 @@
+name: Envoi quotidien des enquêtes de satisfaction
+
+# Exécute scripts/envoyer_enquetes_satisfaction.py une fois par jour — envoie
+# une enquête de satisfaction aux artisans dont le premier paiement date
+# d'environ une semaine (voir sql/init_satisfaction_enquetes.sql).
+#
+# 5h00 UTC — quotidien (une fenêtre de plusieurs jours est tolérée par le
+# script lui-même, pas besoin d'une fréquence plus fine) ; décalé des crons
+# horaires (mail_check.yml à :00, livraison_devis.yml à :15) et des autres
+# crons quotidiens/hebdomadaires (controle_sante_bdd.yml 4h30 UTC,
+# controle_echeances.yml et controle_delivrabilite.yml le lundi) pour ne
+# jamais les chevaucher.
+
+on:
+  schedule:
+    - cron: "0 5 * * *" # tous les jours, 5h00 UTC
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: envoyer-enquetes-satisfaction
+  cancel-in-progress: false
+
+jobs:
+  envoyer-enquetes-satisfaction:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Envoyer les enquêtes de satisfaction
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          AGENCY_NAME: ${{ secrets.AGENCY_NAME }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 scripts/envoyer_enquetes_satisfaction.py

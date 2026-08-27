@@ -2,11 +2,11 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-27 13:30 UTC
+Généré le : 2026-08-27 13:35 UTC
 
 ## 1. Schéma de la base de données
 
-30 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
+31 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
 
 ```mermaid
 erDiagram
@@ -344,6 +344,15 @@ erDiagram
         jsonb detail
         timestamp_with_time_zone created_at
     }
+    satisfaction_enquetes {
+        uuid id PK
+        uuid lead_id
+        uuid contract_id
+        timestamp_with_time_zone envoyee_le
+        int32 note
+        text commentaire
+        timestamp_with_time_zone repondu_le
+    }
     tasks {
         uuid id PK
         text agent_id
@@ -381,6 +390,8 @@ erDiagram
     leads ||--o{ reclamations : "client_lead_id"
     contracts ||--o{ remboursements : "contract_id"
     leads_professionnels ||--o{ remboursements : "lead_professionnel_id"
+    leads ||--o{ satisfaction_enquetes : "lead_id"
+    contracts ||--o{ satisfaction_enquetes : "contract_id"
     utilisateurs_dashboard ||--o{ utilisateur_campagnes : "utilisateur_id"
     utilisateurs_dashboard ||--o{ utilisateur_leads : "utilisateur_id"
     leads ||--o{ utilisateur_leads : "lead_id"
@@ -399,6 +410,7 @@ flowchart LR
         controle_delivrabilite_yml["Contrôle hebdomadaire de la délivrabilité e-mail<br/>(0 9 * * 1)"] --> controle_delivrabilite_yml_script(["scripts/controle_delivrabilite.py"])
         controle_echeances_yml["Contrôle hebdomadaire des échéances<br/>(0 8 * * 1)"] --> controle_echeances_yml_script(["scripts/controle_echeances.py"])
         controle_sante_bdd_yml["Contrôle de santé de la base de données<br/>(30 4 * * *)"] --> controle_sante_bdd_yml_script(["scripts/controle_sante_bdd.py"])
+        envoyer_enquetes_satisfaction_yml["Envoi quotidien des enquêtes de satisfaction<br/>(0 5 * * *)"] --> envoyer_enquetes_satisfaction_yml_script(["scripts/envoyer_enquetes_satisfaction.py"])
         livraison_devis_yml["Réattribution automatique des demandes de devis expirées<br/>(15 * * * *)"] --> livraison_devis_yml_script(["livraison_devis.py"])
         mail_check_yml["Relève automatique des mails (bounces / réponses)<br/>(0 * * * *)"] --> mail_check_yml_script(["mail_processor.py"])
     end
@@ -414,6 +426,7 @@ flowchart LR
 | `controle_delivrabilite.yml` | `0 9 * * 1` | `scripts/controle_delivrabilite.py` | Exécute scripts/controle_delivrabilite.py une fois par semaine — alerte (Discord ou e-mail en repli) si le taux de hard bounce dépasse 5 % sur les 30 derniers jours, sur les artisans ou le B2B (voir dashboard/data_access.py::get_taux_bounce). |
 | `controle_echeances.yml` | `0 8 * * 1` | `scripts/controle_echeances.py` | Exécute scripts/controle_echeances.py une fois par semaine — alerte (Discord ou e-mail en repli) sur toute échéance légale/administrative encore 'a_traiter' à moins de 30 jours (voir sql/init_echeances.sql). |
 | `controle_sante_bdd.yml` | `30 4 * * *` | `scripts/controle_sante_bdd.py` | Exécute scripts/controle_sante_bdd.py quotidiennement — sécurité (couverture RLS, fonctions exposées), opérationnel (demandes de devis bloquées, réclamations en retard) et dérive (croissance anormale, données de test résiduelles, FK non indexées). Objectif : détecter une régression avant qu'un utilisateur ou un test manuel ne la découvre par hasard (voir sql/init_demandes_devis_particuliers_confirmation.sql pour l'incident qui a motivé ce système). |
+| `envoyer_enquetes_satisfaction.yml` | `0 5 * * *` | `scripts/envoyer_enquetes_satisfaction.py` | Exécute scripts/envoyer_enquetes_satisfaction.py une fois par jour — envoie une enquête de satisfaction aux artisans dont le premier paiement date d'environ une semaine (voir sql/init_satisfaction_enquetes.sql). |
 | `livraison_devis.yml` | `15 * * * *` | `livraison_devis.py` | Exécute livraison_devis.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — sans ce déclenchement automatique, l'engagement de délai affiché publiquement ("un professionnel qualifié vous recontacte sous 48h maximum, ou votre demande est automatiquement proposée à un autre professionnel", voir dashboard/pages_publiques.py) ne serait vrai que si un admin pense à cliquer le bouton manuel du dashboard au bon moment — pas une vraie garantie. |
 | `mail_check.yml` | `0 * * * *` | `mail_processor.py` | Exécute mail_processor.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — voir mail_processor.py::check_for_replies pour le verrou partagé (table Supabase mail_check_lock) qui empêche ce run automatique de se chevaucher avec un clic simultané sur le bouton manuel "Vérifier mails" du dashboard. |
 
@@ -439,6 +452,7 @@ flowchart TD
         qualite_leads_py["qualite_leads.py"]
         reclamations_py["reclamations.py"]
         sante_bdd_py["sante_bdd.py"]
+        satisfaction_py["satisfaction.py"]
         sourcing_py["sourcing.py"]
         suivi_resultats_py["suivi_resultats.py"]
         suppression_rgpd_py["suppression_rgpd.py"]
@@ -464,6 +478,7 @@ flowchart TD
 | `qualite_leads.py` | Admin | Interface admin "Qualité des leads" — module 8 de pilotage. Score global + détail actionnable : doublons potentiels (leads/leads_professionnels), champs manquants sur les leads actifs (surtout l'e-mail, seul canal de prospection utilisé par ce projet), pourcentage de leads pro jamais enrichis depuis trop longtemps. |
 | `reclamations.py` | Admin | Interface admin "Réclamations" — traitement des réclamations Article 4 des CGV (construire_articles_cgv_b2c et son équivalent B2B), B2C et B2B confondues (voir sql/init_reclamations.sql, dashboard/data_access.py). |
 | `sante_bdd.py` | Admin | Interface admin "Santé de la base" — vue du système de surveillance continue de Supabase (voir sql/init_sante_base_donnees.sql, scripts/controle_sante_bdd.py, .github/workflows/controle_sante_bdd.yml, cron quotidien). Objectif : rendre visible ici ce que le cron détecte déjà tout seul (RLS manquant, demandes de devis bloquées, réclamations en retard...) plutôt que de le découvrir par hasard lors d'un test manuel — voir sql/init_demandes_devis_particuliers_confirmation.sql pour l'incident qui a motivé ce système. |
+| `satisfaction.py` | Admin | Interface admin "Satisfaction" — module 4 de pilotage. Enquêtes envoyées automatiquement 1 semaine après le premier paiement d'un artisan (voir scripts/envoyer_enquetes_satisfaction.py, sql/init_satisfaction_enquetes.sql). |
 | `sourcing.py` | Admin | Interface "Sourcing / Scraping" — recherche de futurs clients ET configuration des campagnes (plateforme multi-clients / multi-secteurs). |
 | `suivi_resultats.py` | Admin | Interface "Suivi et Résultats des Actions" — vue centralisée du statut, des logs et de l'historique de chaque action de fond (scraping, traitement IA, campagnes, relances, vérification IMAP), déclenchées en subprocess par process_runner.py (voir sa docstring). |
 | `suppression_rgpd.py` | Admin | [Admin] Suppression RGPD — droit à l'effacement (art. 17 RGPD). |
@@ -484,7 +499,7 @@ Détectées par recherche des imports/appels réels dans le code (pas une liste 
 | DNS-over-HTTPS (dns.google) | Vérification live des enregistrements SPF/DKIM/DMARC (app_pages/deliverabilite.py), gratuit. | `dashboard/app_pages/deliverabilite.py` |
 | Discord (webhook) | Alertes temps réel (lead ultra-qualifié, erreurs) — voir alertes.py. | `alertes.py`, `dashboard/data_access.py`, `mail_processor.py`, `scraper_batiment.py`, `scripts/controle_delivrabilite.py`, … (+2) |
 | Ollama | Génération des pitchs de prospection (LLM local, avec repli générique si injoignable). | `dashboard/data_access.py`, `lead_worker.py`, `llm_config.py`, `outbound_chantiers/config.py` |
-| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `controle_delivrabilite.yml`, `controle_echeances.yml`, `controle_sante_bdd.yml`, `livraison_devis.yml`, `mail_check.yml` |
+| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `controle_delivrabilite.yml`, `controle_echeances.yml`, `controle_sante_bdd.yml`, `envoyer_enquetes_satisfaction.yml`, `livraison_devis.yml`, `mail_check.yml` |
 
 ## 5. Surveillance continue de la base
 
@@ -506,4 +521,5 @@ Chantier en cours (27/08/2026) : 12 modules de pilotage complétant la surveilla
 - **Module 1 — Finances** (27/08/2026) : CA/MRR/répartitions B2C déjà entièrement construits (`dashboard/app_pages/finances.py`, `finances_calc.py`, `data_access.get_contracts_finances`) mais retirés de la navigation le 17/08 sur suspicion d'ImportError en production — réactivés après retest en réel contre la prod n'ayant rien reproduit (décalage de cache Streamlit Cloud, pas un bug de code). B2B hors périmètre : aucune facturation B2B persistée en base à ce jour.
 - **Module 2 — Pipeline de conversion** (27/08/2026) : répartition B2C/B2B par statut actuel + taux de contact/intérêt/signature (`data_access.get_pipeline_conversion`, aucune nouvelle table). Photo de l'état courant, pas une cohorte temporelle — leads.status/leads_professionnels.statut sont écrasés à chaque changement d'étape, aucun historique en base (approche confirmée par l'utilisateur). Pas d'alerte automatique : pas de seuil "anormalement bas" fiable sur le volume actuel. Page `dashboard/app_pages/pipeline_conversion.py`.
 - **Module 9 — Performance des artisans** (27/08/2026) : formule à l'unité uniquement. Table `propositions_expirees` (voir sql/init_propositions_expirees.sql) journalise chaque proposition expirée sans action — nécessite une petite modification de `livraison_devis.py::expirer_propositions_perimees()` (une info calculée puis jetée à chaque run devient persistée). Combinée aux livraisons payées (`data_access.get_performance_artisans`) : taux de réactivité et délai moyen de paiement par artisan — page `dashboard/app_pages/performance_artisans.py`.
+- **Module 4 — Satisfaction client** (27/08/2026) : enquête envoyée automatiquement 1 semaine après le premier paiement d'un artisan (`scripts/envoyer_enquetes_satisfaction.py`, `.github/workflows/envoyer_enquetes_satisfaction.yml`, quotidien 5h UTC) — table `satisfaction_enquetes` (voir sql/init_satisfaction_enquetes.sql). Réponse saisie manuellement par un admin (pas de webhook/formulaire public — la réponse arrive par e-mail) : page `dashboard/app_pages/satisfaction.py`.
 - **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, nom de domaine pas encore acheté) — volontairement non construit.

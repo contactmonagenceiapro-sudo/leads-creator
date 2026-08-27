@@ -1429,6 +1429,57 @@ def get_performance_artisans() -> dict:
 
 
 # ---------------------------------------------------------------------
+# Module 4 (pilotage) — satisfaction client (B2C, artisans)
+# ---------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_satisfaction_enquetes() -> dict:
+    """Module 4 de pilotage — enquêtes envoyées automatiquement 1 semaine
+    après le premier paiement (scripts/envoyer_enquetes_satisfaction.py),
+    réponse saisie manuellement par un admin (voir
+    sql/init_satisfaction_enquetes.sql pour la doctrine : pas de webhook,
+    pas de formulaire public, la réponse arrive par e-mail et est
+    retranscrite ici)."""
+    try:
+        data = (
+            supabase.table("satisfaction_enquetes")
+            .select("*,leads(company,nom_entreprise,email)")
+            .order("envoyee_le", desc=True).execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture enquêtes de satisfaction : {e}") from e
+
+    repondues = [e for e in data if e.get("repondu_le")]
+    notes = [e["note"] for e in repondues if e.get("note") is not None]
+    return {
+        "enquetes": data,
+        "en_attente": [e for e in data if not e.get("repondu_le")],
+        "repondues": repondues,
+        "note_moyenne": round(sum(notes) / len(notes), 1) if notes else None,
+        "nombre_notes": len(notes),
+    }
+
+
+def enregistrer_reponse_satisfaction(enquete_id: str, note: int, commentaire: str | None) -> dict:
+    """Saisie manuelle par un admin de la réponse reçue par e-mail à une
+    enquête de satisfaction — voir get_satisfaction_enquetes pour la
+    doctrine (pas de formulaire public)."""
+    if not (0 <= note <= 10):
+        raise DataAccessError("La note doit être comprise entre 0 et 10.")
+    try:
+        supabase.table("satisfaction_enquetes").update({
+            "note": note,
+            "commentaire": (commentaire or "").strip() or None,
+            "repondu_le": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", enquete_id).execute()
+    except Exception as e:
+        raise DataAccessError(f"Erreur enregistrement réponse : {e}") from e
+    get_satisfaction_enquetes.clear()
+    journaliser_action_admin("enregistrer_reponse_satisfaction", "satisfaction_enquete", enquete_id, {"note": note})
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------
 # Réclamations (B2C + B2B) — Article 4 des CGV (construire_articles_cgv_b2c
 # et son équivalent B2B), voir sql/init_reclamations.sql pour le schéma
 # complet et la justification des choix de modélisation (lead_id polymorphe,

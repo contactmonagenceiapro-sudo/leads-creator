@@ -188,6 +188,14 @@ MODULES_PILOTAGE: list[str] = [
         "(`data_access.get_performance_artisans`) : taux de réactivité et délai moyen de "
         "paiement par artisan — page `dashboard/app_pages/performance_artisans.py`."
     ),
+    (
+        "**Module 4 — Satisfaction client** (27/08/2026) : enquête envoyée automatiquement "
+        "1 semaine après le premier paiement d'un artisan (`scripts/envoyer_enquetes_satisfaction.py`, "
+        "`.github/workflows/envoyer_enquetes_satisfaction.yml`, quotidien 5h UTC) — table "
+        "`satisfaction_enquetes` (voir sql/init_satisfaction_enquetes.sql). Réponse saisie "
+        "manuellement par un admin (pas de webhook/formulaire public — la réponse arrive par "
+        "e-mail) : page `dashboard/app_pages/satisfaction.py`."
+    ),
 ]
 
 
