@@ -1363,6 +1363,72 @@ def marquer_demande_devis_payee_et_livree(demande_id: str, stripe_payment_intent
 
 
 # ---------------------------------------------------------------------
+# Module 9 (pilotage) — performance des artisans (formule à l'unité)
+# ---------------------------------------------------------------------
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_performance_artisans() -> dict:
+    """Module 9 de pilotage — par artisan (formule à l'unité uniquement,
+    seule formule où une proposition peut être refusée/ignorée ; la formule
+    abonnement livre directement, voir livraison_devis.py::_livrer_directement) :
+    nombre de propositions expirées sans action (table `propositions_expirees`,
+    voir sql/init_propositions_expirees.sql — nécessaire car
+    demandes_devis_particuliers.lead_id_livraison est écrasé à chaque
+    ré-attribution, cette info était calculée puis jetée avant ce module),
+    nombre de livraisons effectivement payées, taux de réactivité déduit, et
+    délai moyen de paiement (livree_le - proposee_le, uniquement les
+    demandes avec stripe_payment_intent_id : seul sous-ensemble où cette
+    paire de dates a un sens, voir calculer_ca_du_mois pour la même
+    convention).
+
+    Taux de réactivité = livrées / (livrées + expirées) — un artisan sans
+    aucune des deux n'apparaît pas dans le résultat (rien à mesurer)."""
+    try:
+        expirees = supabase.table("propositions_expirees").select("artisan_id").execute().data
+        livrees = (
+            supabase.table("demandes_devis_particuliers")
+            .select("lead_id_livraison,proposee_le,livree_le,stripe_payment_intent_id")
+            .eq("statut", "livree").not_.is_("lead_id_livraison", "null")
+            .execute().data
+        )
+        artisans = supabase.table("leads").select("id,company,nom_entreprise,email").execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture performance artisans : {e}") from e
+
+    noms = {a["id"]: (a.get("company") or a.get("nom_entreprise") or a.get("email") or a["id"]) for a in artisans}
+
+    nb_expirees: dict[str, int] = {}
+    for e in expirees:
+        nb_expirees[e["artisan_id"]] = nb_expirees.get(e["artisan_id"], 0) + 1
+
+    nb_livrees: dict[str, int] = {}
+    delais_par_artisan: dict[str, list[float]] = {}
+    for l in livrees:
+        artisan_id = l["lead_id_livraison"]
+        nb_livrees[artisan_id] = nb_livrees.get(artisan_id, 0) + 1
+        if l.get("stripe_payment_intent_id") and l.get("proposee_le") and l.get("livree_le"):
+            debut = datetime.fromisoformat(l["proposee_le"].replace("Z", "+00:00"))
+            fin = datetime.fromisoformat(l["livree_le"].replace("Z", "+00:00"))
+            delais_par_artisan.setdefault(artisan_id, []).append((fin - debut).total_seconds() / 3600)
+
+    artisan_ids = set(nb_expirees) | set(nb_livrees)
+    resultat = []
+    for artisan_id in artisan_ids:
+        e, v = nb_expirees.get(artisan_id, 0), nb_livrees.get(artisan_id, 0)
+        delais = delais_par_artisan.get(artisan_id, [])
+        resultat.append({
+            "artisan_id": artisan_id,
+            "nom": noms.get(artisan_id, artisan_id),
+            "propositions_expirees": e,
+            "livraisons_payees": v,
+            "taux_reactivite": round(v / (v + e), 3) if (v + e) else 0,
+            "delai_paiement_moyen_heures": round(sum(delais) / len(delais), 1) if delais else None,
+        })
+    resultat.sort(key=lambda r: (-r["propositions_expirees"], r["taux_reactivite"]))
+    return {"artisans": resultat}
+
+
+# ---------------------------------------------------------------------
 # Réclamations (B2C + B2B) — Article 4 des CGV (construire_articles_cgv_b2c
 # et son équivalent B2B), voir sql/init_reclamations.sql pour le schéma
 # complet et la justification des choix de modélisation (lead_id polymorphe,

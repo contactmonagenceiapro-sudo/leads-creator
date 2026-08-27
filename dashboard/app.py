@@ -32,6 +32,8 @@ Structure (multi-pages) :
                                         module 1 de pilotage)
     app_pages/pipeline_conversion.py -> [Admin] Pipeline de conversion (module 2 de pilotage,
                                         photo par statut B2C/B2B, pas de cohorte)
+    app_pages/performance_artisans.py -> [Admin] Performance artisans (module 9 de pilotage,
+                                        propositions expirées vs livrées, formule à l'unité)
     app_pages/suppression_rgpd.py   -> [Admin] Suppression RGPD (droit à l'effacement)
     app_pages/portail_client.py     -> [Client] Vue restreinte à ses propres campagnes
                                         (également accessible à l'admin, en aperçu/test)
@@ -226,6 +228,9 @@ if est_admin():
     page_pipeline_conversion = st.Page(
         "app_pages/pipeline_conversion.py", title="Pipeline de conversion", icon="🔀"
     )
+    page_performance_artisans = st.Page(
+        "app_pages/performance_artisans.py", title="Performance artisans", icon="🛠️"
+    )
     # Admin uniquement (jamais côté Portail Client) : supprime des données
     # réelles de façon irréversible — voir app_pages/suppression_rgpd.py.
     page_suppression_rgpd = st.Page("app_pages/suppression_rgpd.py", title="Suppression RGPD", icon="🗑️")
@@ -238,7 +243,8 @@ if est_admin():
             page_sourcing, page_gestion, page_administration, page_deliverabilite,
             page_demandes_devis, page_reclamations, page_suivi, page_sante_bdd,
             page_journal_audit, page_couts_infrastructure, page_qualite_leads, page_echeances,
-            page_finances, page_pipeline_conversion, page_suppression_rgpd, page_portail_client,
+            page_finances, page_pipeline_conversion, page_performance_artisans,
+            page_suppression_rgpd, page_portail_client,
         ]
     )
 else:

@@ -71,9 +71,9 @@ TABLES_AUDITEES_MANUELLEMENT = {
     "ceo_reports", "contracts", "couts_infrastructure", "demandes_devis_particuliers",
     "echeances", "email_events", "emails_blacklistes", "error_log", "intake_responses",
     "journal_audit_admin", "kpis", "leads", "leads_professionnels", "mail_check_lock",
-    "mail_check_runs", "migrations_appliquees", "reclamations", "registre_suppressions_rgpd",
-    "remboursements", "sante_base_donnees", "tasks", "utilisateur_campagnes",
-    "utilisateur_leads", "utilisateurs_dashboard",
+    "mail_check_runs", "migrations_appliquees", "propositions_expirees", "reclamations",
+    "registre_suppressions_rgpd", "remboursements", "sante_base_donnees", "tasks",
+    "utilisateur_campagnes", "utilisateur_leads", "utilisateurs_dashboard",
 }
 
 # Fonctions RPC déjà revues le 26/08/2026 (voir échange d'audit) — toute

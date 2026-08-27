@@ -2,11 +2,11 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-27 13:16 UTC
+Généré le : 2026-08-27 13:30 UTC
 
 ## 1. Schéma de la base de données
 
-29 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
+30 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
 
 ```mermaid
 erDiagram
@@ -286,6 +286,16 @@ erDiagram
         text nom
         timestamp_with_time_zone appliquee_le
     }
+    propositions_expirees {
+        uuid id PK
+        uuid demande_id
+        uuid artisan_id
+        text corps_metier
+        text commune
+        int32 montant_centimes
+        timestamp_with_time_zone proposee_le
+        timestamp_with_time_zone expire_le
+    }
     reclamations {
         uuid id PK
         text type_lead
@@ -366,6 +376,8 @@ erDiagram
     leads ||--o{ demandes_devis_particuliers : "lead_id_livraison"
     leads ||--o{ intake_responses : "lead_id"
     utilisateurs_dashboard ||--o{ journal_audit_admin : "utilisateur_id"
+    demandes_devis_particuliers ||--o{ propositions_expirees : "demande_id"
+    leads ||--o{ propositions_expirees : "artisan_id"
     leads ||--o{ reclamations : "client_lead_id"
     contracts ||--o{ remboursements : "contract_id"
     leads_professionnels ||--o{ remboursements : "lead_professionnel_id"
@@ -422,6 +434,7 @@ flowchart TD
         finances_py["finances.py"]
         gestion_clients_py["gestion_clients.py"]
         journal_audit_py["journal_audit.py"]
+        performance_artisans_py["performance_artisans.py"]
         pipeline_conversion_py["pipeline_conversion.py"]
         qualite_leads_py["qualite_leads.py"]
         reclamations_py["reclamations.py"]
@@ -445,6 +458,7 @@ flowchart TD
 | `finances.py` | Admin | Interface "Finances" — chiffre d'affaires, MRR et activité commerciale dans le temps (24h / 7j / 30j / total). |
 | `gestion_clients.py` | Admin | Interface "Gestion & Réponse aux clients" — suivi des leads, visualisation des scores, et pilotage des campagnes d'e-mailing / relances, filtrable par client/campagne (plateforme multi-clients / multi-secteurs). |
 | `journal_audit.py` | Admin | Interface admin "Journal d'audit" — historique consultable/filtrable des actions admin sensibles (voir sql/init_journal_audit_admin.sql, data_access.journaliser_action_admin). Branché directement dans les fonctions existantes qui font déjà ces actions (traiter_reclamation, maj_statut_verification_pro, marquer_contrat_signe, marquer_contrat_paye, executer_remboursement) — pas un système de log séparé. |
+| `performance_artisans.py` | Admin | Interface admin "Performance artisans" — module 9 de pilotage. Par artisan (formule à l'unité uniquement — la formule abonnement livre directement, aucune notion de refus/expiration) : propositions expirées sans action (table propositions_expirees, voir sql/init_propositions_expirees.sql et livraison_devis.py::expirer_propositions_perimees), livraisons payées, taux de réactivité déduit, délai moyen de paiement. |
 | `pipeline_conversion.py` | Admin | Interface admin "Pipeline de conversion" — module 2 de pilotage. Répartition des leads par statut actuel (B2C et B2B) + taux de contact/intérêt/signature dérivés — voir data_access.get_pipeline_conversion pour le détail de la limite importante : c'est une PHOTO de l'état courant, pas un entonnoir de cohorte (leads.status/statut est écrasé à chaque changement d'étape, aucun historique en base). |
 | `portail_client.py` | Client | Portail Client — vue en lecture seule, strictement limitée aux campagnes B2B (dashboard/auth.py::campagnes_autorisees()) et/ou aux leads B2C (dashboard/auth.py::mes_leads_autorises(), voir sql/init_utilisateur_leads.sql) de l'utilisateur connecté. Un même compte peut être lié à l'un, l'autre, ou les deux — chaque section ci-dessous ne s'affiche que si le compte a quelque chose à y voir. |
 | `qualite_leads.py` | Admin | Interface admin "Qualité des leads" — module 8 de pilotage. Score global + détail actionnable : doublons potentiels (leads/leads_professionnels), champs manquants sur les leads actifs (surtout l'e-mail, seul canal de prospection utilisé par ce projet), pourcentage de leads pro jamais enrichis depuis trop longtemps. |
@@ -491,4 +505,5 @@ Chantier en cours (27/08/2026) : 12 modules de pilotage complétant la surveilla
 - **Module 7 — Qualité et délivrabilité e-mail** (27/08/2026) : taux de hard bounce sur 30 jours glissants (`data_access.get_taux_bounce`, aucune nouvelle table — réutilise `email_events` et `emails_blacklistes`), ajouté à la page existante `dashboard/app_pages/deliverabilite.py` (déjà warmup + taux de réponse + DNS), alerte hebdomadaire si le taux dépasse 5 % (`scripts/controle_delivrabilite.py`, `.github/workflows/controle_delivrabilite.yml`, lundi 9h UTC). Pas de suivi ouverture/clic : le pixel de tracking a été retiré.
 - **Module 1 — Finances** (27/08/2026) : CA/MRR/répartitions B2C déjà entièrement construits (`dashboard/app_pages/finances.py`, `finances_calc.py`, `data_access.get_contracts_finances`) mais retirés de la navigation le 17/08 sur suspicion d'ImportError en production — réactivés après retest en réel contre la prod n'ayant rien reproduit (décalage de cache Streamlit Cloud, pas un bug de code). B2B hors périmètre : aucune facturation B2B persistée en base à ce jour.
 - **Module 2 — Pipeline de conversion** (27/08/2026) : répartition B2C/B2B par statut actuel + taux de contact/intérêt/signature (`data_access.get_pipeline_conversion`, aucune nouvelle table). Photo de l'état courant, pas une cohorte temporelle — leads.status/leads_professionnels.statut sont écrasés à chaque changement d'étape, aucun historique en base (approche confirmée par l'utilisateur). Pas d'alerte automatique : pas de seuil "anormalement bas" fiable sur le volume actuel. Page `dashboard/app_pages/pipeline_conversion.py`.
+- **Module 9 — Performance des artisans** (27/08/2026) : formule à l'unité uniquement. Table `propositions_expirees` (voir sql/init_propositions_expirees.sql) journalise chaque proposition expirée sans action — nécessite une petite modification de `livraison_devis.py::expirer_propositions_perimees()` (une info calculée puis jetée à chaque run devient persistée). Combinée aux livraisons payées (`data_access.get_performance_artisans`) : taux de réactivité et délai moyen de paiement par artisan — page `dashboard/app_pages/performance_artisans.py`.
 - **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, nom de domaine pas encore acheté) — volontairement non construit.

@@ -179,6 +179,15 @@ MODULES_PILOTAGE: list[str] = [
         "automatique : pas de seuil \"anormalement bas\" fiable sur le volume actuel. Page "
         "`dashboard/app_pages/pipeline_conversion.py`."
     ),
+    (
+        "**Module 9 — Performance des artisans** (27/08/2026) : formule à l'unité uniquement. "
+        "Table `propositions_expirees` (voir sql/init_propositions_expirees.sql) journalise "
+        "chaque proposition expirée sans action — nécessite une petite modification de "
+        "`livraison_devis.py::expirer_propositions_perimees()` (une info calculée puis jetée "
+        "à chaque run devient persistée). Combinée aux livraisons payées "
+        "(`data_access.get_performance_artisans`) : taux de réactivité et délai moyen de "
+        "paiement par artisan — page `dashboard/app_pages/performance_artisans.py`."
+    ),
 ]
 
 

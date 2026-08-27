@@ -382,6 +382,23 @@ def expirer_propositions_perimees() -> dict:
     reattribuees, en_attente = 0, 0
     for i, demande in enumerate(perimees, start=1):
         candidat_expire = demande.get("lead_id_livraison")
+        if candidat_expire:
+            # Module 9 (pilotage) — journalise l'expiration AVANT le reset
+            # ci-dessous qui efface lead_id_livraison : seule table qui
+            # conserve cette info dans la durée (voir sql/init_propositions_expirees.sql
+            # pour pourquoi elle est nécessaire). Best-effort : un échec
+            # d'écriture ne doit jamais bloquer la ré-attribution réelle.
+            try:
+                supabase.table("propositions_expirees").insert({
+                    "demande_id": demande["id"],
+                    "artisan_id": candidat_expire,
+                    "corps_metier": demande.get("corps_metier"),
+                    "commune": demande.get("commune"),
+                    "montant_centimes": demande.get("montant_centimes"),
+                    "proposee_le": demande.get("proposee_le"),
+                }).execute()
+            except Exception as e:
+                log.error(f"Échec journalisation proposition expirée (demande {demande['id']}) : {e}")
         # Réinitialise AVANT de retenter : le candidat suivant qui échouerait
         # à son tour doit retomber sur le même état par défaut qu'une
         # demande jamais encore traitée (voir traiter_demande, qui gère
