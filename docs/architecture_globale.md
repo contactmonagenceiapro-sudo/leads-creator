@@ -2,7 +2,7 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-27 19:50 UTC
+Généré le : 2026-08-27 20:06 UTC
 
 ## 1. Schéma de la base de données
 
@@ -414,6 +414,9 @@ flowchart LR
         livraison_devis_yml["Réattribution automatique des demandes de devis expirées<br/>(15 * * * *)"] --> livraison_devis_yml_script(["livraison_devis.py"])
         mail_check_yml["Relève automatique des mails (bounces / réponses)<br/>(0 * * * *)"] --> mail_check_yml_script(["mail_processor.py"])
     end
+    subgraph SYNC["Déclenchement synchrone (pas de cron)"]
+        sync_0["Confirmation par e-mail d'une demande de devis"]
+    end
 ```
 
 ### Déclenchées par cron (GitHub Actions)
@@ -426,6 +429,10 @@ flowchart LR
 | `envoyer_enquetes_satisfaction.yml` | `0 5 * * *` | `scripts/envoyer_enquetes_satisfaction.py` | Exécute scripts/envoyer_enquetes_satisfaction.py une fois par jour — envoie une enquête de satisfaction aux artisans dont le premier paiement date d'environ une semaine (voir sql/init_satisfaction_enquetes.sql). |
 | `livraison_devis.yml` | `15 * * * *` | `livraison_devis.py` | Exécute livraison_devis.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — sans ce déclenchement automatique, l'engagement de délai affiché publiquement ("un professionnel qualifié vous recontacte sous 48h maximum, ou votre demande est automatiquement proposée à un autre professionnel", voir dashboard/pages_publiques.py) ne serait vrai que si un admin pense à cliquer le bouton manuel du dashboard au bon moment — pas une vraie garantie. |
 | `mail_check.yml` | `0 * * * *` | `mail_processor.py` | Exécute mail_processor.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — voir mail_processor.py::check_for_replies pour le verrou partagé (table Supabase mail_check_lock) qui empêche ce run automatique de se chevaucher avec un clic simultané sur le bouton manuel "Vérifier mails" du dashboard. |
+
+### Déclenchées de façon synchrone (pas de cron)
+
+- **Confirmation par e-mail d'une demande de devis** (`dashboard/pages_publiques.py`) — Envoyée directement au dépôt du formulaire public (afficher_demande_devis / afficher_intake), PAS par cron — voir sql/init_demandes_devis_particuliers_confirmation.sql. Le rapprochement round-robin qui suit, lui, reste piloté par livraison_devis.yml (cron horaire).
 
 ## 3. Pages et rôles du dashboard
 
