@@ -731,6 +731,64 @@ def get_taux_reponse() -> dict:
 
 
 # ---------------------------------------------------------------------
+# Module 7 (pilotage) — taux de bounce (complète get_taux_reponse ci-dessus,
+# déjà affiché dans app_pages/deliverabilite.py, avec la seule donnée de
+# délivrabilité qui n'existe encore nulle part dans le dashboard)
+# ---------------------------------------------------------------------
+
+SEUIL_ALERTE_TAUX_BOUNCE = 0.05  # 5 % de hard bounces sur la fenêtre = alerte
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_taux_bounce(jours: int = 30) -> dict:
+    """Taux de hard bounce par segment (lead_artisan / lead_professionnel)
+    sur les `jours` derniers jours. Aucune nouvelle table : emails_blacklistes
+    (sql/init_bounces.sql, seule raison enregistrée aujourd'hui étant
+    'hard_bounce' — voir mail_processor.py::traiter_bounce, pas de bounce
+    "soft" suivi) pour les bounces, email_events pour le dénominateur
+    (envois de la même fenêtre).
+
+    Approximation acceptable pour une alerte de tendance, pas un calcul
+    comptable exact : un bounce peut concerner un envoi légèrement
+    antérieur à la fenêtre si le rejet distant est différé."""
+    depuis = (datetime.now(timezone.utc) - timedelta(days=jours)).isoformat()
+    try:
+        envoyes_bruts = (
+            supabase.table("email_events")
+            .select("lead_type,lead_id")
+            .eq("type_evenement", "envoye")
+            .gte("created_at", depuis)
+            .not_.in_("lead_id", LEADS_TEST_A_EXCLURE)
+            .execute().data
+        )
+        bounces_bruts = (
+            supabase.table("emails_blacklistes")
+            .select("lead_type,lead_id")
+            .eq("raison", "hard_bounce")
+            .gte("blackliste_at", depuis)
+            .execute().data
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture taux de bounce : {e}") from e
+
+    def _segment(lead_type: str) -> dict:
+        envoyes = {e["lead_id"] for e in envoyes_bruts if e["lead_type"] == lead_type}
+        bounces = {b["lead_id"] for b in bounces_bruts if b["lead_type"] == lead_type}
+        n_envoyes = len(envoyes)
+        return {
+            "envoyes": n_envoyes,
+            "bounces": len(bounces),
+            "taux_bounce": round(len(bounces) / n_envoyes, 3) if n_envoyes else 0,
+        }
+
+    return {
+        "jours": jours,
+        "lead_artisan": _segment("lead_artisan"),
+        "lead_professionnel": _segment("lead_professionnel"),
+    }
+
+
+# ---------------------------------------------------------------------
 # Contrats / paiements (Stripe) — confirmation manuelle (plus de webhooks)
 # ---------------------------------------------------------------------
 

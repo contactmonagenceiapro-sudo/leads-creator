@@ -153,6 +153,15 @@ MODULES_PILOTAGE: list[str] = [
         "lundi 8h UTC) sur toute échéance à moins de 30 jours — page "
         "`dashboard/app_pages/echeances.py`."
     ),
+    (
+        "**Module 7 — Qualité et délivrabilité e-mail** (27/08/2026) : taux de hard bounce sur "
+        "30 jours glissants (`data_access.get_taux_bounce`, aucune nouvelle table — réutilise "
+        "`email_events` et `emails_blacklistes`), ajouté à la page existante "
+        "`dashboard/app_pages/deliverabilite.py` (déjà warmup + taux de réponse + DNS), alerte "
+        "hebdomadaire si le taux dépasse 5 % (`scripts/controle_delivrabilite.py`, "
+        "`.github/workflows/controle_delivrabilite.yml`, lundi 9h UTC). Pas de suivi "
+        "ouverture/clic : le pixel de tracking a été retiré."
+    ),
 ]
 
 

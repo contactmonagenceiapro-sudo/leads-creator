@@ -1,0 +1,46 @@
+name: Contrôle hebdomadaire de la délivrabilité e-mail
+
+# Exécute scripts/controle_delivrabilite.py une fois par semaine — alerte
+# (Discord ou e-mail en repli) si le taux de hard bounce dépasse 5 % sur les
+# 30 derniers jours, sur les artisans ou le B2B (voir
+# dashboard/data_access.py::get_taux_bounce).
+#
+# Lundi 9h00 UTC — hebdomadaire (un taux de bounce sur 30 jours ne bouge pas
+# assez vite pour un contrôle plus fréquent) ; décalé des crons horaires
+# (mail_check.yml à :00, livraison_devis.yml à :15), du cron quotidien
+# controle_sante_bdd.yml (4h30 UTC) et de controle_echeances.yml (lundi 8h00)
+# pour ne jamais les chevaucher.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # tous les lundis, 9h00 UTC
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: controle-delivrabilite
+  cancel-in-progress: false
+
+jobs:
+  controle-delivrabilite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Vérifier le taux de bounce
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          CEO_EMAIL: ${{ secrets.CEO_EMAIL }}
+        run: python3 scripts/controle_delivrabilite.py

@@ -1,6 +1,8 @@
 """
 Interface "Délivrabilité" — suivi de la montée en charge progressive
-(warmup) du domaine d'envoi B2B et vérification live des enregistrements
+(warmup) du domaine d'envoi B2B, taux de réponse, taux de hard bounce
+(module 7 de pilotage — alerte hebdomadaire automatique, voir
+scripts/controle_delivrabilite.py) et vérification live des enregistrements
 DNS (SPF/DKIM/DMARC) indispensables à la délivrabilité.
 
 Espace admin uniquement : c'est une donnée d'infrastructure d'envoi
@@ -18,7 +20,7 @@ import requests
 import streamlit as st
 
 from common import safe_call
-from data_access import get_taux_reponse, get_warmup_status
+from data_access import SEUIL_ALERTE_TAUX_BOUNCE, get_taux_bounce, get_taux_reponse, get_warmup_status
 
 st.title("📶 Délivrabilité")
 st.caption("Montée en charge du domaine d'envoi (warmup) & enregistrements DNS SPF/DKIM/DMARC")
@@ -99,6 +101,36 @@ elif reponses:
         )
     else:
         st.caption("Aucun envoi B2B journalisé pour l'instant.")
+
+st.divider()
+
+# ---------------------------------------------------------------------
+# Taux de bounce (module 7 de pilotage) — sur 30 jours glissants
+# ---------------------------------------------------------------------
+
+st.subheader("Taux de bounce (30 derniers jours)")
+st.caption(
+    "Hard bounces (emails_blacklistes, voir mail_processor.py::traiter_bounce) rapportés "
+    "aux envois de la même fenêtre — alerte hebdomadaire automatique si le taux dépasse "
+    f"{SEUIL_ALERTE_TAUX_BOUNCE:.0%} (voir scripts/controle_delivrabilite.py)."
+)
+
+bounce, erreur_bounce = safe_call(get_taux_bounce, 30)
+if erreur_bounce:
+    st.error(erreur_bounce)
+elif bounce:
+    for cle, nom in [("lead_artisan", "Artisans (B2C)"), ("lead_professionnel", "B2B")]:
+        segment = bounce[cle]
+        if not segment["envoyes"]:
+            st.caption(f"{nom} : aucun envoi sur les 30 derniers jours.")
+            continue
+        st.markdown(f"**{nom}**")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Envois", segment["envoyes"])
+        col2.metric("Hard bounces", segment["bounces"])
+        col3.metric("Taux de bounce", f"{segment['taux_bounce'] * 100:.1f} %")
+        if segment["taux_bounce"] > SEUIL_ALERTE_TAUX_BOUNCE:
+            st.error(f"⚠️ Au-dessus du seuil d'alerte ({SEUIL_ALERTE_TAUX_BOUNCE:.0%}).")
 
 st.divider()
 

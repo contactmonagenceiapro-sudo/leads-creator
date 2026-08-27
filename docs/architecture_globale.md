@@ -2,11 +2,11 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-26 22:43 UTC
+Généré le : 2026-08-27 13:04 UTC
 
 ## 1. Schéma de la base de données
 
-26 tables, 1 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
+29 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
 
 ```mermaid
 erDiagram
@@ -93,6 +93,16 @@ erDiagram
         text type_offre
         text formule_abonnement
     }
+    couts_infrastructure {
+        uuid id PK
+        text service
+        int32 cout_mensuel_centimes
+        numeric pourcentage_du_ca
+        date date_debut
+        date date_fin
+        text notes
+        timestamp_with_time_zone created_at
+    }
     demandes_devis_particuliers {
         uuid id PK
         text client_final
@@ -117,6 +127,17 @@ erDiagram
         uuid token_confirmation
         timestamp_with_time_zone date_envoi_confirmation
         timestamp_with_time_zone date_confirmation
+    }
+    echeances {
+        uuid id PK
+        text type
+        text description
+        date date_echeance
+        text statut
+        text notes
+        int32 recurrence_jours
+        timestamp_with_time_zone date_traitement
+        timestamp_with_time_zone created_at
     }
     email_events {
         uuid id PK
@@ -157,6 +178,16 @@ erDiagram
         text type_offre
         text formule_abonnement
         jsonb communes_couvertes
+    }
+    journal_audit_admin {
+        uuid id PK
+        uuid utilisateur_id
+        text utilisateur_email
+        text action
+        text cible_type
+        uuid cible_id
+        jsonb detail
+        timestamp_with_time_zone created_at
     }
     kpis {
         uuid id PK
@@ -334,6 +365,7 @@ erDiagram
     leads ||--o{ contracts : "lead_id"
     leads ||--o{ demandes_devis_particuliers : "lead_id_livraison"
     leads ||--o{ intake_responses : "lead_id"
+    utilisateurs_dashboard ||--o{ journal_audit_admin : "utilisateur_id"
     leads ||--o{ reclamations : "client_lead_id"
     contracts ||--o{ remboursements : "contract_id"
     leads_professionnels ||--o{ remboursements : "lead_professionnel_id"
@@ -344,6 +376,7 @@ erDiagram
 
 **Vues** (non représentées dans le diagramme ci-dessus, lecture seule) :
 
+- `v_policies_rls`
 - `v_score_vs_conversion_pro`
 
 ## 2. Pipelines et automatisations
@@ -351,9 +384,14 @@ erDiagram
 ```mermaid
 flowchart LR
     subgraph CRON["GitHub Actions (cron)"]
+        controle_delivrabilite_yml["Contrôle hebdomadaire de la délivrabilité e-mail<br/>(0 9 * * 1)"] --> controle_delivrabilite_yml_script(["scripts/controle_delivrabilite.py"])
+        controle_echeances_yml["Contrôle hebdomadaire des échéances<br/>(0 8 * * 1)"] --> controle_echeances_yml_script(["scripts/controle_echeances.py"])
         controle_sante_bdd_yml["Contrôle de santé de la base de données<br/>(30 4 * * *)"] --> controle_sante_bdd_yml_script(["scripts/controle_sante_bdd.py"])
         livraison_devis_yml["Réattribution automatique des demandes de devis expirées<br/>(15 * * * *)"] --> livraison_devis_yml_script(["livraison_devis.py"])
         mail_check_yml["Relève automatique des mails (bounces / réponses)<br/>(0 * * * *)"] --> mail_check_yml_script(["mail_processor.py"])
+    end
+    subgraph SYNC["Déclenchement synchrone (pas de cron)"]
+        sync_0["Confirmation par e-mail d'une demande de devis"]
     end
 ```
 
@@ -361,9 +399,15 @@ flowchart LR
 
 | Workflow | Fréquence | Script | Rôle |
 |---|---|---|---|
+| `controle_delivrabilite.yml` | `0 9 * * 1` | `scripts/controle_delivrabilite.py` | Exécute scripts/controle_delivrabilite.py une fois par semaine — alerte (Discord ou e-mail en repli) si le taux de hard bounce dépasse 5 % sur les 30 derniers jours, sur les artisans ou le B2B (voir dashboard/data_access.py::get_taux_bounce). |
+| `controle_echeances.yml` | `0 8 * * 1` | `scripts/controle_echeances.py` | Exécute scripts/controle_echeances.py une fois par semaine — alerte (Discord ou e-mail en repli) sur toute échéance légale/administrative encore 'a_traiter' à moins de 30 jours (voir sql/init_echeances.sql). |
 | `controle_sante_bdd.yml` | `30 4 * * *` | `scripts/controle_sante_bdd.py` | Exécute scripts/controle_sante_bdd.py quotidiennement — sécurité (couverture RLS, fonctions exposées), opérationnel (demandes de devis bloquées, réclamations en retard) et dérive (croissance anormale, données de test résiduelles, FK non indexées). Objectif : détecter une régression avant qu'un utilisateur ou un test manuel ne la découvre par hasard (voir sql/init_demandes_devis_particuliers_confirmation.sql pour l'incident qui a motivé ce système). |
 | `livraison_devis.yml` | `15 * * * *` | `livraison_devis.py` | Exécute livraison_devis.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — sans ce déclenchement automatique, l'engagement de délai affiché publiquement ("un professionnel qualifié vous recontacte sous 48h maximum, ou votre demande est automatiquement proposée à un autre professionnel", voir dashboard/pages_publiques.py) ne serait vrai que si un admin pense à cliquer le bouton manuel du dashboard au bon moment — pas une vraie garantie. |
 | `mail_check.yml` | `0 * * * *` | `mail_processor.py` | Exécute mail_processor.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — voir mail_processor.py::check_for_replies pour le verrou partagé (table Supabase mail_check_lock) qui empêche ce run automatique de se chevaucher avec un clic simultané sur le bouton manuel "Vérifier mails" du dashboard. |
+
+### Déclenchées de façon synchrone (pas de cron)
+
+- **Confirmation par e-mail d'une demande de devis** (`dashboard/pages_publiques.py`) — Envoyée directement au dépôt du formulaire public (afficher_demande_devis / afficher_intake), PAS par cron — voir sql/init_demandes_devis_particuliers_confirmation.sql. Le rapprochement round-robin qui suit, lui, reste piloté par livraison_devis.yml (cron horaire).
 
 ## 3. Pages et rôles du dashboard
 
@@ -371,10 +415,14 @@ flowchart LR
 flowchart TD
     subgraph ADMIN["Espace Admin"]
         administration_contrats_py["administration_contrats.py"]
+        couts_infrastructure_py["couts_infrastructure.py"]
         deliverabilite_py["deliverabilite.py"]
         demandes_devis_py["demandes_devis.py"]
+        echeances_py["echeances.py"]
         finances_py["finances.py"]
         gestion_clients_py["gestion_clients.py"]
+        journal_audit_py["journal_audit.py"]
+        qualite_leads_py["qualite_leads.py"]
         reclamations_py["reclamations.py"]
         sante_bdd_py["sante_bdd.py"]
         sourcing_py["sourcing.py"]
@@ -389,11 +437,15 @@ flowchart TD
 | Page | Espace | Rôle |
 |---|---|---|
 | `administration_contrats.py` | Admin | Interface "Administration & Contrats" — génération d'un document contractuel (bon de commande / contrat de prestation) pré-rempli avec les informations d'un client de l'agence, quel qu'il soit, prêt à copier ou télécharger en PDF. Le PDF intègre directement le corps des Conditions Générales de Prestation (CGV) de l'agence : le document généré est prêt à être envoyé tel quel à un client (ex. S.B.G Travaux) avec le devis ou le bon de commande. |
-| `deliverabilite.py` | Admin | Interface "Délivrabilité" — suivi de la montée en charge progressive (warmup) du domaine d'envoi B2B et vérification live des enregistrements DNS (SPF/DKIM/DMARC) indispensables à la délivrabilité. |
+| `couts_infrastructure.py` | Admin | Interface admin "Coûts d'infrastructure" — module 3 de pilotage. Coûts remplis manuellement (pas d'API de facturation branchée dans un premier temps, voir sql/init_couts_infrastructure.sql) : Supabase, Streamlit Cloud, Zoho, futur nom de domaine, frais Stripe (en pourcentage du CA réel, pas un montant fixe). |
+| `deliverabilite.py` | Admin | Interface "Délivrabilité" — suivi de la montée en charge progressive (warmup) du domaine d'envoi B2B, taux de réponse, taux de hard bounce (module 7 de pilotage — alerte hebdomadaire automatique, voir scripts/controle_delivrabilite.py) et vérification live des enregistrements DNS (SPF/DKIM/DMARC) indispensables à la délivrabilité. |
 | `demandes_devis.py` | Admin | Interface "Demandes de devis" — suivi du mécanisme de livraison qui rapproche les demandes publiques (formulaire générique /demande-devis, voir dashboard/pages_publiques.py::afficher_demande_devis) avec les artisans clients actifs (leads.status='paye'), voir livraison_devis.py pour la logique complète (round-robin, quota abonnement, proposition/paiement à l'unité, expiration à 48h). Conception validée le 18/08/2026. |
+| `echeances.py` | Admin | Interface admin "Échéances" — module 5 de pilotage. Échéances légales et administratives (statut légal définitif, renouvellement nom de domaine, validité assurance décennale — voir sql/init_echeances.sql pour pourquoi aucune de ces trois n'a de date insérée automatiquement) + vérification récurrente de l'usage Supabase (fusion du module 11, voir la migration). |
 | `finances.py` | Admin | Interface "Finances" — chiffre d'affaires, MRR et activité commerciale dans le temps (24h / 7j / 30j / total). |
 | `gestion_clients.py` | Admin | Interface "Gestion & Réponse aux clients" — suivi des leads, visualisation des scores, et pilotage des campagnes d'e-mailing / relances, filtrable par client/campagne (plateforme multi-clients / multi-secteurs). |
+| `journal_audit.py` | Admin | Interface admin "Journal d'audit" — historique consultable/filtrable des actions admin sensibles (voir sql/init_journal_audit_admin.sql, data_access.journaliser_action_admin). Branché directement dans les fonctions existantes qui font déjà ces actions (traiter_reclamation, maj_statut_verification_pro, marquer_contrat_signe, marquer_contrat_paye, executer_remboursement) — pas un système de log séparé. |
 | `portail_client.py` | Client | Portail Client — vue en lecture seule, strictement limitée aux campagnes B2B (dashboard/auth.py::campagnes_autorisees()) et/ou aux leads B2C (dashboard/auth.py::mes_leads_autorises(), voir sql/init_utilisateur_leads.sql) de l'utilisateur connecté. Un même compte peut être lié à l'un, l'autre, ou les deux — chaque section ci-dessous ne s'affiche que si le compte a quelque chose à y voir. |
+| `qualite_leads.py` | Admin | Interface admin "Qualité des leads" — module 8 de pilotage. Score global + détail actionnable : doublons potentiels (leads/leads_professionnels), champs manquants sur les leads actifs (surtout l'e-mail, seul canal de prospection utilisé par ce projet), pourcentage de leads pro jamais enrichis depuis trop longtemps. |
 | `reclamations.py` | Admin | Interface admin "Réclamations" — traitement des réclamations Article 4 des CGV (construire_articles_cgv_b2c et son équivalent B2B), B2C et B2B confondues (voir sql/init_reclamations.sql, dashboard/data_access.py). |
 | `sante_bdd.py` | Admin | Interface admin "Santé de la base" — vue du système de surveillance continue de Supabase (voir sql/init_sante_base_donnees.sql, scripts/controle_sante_bdd.py, .github/workflows/controle_sante_bdd.yml, cron quotidien). Objectif : rendre visible ici ce que le cron détecte déjà tout seul (RLS manquant, demandes de devis bloquées, réclamations en retard...) plutôt que de le découvrir par hasard lors d'un test manuel — voir sql/init_demandes_devis_particuliers_confirmation.sql pour l'incident qui a motivé ce système. |
 | `sourcing.py` | Admin | Interface "Sourcing / Scraping" — recherche de futurs clients ET configuration des campagnes (plateforme multi-clients / multi-secteurs). |
@@ -414,9 +466,9 @@ Détectées par recherche des imports/appels réels dans le code (pas une liste 
 | API SIRENE (recherche-entreprises.api.gouv.fr) | Recherche/enrichissement d'entreprises (SIREN, adresse) — données publiques, sans clé. | `outbound_chantiers/config.py`, `outbound_chantiers/sourcing_acteurs_pro.py`, `phone_enricher.py`, `scraper_batiment.py`, `verification_pro.py` |
 | Google Places API | Dernier recours pour trouver un téléphone d'entreprise (payant) — voir phone_enricher.py. | `outbound_chantiers/enrichir_acteurs_pro.py`, `phone_enricher.py` |
 | DNS-over-HTTPS (dns.google) | Vérification live des enregistrements SPF/DKIM/DMARC (app_pages/deliverabilite.py), gratuit. | `dashboard/app_pages/deliverabilite.py` |
-| Discord (webhook) | Alertes temps réel (lead ultra-qualifié, erreurs) — voir alertes.py. | `alertes.py`, `dashboard/data_access.py`, `mail_processor.py`, `scraper_batiment.py`, `scripts/controle_sante_bdd.py` |
+| Discord (webhook) | Alertes temps réel (lead ultra-qualifié, erreurs) — voir alertes.py. | `alertes.py`, `dashboard/data_access.py`, `mail_processor.py`, `scraper_batiment.py`, `scripts/controle_delivrabilite.py`, … (+2) |
 | Ollama | Génération des pitchs de prospection (LLM local, avec repli générique si injoignable). | `dashboard/data_access.py`, `lead_worker.py`, `llm_config.py`, `outbound_chantiers/config.py` |
-| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `controle_sante_bdd.yml`, `livraison_devis.yml`, `mail_check.yml` |
+| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `controle_delivrabilite.yml`, `controle_echeances.yml`, `controle_sante_bdd.yml`, `livraison_devis.yml`, `mail_check.yml` |
 
 ## 5. Surveillance continue de la base
 
@@ -425,3 +477,14 @@ Un contrôle de santé automatisé (`scripts/controle_sante_bdd.py`) tourne quot
 - Historique complet des contrôles : table `sante_base_donnees`.
 - Vue dashboard (statut, tendance 30 jours, actions à prendre) : `dashboard/app_pages/sante_bdd.py` (espace admin).
 - Déclenchement automatique : `.github/workflows/controle_sante_bdd.yml`.
+
+## 6. Modules de pilotage (économique, opérationnel, qualité)
+
+Chantier en cours (27/08/2026) : 12 modules de pilotage complétant la surveillance technique (section 5) — construits un par un, chacun avec sa table Supabase (RLS actif) et sa page dashboard admin dédiée.
+
+- **Module 10 — Journal d'audit admin** (27/08/2026) : chaque action admin sensible (traiter une réclamation, changer un statut de vérification pro, marquer un contrat signé/payé, exécuter un remboursement) est tracée dans `journal_audit_admin` — voir `data_access.journaliser_action_admin`, page `dashboard/app_pages/journal_audit.py`.
+- **Module 3 — Coûts d'infrastructure** (27/08/2026) : coûts remplis manuellement (`couts_infrastructure`, montant fixe ou % du CA) comparés au CA réel du mois (`data_access.calculer_ca_du_mois`, réutilisable par le futur module 1 finances) — page `dashboard/app_pages/couts_infrastructure.py`.
+- **Module 8 — Qualité des leads** (27/08/2026) : score global calculé à la volée (`data_access.score_qualite_leads`, pas de table dédiée) — doublons potentiels (téléphone/SIREN/nom normalisé, scopés par campagne côté B2B), champs manquants sur les leads actifs (e-mail en priorité, seul canal de prospection), enrichissement B2B stagnant. Page `dashboard/app_pages/qualite_leads.py` + script CLI/cron optionnel `scripts/controle_qualite_leads.py`.
+- **Module 5 — Échéances légales/administratives** (27/08/2026) : table `echeances` (récurrence optionnelle, ex. vérification mensuelle de l'usage Supabase — fusion du module 11, son API de gestion étant inaccessible avec `SUPABASE_KEY`), alerte hebdomadaire (`scripts/controle_echeances.py`, `.github/workflows/controle_echeances.yml`, lundi 8h UTC) sur toute échéance à moins de 30 jours — page `dashboard/app_pages/echeances.py`.
+- **Module 7 — Qualité et délivrabilité e-mail** (27/08/2026) : taux de hard bounce sur 30 jours glissants (`data_access.get_taux_bounce`, aucune nouvelle table — réutilise `email_events` et `emails_blacklistes`), ajouté à la page existante `dashboard/app_pages/deliverabilite.py` (déjà warmup + taux de réponse + DNS), alerte hebdomadaire si le taux dépasse 5 % (`scripts/controle_delivrabilite.py`, `.github/workflows/controle_delivrabilite.yml`, lundi 9h UTC). Pas de suivi ouverture/clic : le pixel de tracking a été retiré.
+- **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, nom de domaine pas encore acheté) — volontairement non construit.
