@@ -162,6 +162,14 @@ MODULES_PILOTAGE: list[str] = [
         "`.github/workflows/controle_delivrabilite.yml`, lundi 9h UTC). Pas de suivi "
         "ouverture/clic : le pixel de tracking a été retiré."
     ),
+    (
+        "**Module 1 — Finances** (27/08/2026) : CA/MRR/répartitions B2C déjà entièrement "
+        "construits (`dashboard/app_pages/finances.py`, `finances_calc.py`, "
+        "`data_access.get_contracts_finances`) mais retirés de la navigation le 17/08 sur "
+        "suspicion d'ImportError en production — réactivés après retest en réel contre la "
+        "prod n'ayant rien reproduit (décalage de cache Streamlit Cloud, pas un bug de code). "
+        "B2B hors périmètre : aucune facturation B2B persistée en base à ce jour."
+    ),
 ]
 
 

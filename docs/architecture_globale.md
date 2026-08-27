@@ -2,7 +2,7 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-27 13:04 UTC
+Généré le : 2026-08-27 13:08 UTC
 
 ## 1. Schéma de la base de données
 
@@ -487,4 +487,5 @@ Chantier en cours (27/08/2026) : 12 modules de pilotage complétant la surveilla
 - **Module 8 — Qualité des leads** (27/08/2026) : score global calculé à la volée (`data_access.score_qualite_leads`, pas de table dédiée) — doublons potentiels (téléphone/SIREN/nom normalisé, scopés par campagne côté B2B), champs manquants sur les leads actifs (e-mail en priorité, seul canal de prospection), enrichissement B2B stagnant. Page `dashboard/app_pages/qualite_leads.py` + script CLI/cron optionnel `scripts/controle_qualite_leads.py`.
 - **Module 5 — Échéances légales/administratives** (27/08/2026) : table `echeances` (récurrence optionnelle, ex. vérification mensuelle de l'usage Supabase — fusion du module 11, son API de gestion étant inaccessible avec `SUPABASE_KEY`), alerte hebdomadaire (`scripts/controle_echeances.py`, `.github/workflows/controle_echeances.yml`, lundi 8h UTC) sur toute échéance à moins de 30 jours — page `dashboard/app_pages/echeances.py`.
 - **Module 7 — Qualité et délivrabilité e-mail** (27/08/2026) : taux de hard bounce sur 30 jours glissants (`data_access.get_taux_bounce`, aucune nouvelle table — réutilise `email_events` et `emails_blacklistes`), ajouté à la page existante `dashboard/app_pages/deliverabilite.py` (déjà warmup + taux de réponse + DNS), alerte hebdomadaire si le taux dépasse 5 % (`scripts/controle_delivrabilite.py`, `.github/workflows/controle_delivrabilite.yml`, lundi 9h UTC). Pas de suivi ouverture/clic : le pixel de tracking a été retiré.
+- **Module 1 — Finances** (27/08/2026) : CA/MRR/répartitions B2C déjà entièrement construits (`dashboard/app_pages/finances.py`, `finances_calc.py`, `data_access.get_contracts_finances`) mais retirés de la navigation le 17/08 sur suspicion d'ImportError en production — réactivés après retest en réel contre la prod n'ayant rien reproduit (décalage de cache Streamlit Cloud, pas un bug de code). B2B hors périmètre : aucune facturation B2B persistée en base à ce jour.
 - **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, nom de domaine pas encore acheté) — volontairement non construit.

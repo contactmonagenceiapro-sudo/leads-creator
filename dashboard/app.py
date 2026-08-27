@@ -28,9 +28,8 @@ Structure (multi-pages) :
                                         scripts/controle_qualite_leads.py)
     app_pages/echeances.py          -> [Admin] Échéances légales/administratives (alerte
                                         hebdomadaire <30j, voir scripts/controle_echeances.py)
-    app_pages/finances.py           -> [Admin] Finances (CA, MRR, activité commerciale B2C)
-                                        (RETIRÉE TEMPORAIREMENT de la navigation, voir
-                                        commentaire dans la section navigation ci-dessous)
+    app_pages/finances.py           -> [Admin] Finances (CA, MRR, activité commerciale B2C —
+                                        module 1 de pilotage)
     app_pages/suppression_rgpd.py   -> [Admin] Suppression RGPD (droit à l'effacement)
     app_pages/portail_client.py     -> [Client] Vue restreinte à ses propres campagnes
                                         (également accessible à l'admin, en aperçu/test)
@@ -217,20 +216,11 @@ if est_admin():
     page_couts_infrastructure = st.Page("app_pages/couts_infrastructure.py", title="Coûts d'infrastructure", icon="💰")
     page_qualite_leads = st.Page("app_pages/qualite_leads.py", title="Qualité des leads", icon="🧹")
     page_echeances = st.Page("app_pages/echeances.py", title="Échéances", icon="📅")
-    # RETIRÉE TEMPORAIREMENT de la navigation (2026-08-17, veille d'une démo
-    # bloquante) : un ImportError sur get_contracts_finances a été signalé
-    # en production (Streamlit Cloud) juste après le déploiement de cette
-    # page. Non reproduit en local (la fonction existe bien dans
-    # data_access.py, le commit est bien sur origin/main, un vrai serveur
-    # Streamlit démarre sans erreur sur ce code) — cause racine probable :
-    # décalage de build/cache côté Streamlit Cloud plutôt qu'un bug de
-    # code, mais retrait de précaution le temps de confirmer calmement.
-    # app_pages/finances.py et data_access.get_contracts_finances restent
-    # en place tels quels (rien à corriger dedans à ce stade) : seule cette
-    # ligne d'enregistrement + la suivante dans st.navigation() ci-dessous
-    # sont commentées, pour pouvoir réactiver la page d'un simple retrait
-    # de commentaire une fois la cause confirmée.
-    # page_finances = st.Page("app_pages/finances.py", title="Finances", icon="💰")
+    # Réactivée le 27/08/2026 (module 1 de pilotage) : l'ImportError signalé le
+    # 17/08 sur Streamlit Cloud n'a jamais été reproduit (import + requête
+    # Supabase + calcul KPIs retestés en réel contre la prod) — décalage de
+    # build/cache côté Streamlit Cloud confirmé comme cause, pas un bug de code.
+    page_finances = st.Page("app_pages/finances.py", title="Finances", icon="💰")
     # Admin uniquement (jamais côté Portail Client) : supprime des données
     # réelles de façon irréversible — voir app_pages/suppression_rgpd.py.
     page_suppression_rgpd = st.Page("app_pages/suppression_rgpd.py", title="Suppression RGPD", icon="🗑️")
@@ -243,8 +233,7 @@ if est_admin():
             page_sourcing, page_gestion, page_administration, page_deliverabilite,
             page_demandes_devis, page_reclamations, page_suivi, page_sante_bdd,
             page_journal_audit, page_couts_infrastructure, page_qualite_leads, page_echeances,
-            page_suppression_rgpd, page_portail_client,
-            # page_finances,  # voir commentaire ci-dessus — retrait temporaire
+            page_finances, page_suppression_rgpd, page_portail_client,
         ]
     )
 else:
