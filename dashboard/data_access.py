@@ -24,6 +24,7 @@ import glob
 import hashlib
 import logging
 import os
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -785,6 +786,82 @@ def get_taux_bounce(jours: int = 30) -> dict:
         "jours": jours,
         "lead_artisan": _segment("lead_artisan"),
         "lead_professionnel": _segment("lead_professionnel"),
+    }
+
+
+# ---------------------------------------------------------------------
+# Module 2 (pilotage) — pipeline de conversion
+# ---------------------------------------------------------------------
+
+# Statuts B2C (leads.status) considérés comme "au moins contactés" — la
+# colonne est en texte libre (aucun CHECK, voir sql/init_bounces.sql), ces
+# valeurs sont celles réellement posées par le code (lead_worker.py,
+# mail_processor.py) à date, pas une liste figée par contrainte SQL.
+STATUTS_CONTACTES_B2C = {
+    "contacted", "contacte_attente_reponse", "presentation_envoyee", "interested",
+    "contrat_envoye", "contrat_signe", "lien_paiement_envoye", "paye",
+    "decline", "sans_reponse", "absent_a_recontacter",
+}
+STATUTS_SIGNES_B2C = {"contrat_signe", "lien_paiement_envoye", "paye"}
+
+# B2B (leads_professionnels.statut) — CHECK existant, voir
+# sql/init_statut_contact_manuel.sql pour la liste complète à jour.
+STATUTS_CONTACTES_B2B = {"contacte_attente_reponse", "interested", "decline", "sans_reponse", "invalide"}
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDES)
+def get_pipeline_conversion() -> dict:
+    """Module 2 de pilotage — répartition des leads par statut ACTUEL et
+    quelques taux dérivés (photo de l'état courant, pas une cohorte
+    temporelle) : leads.status / leads_professionnels.statut sont écrasés à
+    chaque changement d'étape (aucune colonne d'historique) — un lead
+    'paye' aujourd'hui n'est plus compté comme 'interested' même s'il l'a
+    été hier. Même limitation que get_stats_campagne déjà en place ailleurs
+    dans ce fichier, jamais corrigée faute d'historique en base — approche
+    confirmée par l'utilisateur pour ce module plutôt que reconstruire un
+    entonnoir de cohorte (qui ne couvrirait de toute façon que les étapes
+    avec un vrai timestamp : contracts.signed_at/paid_at).
+
+    Aucune nouvelle table : leads, leads_professionnels."""
+    try:
+        leads_b2c = (
+            supabase.table("leads").select("status")
+            .not_.in_("id", LEADS_TEST_A_EXCLURE).execute().data
+        )
+        leads_b2b = supabase.table("leads_professionnels").select("statut").execute().data
+    except Exception as e:
+        raise DataAccessError(f"Erreur lecture pipeline de conversion : {e}") from e
+
+    def _taux(a: int, b: int) -> float:
+        return round(a / b, 3) if b else 0
+
+    repartition_b2c = dict(Counter((l["status"] or "new") for l in leads_b2c))
+    total_b2c = len(leads_b2c)
+    contactes_b2c = sum(n for s, n in repartition_b2c.items() if s in STATUTS_CONTACTES_B2C)
+    interesses_b2c = repartition_b2c.get("interested", 0)
+    signes_b2c = sum(repartition_b2c.get(s, 0) for s in STATUTS_SIGNES_B2C)
+    payes_b2c = repartition_b2c.get("paye", 0)
+
+    repartition_b2b = dict(Counter(l["statut"] for l in leads_b2b))
+    total_b2b = len(leads_b2b)
+    contactes_b2b = sum(n for s, n in repartition_b2b.items() if s in STATUTS_CONTACTES_B2B)
+    interesses_b2b = repartition_b2b.get("interested", 0)
+
+    return {
+        "b2c": {
+            "repartition": repartition_b2c,
+            "total": total_b2c,
+            "taux_contact": _taux(contactes_b2c, total_b2c),
+            "taux_interet": _taux(interesses_b2c, contactes_b2c),
+            "taux_signature": _taux(signes_b2c, interesses_b2c),
+            "taux_paiement_final": _taux(payes_b2c, total_b2c),
+        },
+        "b2b": {
+            "repartition": repartition_b2b,
+            "total": total_b2b,
+            "taux_contact": _taux(contactes_b2b, total_b2b),
+            "taux_interet": _taux(interesses_b2b, contactes_b2b),
+        },
     }
 
 

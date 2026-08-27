@@ -170,6 +170,15 @@ MODULES_PILOTAGE: list[str] = [
         "prod n'ayant rien reproduit (décalage de cache Streamlit Cloud, pas un bug de code). "
         "B2B hors périmètre : aucune facturation B2B persistée en base à ce jour."
     ),
+    (
+        "**Module 2 — Pipeline de conversion** (27/08/2026) : répartition B2C/B2B par statut "
+        "actuel + taux de contact/intérêt/signature (`data_access.get_pipeline_conversion`, "
+        "aucune nouvelle table). Photo de l'état courant, pas une cohorte temporelle — "
+        "leads.status/leads_professionnels.statut sont écrasés à chaque changement d'étape, "
+        "aucun historique en base (approche confirmée par l'utilisateur). Pas d'alerte "
+        "automatique : pas de seuil \"anormalement bas\" fiable sur le volume actuel. Page "
+        "`dashboard/app_pages/pipeline_conversion.py`."
+    ),
 ]
 
 
