@@ -79,6 +79,7 @@ from generation_contrats import (
 from scraper_batiment import SECTEURS_NAF, VILLES_CIBLES
 from signature_interne import enregistrer_signature, envoyer_contrat_signature_interne, get_contrat_par_token
 from supabase_client import supabase
+from theme_vitrine import bandeau_confiance, carte_tarif, tampon_confiance
 from verification_pro import (
     STATUT_EN_ATTENTE,
     STATUT_VERIFIE,
@@ -351,7 +352,12 @@ def afficher_accueil() -> None:
     pointe vers l'ancre #pour-les-professionnels plus bas SUR CETTE MÊME
     page (voir anchor= sur le st.header ci-dessous) ; le bouton
     "particulier" pointe directement vers le formulaire ?vue=demande_devis,
-    conformément au fichier de contenu."""
+    conformément au fichier de contenu.
+
+    Bandeau de confiance (bandeau_confiance, voir dashboard/theme_vitrine.py)
+    ajouté le 28/08/2026 juste sous le héros : rend l'engagement 48h et la
+    garantie de remplacement visibles immédiatement, plutôt que noyés dans
+    un st.caption au milieu de la page comme avant ce plan de design."""
     _navigation_publique("accueil")
 
     st.title("Des clients qualifiés pour votre activité, sans effort de prospection.")
@@ -371,6 +377,12 @@ def afficher_accueil() -> None:
             "J'ai un projet de travaux", "?vue=demande_devis",
             type="primary", use_container_width=True,
         )
+
+    bandeau_confiance([
+        "48h max — réponse garantie",
+        "Vérifié — contact qualifié",
+        "7 jours — remplacement si invalide",
+    ])
 
     st.divider()
 
@@ -469,6 +481,7 @@ def afficher_comment_ca_marche() -> None:
         3, "Il vous recontacte directement.",
         "Par téléphone ou email, pour discuter de votre projet et vous proposer un devis.",
     )
+    bandeau_confiance(["48h max — réponse garantie"])
     st.success(
         "**Notre engagement : un professionnel qualifié vous recontacte sous 48h maximum.** "
         "Si le premier professionnel contacté ne répond pas dans ce délai, votre demande "
@@ -488,7 +501,11 @@ def afficher_tarifs() -> None:
     Contenu_Site_Vitrine.md::"Page Tarifs". Valeurs affichées TOUJOURS lues
     depuis generation_contrats.py (PRIX_PAR_PALIER_EUR, FORMULES_ABONNEMENT,
     GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR), jamais recopiées en dur : cette page
-    reste à jour automatiquement si ces constantes changent."""
+    reste à jour automatiquement si ces constantes changent.
+
+    Grilles présentées en cartes (carte_tarif, voir theme_vitrine.py) depuis
+    le 28/08/2026 plutôt qu'en st.dataframe plat — même contenu/valeurs,
+    présentation seule modifiée."""
     _navigation_publique("tarifs")
 
     st.title("Nos formules")
@@ -501,45 +518,35 @@ def afficher_tarifs() -> None:
         f"qualité du lead (de {mini:.0f}€ à {maxi:.0f}€), avec un remplacement garanti "
         f"en cas de contact invalide."
     )
-    st.dataframe(
-        [
-            {"Qualité du lead": LIBELLE_PALIER[palier], "Prix TTC / lead": f"{PRIX_PAR_PALIER_EUR[palier]:.0f} €"}
-            for palier in (PALIER_BASIQUE, PALIER_STANDARD, PALIER_PREMIUM)
-        ],
-        hide_index=True, use_container_width=True,
-    )
+    colonnes_unite = st.columns(3)
+    for colonne, palier in zip(colonnes_unite, (PALIER_BASIQUE, PALIER_STANDARD, PALIER_PREMIUM)):
+        with colonne:
+            carte_tarif(LIBELLE_PALIER[palier], f"{PRIX_PAR_PALIER_EUR[palier]:.0f} €", "TTC / lead")
 
     st.subheader("Abonnement")
     st.write("Un flux régulier de leads qualifiés, à prix dégressif selon le volume.")
-    st.dataframe(
-        [
-            {
-                "Formule": formule["id"].capitalize(),
-                "Volume": f"{formule['volume']} leads",
-                "Prix/mois": f"{formule['prix_eur']:.0f} €",
-            }
-            for formule in FORMULES_ABONNEMENT
-        ],
-        hide_index=True, use_container_width=True,
-    )
+    colonnes_abo = st.columns(3)
+    for colonne, formule in zip(colonnes_abo, FORMULES_ABONNEMENT):
+        with colonne:
+            carte_tarif(
+                formule["id"].capitalize(), f"{formule['prix_eur']:.0f} €",
+                f"/mois — {formule['volume']} leads",
+            )
 
     st.divider()
 
     st.title("Grille tarifaire")
     st.caption("Pour les architectes, promoteurs, maîtres d'œuvre")
-    st.dataframe(
-        [
-            {
-                "Type d'acteur": LIBELLE_TYPE_ACTEUR_GRILLE_EUR.get(cle, cle),
-                "Prix par lead": f"{prix:.0f} € HT",
-            }
-            for cle, prix in GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR.items()
-        ],
-        hide_index=True, use_container_width=True,
-    )
-    st.caption(
-        "Tarifs valables pour toute commande, avec la même garantie de remplacement sous "
-        "7 jours en cas de contact invalide."
+    colonnes_b2b = st.columns(3)
+    for colonne, (cle, prix) in zip(colonnes_b2b, GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR.items()):
+        with colonne:
+            carte_tarif(LIBELLE_TYPE_ACTEUR_GRILLE_EUR.get(cle, cle), f"{prix:.0f} €", "HT / lead")
+
+    st.write("")
+    st.markdown(
+        f"{tampon_confiance('7 jours — remplacement garanti')} Tarifs valables pour toute "
+        "commande, avec la même garantie en cas de contact invalide.",
+        unsafe_allow_html=True,
     )
 
     _footer_publique()
@@ -970,6 +977,7 @@ def afficher_demande_devis() -> None:
                 "délai, nous proposons automatiquement votre demande à un autre "
                 "professionnel de votre secteur."
             )
+        bandeau_confiance(["48h max — réponse garantie", "Vérifié — contact qualifié"])
         _footer_publique()
         return
 
@@ -977,6 +985,7 @@ def afficher_demande_devis() -> None:
 
     st.title("Obtenez un devis gratuit")
     st.write("Décrivez votre projet, nous le transmettons à un professionnel qualifié près de chez vous. Réponse rapide, sans engagement de votre part.")
+    bandeau_confiance(["48h max — réponse garantie", "Vérifié — contact qualifié", "Gratuit — sans engagement"])
     st.info(
         "**Notre engagement : un professionnel qualifié vous recontacte sous 48h "
         "maximum.** Si le premier professionnel contacté ne répond pas dans ce délai, "

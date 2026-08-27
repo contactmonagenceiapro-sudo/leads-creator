@@ -10,8 +10,9 @@ Structure (multi-pages) :
     app.py                        -> point d'entrée : secrets, routing public, connexion, navigation
     secrets_loader.py             -> chargement tolérant de st.secrets (jamais de crash brut)
     auth.py                       -> écran de login + session_state (bcrypt direct, plus de JWT)
-    theme.py                      -> CSS du thème "Plan de Chantier" (voir .streamlit/config.toml
-                                        pour les couleurs/polices natives, ce fichier pour le reste)
+    theme.py                      -> CSS du thème sombre "Plan de Chantier" (dashboard admin/client)
+    theme_vitrine.py               -> CSS du thème clair "Chantier Ouvert" (site vitrine public +
+                                        formulaire de demande de devis, voir dashboard/pages_publiques.py)
     pages_publiques.py            -> [Public, sans connexion] présentation / intake / devis
     app_pages/sourcing.py           -> [Admin] Sourcing / Scraping
     app_pages/gestion_clients.py    -> [Admin] Gestion & Réponse aux clients
@@ -115,6 +116,21 @@ if _vue_publique in _VUES_PUBLIQUES:
         afficher_signature,
         afficher_tarifs,
     )
+
+    # Thème clair "Chantier Ouvert" (voir dashboard/theme_vitrine.py) —
+    # UNIQUEMENT sur le site vitrine et le formulaire de demande de devis
+    # (accueil/comment_ca_marche/tarifs/demande_devis/a_propos, la page
+    # /devis/{slug} équivalente, sa confirmation et la page légale liée
+    # depuis leur pied de page). Volontairement PAS sur presentation/intake/
+    # signature (tunnel de vente artisan, hors périmètre confirmé le
+    # 28/08/2026) — ces vues gardent le thème sombre natif par défaut.
+    _VUES_VITRINE_CLAIRE = (
+        "accueil", "comment_ca_marche", "tarifs", "demande_devis", "a_propos",
+        "devis", "confirmer_demande", "confidentialite",
+    )
+    if _vue_publique in _VUES_VITRINE_CLAIRE:
+        from theme_vitrine import injecter_theme_vitrine
+        injecter_theme_vitrine()
 
     if _vue_publique == "presentation":
         afficher_presentation(st.query_params.get("lead_id"))
