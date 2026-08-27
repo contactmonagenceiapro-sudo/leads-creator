@@ -142,7 +142,9 @@ def _carte_reclamation(reclamation: dict, libelles: dict[str, str], noms_artisan
             traite_par = st.session_state.get("auth_email", "admin")
             col_accepter, col_refuser = st.columns(2)
             with col_accepter:
-                if st.button("✅ Accepter", key=f"accepter_{reclamation['id']}", use_container_width=True):
+                if st.button(
+                    "✅ Accepter", key=f"accepter_{reclamation['id']}", use_container_width=True, type="primary"
+                ):
                     _, err = safe_call(traiter_reclamation, reclamation["id"], "acceptee", traite_par)
                     if err:
                         st.error(err)

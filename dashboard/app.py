@@ -10,6 +10,8 @@ Structure (multi-pages) :
     app.py                        -> point d'entrée : secrets, routing public, connexion, navigation
     secrets_loader.py             -> chargement tolérant de st.secrets (jamais de crash brut)
     auth.py                       -> écran de login + session_state (bcrypt direct, plus de JWT)
+    theme.py                      -> CSS du thème "Plan de Chantier" (voir .streamlit/config.toml
+                                        pour les couleurs/polices natives, ce fichier pour le reste)
     pages_publiques.py            -> [Public, sans connexion] présentation / intake / devis
     app_pages/sourcing.py           -> [Admin] Sourcing / Scraping
     app_pages/gestion_clients.py    -> [Admin] Gestion & Réponse aux clients
@@ -142,8 +144,15 @@ if _vue_publique in _VUES_PUBLIQUES:
 from auth import campagnes_autorisees, deconnexion, est_admin, exiger_connexion  # noqa: E402
 from common import safe_call  # noqa: E402
 from data_access import get_health  # noqa: E402
+from theme import injecter_theme  # noqa: E402
 
 exiger_connexion()
+
+# Thème "Plan de Chantier" (voir .streamlit/config.toml + dashboard/theme.py
+# pour le plan de design complet) — injecté ICI et nulle part ailleurs :
+# après exiger_connexion(), donc jamais sur le site vitrine public
+# (dashboard/pages_publiques.py, qui a déjà fait st.stop() plus haut).
+injecter_theme()
 
 
 # ---------------------------------------------------------------------

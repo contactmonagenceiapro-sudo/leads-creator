@@ -5,3 +5,59 @@
 # fonctionnement de l'app : on ouvre l'URL nous-mêmes dans le navigateur.
 [server]
 headless = true
+
+# Thème "Plan de Chantier" — DUPLIQUÉ de .streamlit/config.toml (racine du
+# dépôt), qui reste la version documentée/canonique (voir ce fichier pour la
+# justification complète de chaque couleur et dashboard/theme.py pour le
+# CSS complémentaire). Streamlit ne lit .streamlit/config.toml que relatif
+# au répertoire de travail (CWD) au lancement, jamais relatif à l'entrypoint
+# lui-même (vérifié empiriquement le 27/08/2026 via `streamlit config
+# show`) : Streamlit Community Cloud lance depuis la racine du dépôt (le
+# fichier racine suffit là-bas), mais un lancement local `cd dashboard/ &&
+# streamlit run app.py` (CWD=dashboard/, ce que ce fichier [server] existait
+# déjà pour couvrir) ne verrait QUE ce fichier-ci — d'où la duplication, pas
+# une négligence. Les deux fichiers doivent rester synchronisés à la main.
+[theme]
+base = "dark"
+
+primaryColor = "#E8631C"
+backgroundColor = "#101E2E"
+secondaryBackgroundColor = "#1B2E42"
+textColor = "#EDEFF2"
+
+greenColor = "#6BBF8C"
+redColor = "#E8746A"
+yellowColor = "#F0B429"
+orangeColor = "#E8631C"
+blueColor = "#5C8AAE"
+grayColor = "#8492A6"
+violetColor = "#8F92C4"
+
+linkColor = "#E8631C"
+linkUnderline = false
+
+codeTextColor = "#EDEFF2"
+codeBackgroundColor = "#16273A"
+
+font = "Public Sans:https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap, -apple-system, sans-serif"
+headingFont = "Oswald:https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap, Arial Narrow, sans-serif"
+codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap, Consolas, monospace"
+
+baseFontSize = 16
+headingFontWeights = [600, 600, 600, 500, 500, 500]
+metricValueFontSize = "2rem"
+metricValueFontWeight = 500
+
+baseRadius = "none"
+buttonRadius = "none"
+
+borderColor = "#2B415A"
+dataframeBorderColor = "#2B415A"
+dataframeHeaderBackgroundColor = "#1B2E42"
+
+showWidgetBorder = true
+showSidebarBorder = true
+
+[theme.sidebar]
+backgroundColor = "#1B2E42"
+secondaryBackgroundColor = "#16273A"

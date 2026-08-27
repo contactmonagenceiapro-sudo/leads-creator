@@ -1,0 +1,70 @@
+# Thème "Plan de Chantier" — voir dashboard/theme.py pour le CSS complémentaire
+# (repères d'angle sur les cartes, liseré actif de la sidebar, focus clavier)
+# et le plan de design validé le 27/08/2026 pour la justification de chaque
+# choix. Toutes les couleurs ci-dessous sont nommées et documentées là-bas —
+# ne pas modifier une valeur ici sans mettre à jour dashboard/theme.py en
+# miroir (les deux fichiers doivent rester cohérents, aucun des deux n'est
+# généré automatiquement à partir de l'autre).
+#
+# S'applique UNIQUEMENT au dashboard authentifié (admin + portail client) :
+# jamais au site vitrine public (dashboard/pages_publiques.py), qui reste
+# indépendant de ce thème — voir dashboard/app.py, la vitrine s'affiche et
+# fait st.stop() AVANT que ce thème ait un effet visible sur elle.
+
+[theme]
+base = "dark"
+
+primaryColor = "#E8631C"              # Orange Chantier — accent unique, actions principales
+backgroundColor = "#101E2E"           # Bleu Plan — le papier bleu d'un plan de chantier
+secondaryBackgroundColor = "#1B2E42"  # Bleu Ardoise — cartes, inputs, expanders
+textColor = "#EDEFF2"                 # Blanc Papier
+
+# Couleurs sémantiques alignées sur la palette du plan de chantier (jamais
+# les teintes par défaut de Streamlit) — utilisées par st.success/warning/
+# error/info, st.badge, et la syntaxe markdown :vert[...]/:rouge[...].
+greenColor = "#6BBF8C"   # Vert Validé — succès, état conforme
+redColor = "#E8746A"     # Rouge Alerte — erreur, danger
+yellowColor = "#F0B429"  # Jaune Sécurité — attention, à traiter
+orangeColor = "#E8631C"  # aligné sur Orange Chantier (primaryColor)
+blueColor = "#5C8AAE"    # Bleu Info — accent neutre de st.info, dérivé de la famille Bleu Ardoise
+grayColor = "#8492A6"    # Papier Estompé — texte secondaire/légendes
+violetColor = "#8F92C4"  # rarement visible dans cette app, gardé harmonieux plutôt que par défaut
+
+linkColor = "#E8631C"
+linkUnderline = false
+
+codeTextColor = "#EDEFF2"
+codeBackgroundColor = "#16273A"
+
+# Polices via Google Fonts, chargées nativement par Streamlit (pas de CSS
+# @import nécessaire) — voir le plan de design pour la justification de
+# chaque rôle. Fallbacks système explicites si Google Fonts est injoignable.
+font = "Public Sans:https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap, -apple-system, sans-serif"
+headingFont = "Oswald:https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&display=swap, Arial Narrow, sans-serif"
+codeFont = "IBM Plex Mono:https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap, Consolas, monospace"
+
+baseFontSize = 16
+# Oswald condensée porte déjà assez de présence en semi-gras — jamais de
+# 700 "display" complet, qui alourdirait des titres de page déjà en capitales.
+headingFontWeights = [600, 600, 600, 500, 500, 500]
+metricValueFontSize = "2rem"
+metricValueFontWeight = 500
+
+# Angles nets façon plan technique — volontairement PAS de coins arrondis
+# (l'un des clichés du design généré par IA que ce plan évite explicitement).
+baseRadius = "none"
+buttonRadius = "none"
+
+borderColor = "#2B415A"                    # Bleu Ardoise Ligne
+dataframeBorderColor = "#2B415A"
+dataframeHeaderBackgroundColor = "#1B2E42"
+
+showWidgetBorder = true
+showSidebarBorder = true
+
+[theme.sidebar]
+# Un ton plus sombre que secondaryBackgroundColor du thème principal : la
+# profondeur à deux tons du plan de design (sidebar Bleu Ardoise, contenu
+# Bleu Plan) — voir la section Layout du plan de design.
+backgroundColor = "#1B2E42"
+secondaryBackgroundColor = "#16273A"
