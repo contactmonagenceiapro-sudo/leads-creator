@@ -148,12 +148,35 @@ else:
         if lignes_croissance.empty:
             st.caption("Aucune donnée de croissance enregistrée sur la période.")
         else:
-            comptes = pd.json_normalize(lignes_croissance["detail"])["comptes"]
-            df_comptes = pd.json_normalize(comptes)
-            df_comptes.index = lignes_croissance["date_controle"].values
-            df_comptes = df_comptes.sort_index()
-            st.caption("Nombre de lignes par table principale, au fil des contrôles quotidiens.")
-            st.line_chart(df_comptes)
+            # detail["comptes"] doit être extrait AVANT toute normalisation
+            # (jamais pd.json_normalize(detail) directement, comme avant ce
+            # correctif) : json_normalize aplatit récursivement TOUS les
+            # dicts imbriqués par défaut (sep="."), donc detail complet
+            # produit des colonnes "comptes.leads", "comptes.reclamations"...
+            # jamais une colonne littéralement nommée "comptes" — d'où le
+            # KeyError('comptes') en production (bug présent depuis
+            # l'écriture initiale de cette page, pas une régression d'une
+            # ancienne ligne au format différent, vérifié le 27/08/2026 :
+            # les 12 lignes réelles en base ont toutes un "comptes" valide).
+            #
+            # Accès défensif malgré tout : une ligne dont detail n'est pas
+            # un dict, ou sans "comptes" dict (contrôle malformé, format
+            # futur imprévu de controle_sante_bdd.py) est écartée plutôt que
+            # de faire planter toute la page — jamais une exception ici.
+            comptes_valides = [
+                (date, detail.get("comptes"))
+                for date, detail in zip(lignes_croissance["date_controle"], lignes_croissance["detail"])
+                if isinstance(detail, dict) and isinstance(detail.get("comptes"), dict)
+            ]
+            if not comptes_valides:
+                st.caption("Donnée de croissance non disponible pour la période (format inattendu).")
+            else:
+                dates, comptes = zip(*comptes_valides)
+                df_comptes = pd.json_normalize(list(comptes))
+                df_comptes.index = pd.Index(dates)
+                df_comptes = df_comptes.sort_index()
+                st.caption("Nombre de lignes par table principale, au fil des contrôles quotidiens.")
+                st.line_chart(df_comptes)
 
     with onglet_brut:
         st.dataframe(
