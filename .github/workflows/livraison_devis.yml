@@ -16,12 +16,15 @@ name: Réattribution automatique des demandes de devis expirées
 #
 # Même commande par défaut que le bouton manuel du dashboard (voir
 # dashboard/process_runner.py::lancer_livraison_devis) : expire d'abord les
-# propositions périmées (expirer_propositions_perimees, ré-attribution au
-# candidat suivant) PUIS rapproche les demandes en attente avec les
-# artisans clients actifs (traiter_demandes_en_attente) — le bouton manuel
-# n'est PAS modifié, il continue de fonctionner exactement comme avant, en
-# plus de ce déclenchement automatique (utile pour forcer une vérification
-# immédiate sans attendre la prochaine heure pleine).
+# confirmations périmées (expirer_confirmations_perimees, voir
+# sql/init_demandes_devis_particuliers_confirmation.sql — 24h sans clic sur
+# le lien reçu par email), puis les propositions périmées
+# (expirer_propositions_perimees, ré-attribution au candidat suivant) PUIS
+# rapproche les demandes en attente ET CONFIRMÉES avec les artisans clients
+# actifs (traiter_demandes_en_attente) — le bouton manuel n'est PAS modifié,
+# il continue de fonctionner exactement comme avant, en plus de ce
+# déclenchement automatique (utile pour forcer une vérification immédiate
+# sans attendre la prochaine heure pleine).
 
 on:
   schedule:

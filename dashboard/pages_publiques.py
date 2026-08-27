@@ -26,6 +26,16 @@ Coexiste avec afficher_devis (scopée à une campagne B2B nommée via son
 slug) sans le remplacer : les deux écrivent dans la même table, avec ou
 sans client_final connu à la soumission.
 
+afficher_confirmation_demande (?vue=confirmer_demande&token=...) — ajoutée
+le 20/08/2026 : condition de confirmation par email avant tout
+rapprochement round-robin (voir livraison_devis.py, qui exige désormais
+statut_confirmation='confirme'). _envoyer_email_confirmation_demande, appelée
+juste après l'insertion aussi bien par afficher_devis() que par
+afficher_demande_devis() (les deux alimentent le même mécanisme de
+rapprochement, sans distinction côté livraison_devis.py), envoie le lien de
+confirmation ; cette page le résout, à usage unique via statut_confirmation
+(jamais en invalidant le token), voir sql/init_demandes_devis_particuliers_confirmation.sql.
+
 afficher_accueil / afficher_comment_ca_marche / afficher_tarifs /
 afficher_a_propos (?vue=accueil|comment_ca_marche|tarifs|a_propos) sont le
 site vitrine ajouté le 19/08 : présentation de l'offre avant même l'achat
@@ -42,7 +52,10 @@ restent des flux dédiés à un lead/token/campagne précis, pas des pages de
 navigation libre pour un visiteur quelconque.
 """
 
+import logging
 import os
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -74,7 +87,20 @@ from verification_pro import (
     verifier_siret_sirene,
 )
 
+log = logging.getLogger(__name__)
+
 AGENCY_NAME = os.getenv("AGENCY_NAME", "Expertise Digitale")
+# URL absolue de l'app (liens envoyés par email, qui doivent fonctionner
+# depuis la messagerie du destinataire — un lien relatif "?vue=..." comme
+# LIEN_CONFIDENTIALITE ci-dessous ne suffit que DANS l'app elle-même) — même
+# variable que dashboard/signature_interne.py::PUBLIC_DASHBOARD_URL /
+# mail_processor.py, jamais une nouvelle config dédiée.
+PUBLIC_DASHBOARD_URL = os.getenv("PUBLIC_DASHBOARD_URL", "http://localhost:8501")
+# Délai de confirmation par email avant tout rapprochement round-robin —
+# même valeur par défaut que livraison_devis.py::DELAI_EXPIRATION_CONFIRMATION_HEURES
+# (lu séparément ici, ce module n'important pas livraison_devis.py, pour ne
+# pas coupler une page publique Streamlit à un script cron autonome).
+DELAI_EXPIRATION_CONFIRMATION_HEURES = int(os.getenv("DELAI_EXPIRATION_CONFIRMATION_HEURES", "24"))
 # Adresse de contact publique (footer vitrine, page de confidentialité) —
 # distincte de generation_contrats.DEFAULTS_AGENCE["email"]/AGENCY_EMAIL
 # (dashboard/signature_interne.py), qui sert aux emails SORTANTS envoyés par
@@ -173,6 +199,72 @@ def _get_campagne_active_par_slug(slug: str) -> str | None:
     except Exception:
         return None
     return resultats[0]["nom_client"] if resultats else None
+
+
+def _lien_confirmation_demande(token: str) -> str:
+    return f"{PUBLIC_DASHBOARD_URL}/?vue=confirmer_demande&token={token}"
+
+
+def _envoyer_email_confirmation_demande(demande: dict) -> None:
+    """Envoi de l'email de confirmation juste après le dépôt d'une demande
+    de devis (voir sql/init_demandes_devis_particuliers_confirmation.sql) —
+    appelée par afficher_demande_devis() ET afficher_devis() : les DEUX
+    formulaires écrivent dans demandes_devis_particuliers et sont ensuite
+    rapprochés sans distinction par livraison_devis.py (aucun filtre sur
+    client_final dans traiter_demandes_en_attente), donc les deux doivent
+    déclencher la même confirmation — sinon les demandes issues de
+    afficher_devis() resteraient bloquées en 'en_attente_confirmation' puis
+    finiraient 'expire' sans qu'aucun email n'ait jamais été envoyé.
+
+    `demande` est le payload Python déjà inséré (dict, avec token_confirmation
+    généré côté client — voir les deux appelants), pas une relecture
+    Supabase : évite de dépendre du comportement par défaut ("return
+    minimal" vs "representation") de supabase-py sur .insert().execute().
+
+    Ne lève jamais d'exception (appelée depuis un formulaire public) et ne
+    doit jamais empêcher l'insertion, déjà faite au moment de l'appel :
+    toute erreur (SMTP, blocage compte Zoho, écriture de
+    date_envoi_confirmation) est seulement journalée — comme pour les autres
+    échecs d'envoi de ce projet (voir ceo_agent.send_email_prospect /
+    dashboard/signature_interne.py, aucun des deux n'a de table d'erreurs
+    dédiée : `error_log` fait partie du scaffolding initial du projet,
+    jamais branchée à un usage réel, voir sql/fix_rls_error_log.sql)."""
+    email = (demande.get("email") or "").strip()
+    if not email:
+        # Le formulaire accepte email OU téléphone (voir _champ obligatoire
+        # plus bas) — sans email, aucune confirmation possible par ce canal.
+        # La demande reste 'en_attente_confirmation' puis expire au bout de
+        # 24h comme n'importe quel non-répondant (limite connue, ce projet
+        # n'a pas de canal SMS).
+        log.warning(f"Pas d'email pour la demande {demande.get('id') or demande.get('token_confirmation')} — confirmation impossible.")
+        return
+
+    lien = _lien_confirmation_demande(demande["token_confirmation"])
+    corps = (
+        f"Bonjour {demande.get('nom') or ''},\n\n"
+        f"Vous venez de déposer une demande de devis ({demande.get('corps_metier') or '—'}"
+        f"{', ' + demande['commune'] if demande.get('commune') else ''}).\n\n"
+        f"Merci de confirmer votre demande en cliquant sur ce lien :\n{lien}\n\n"
+        f"Sans confirmation de votre part sous {DELAI_EXPIRATION_CONFIRMATION_HEURES}h, "
+        f"cette demande ne sera PAS transmise à un professionnel.\n\nCordialement"
+    )
+    try:
+        from ceo_agent import send_email_prospect  # import différé : évite un cycle au chargement du module
+        envoye = send_email_prospect(email, "Confirmez votre demande de devis", corps)
+    except Exception as e:
+        log.error(f"Erreur lors de l'envoi de l'email de confirmation à {email} : {e}")
+        return
+
+    if not envoye:
+        log.error(f"Échec d'envoi de l'email de confirmation à {email} (demande token={demande['token_confirmation']}).")
+        return
+
+    try:
+        supabase.table("demandes_devis_particuliers").update({
+            "date_envoi_confirmation": datetime.now(timezone.utc).isoformat(),
+        }).eq("token_confirmation", demande["token_confirmation"]).execute()
+    except Exception as e:
+        log.error(f"Email de confirmation envoyé à {email} mais échec d'enregistrement de date_envoi_confirmation : {e}")
 
 
 # ---------------------------------------------------------------------
@@ -824,6 +916,7 @@ def afficher_devis(slug: str | None) -> None:
                 "budget_estime": budget_estime or None,
                 "message": message or None,
                 "consentement": True,
+                "token_confirmation": str(uuid.uuid4()),
             }
             try:
                 supabase.table("demandes_devis_particuliers").insert(payload).execute()
@@ -834,6 +927,7 @@ def afficher_devis(slug: str | None) -> None:
                 # lui-même) : alerte immédiate, contrairement aux prospects
                 # sortants qui suivent la veille des réponses e-mail habituelle.
                 alerter_discord(f"🔥 Nouvelle demande de devis entrante pour {client_final} : {nom}")
+                _envoyer_email_confirmation_demande(payload)
                 st.session_state[cle_envoye] = True
                 st.rerun()
 
@@ -939,6 +1033,7 @@ def afficher_demande_devis() -> None:
         "commune": commune or None,
         "message": description or None,
         "consentement": True,
+        "token_confirmation": str(uuid.uuid4()),
     }
     try:
         supabase.table("demandes_devis_particuliers").insert(payload).execute()
@@ -946,8 +1041,94 @@ def afficher_demande_devis() -> None:
         st.error("Erreur lors de l'enregistrement, réessayez plus tard.")
     else:
         alerter_discord(f"🔥 Nouvelle demande de devis générique ({corps_metier}, {commune or '?'}) : {nom}")
+        _envoyer_email_confirmation_demande(payload)
         st.session_state[cle_envoye] = True
         st.rerun()
+
+
+def _get_demande_devis_par_token(token: str) -> dict | None:
+    """Même principe que _get_lead()/get_contrat_par_token() : résout
+    STRICTEMENT par token_confirmation, jamais d'exception visible sur une
+    page publique."""
+    try:
+        rows = (
+            supabase.table("demandes_devis_particuliers").select("*")
+            .eq("token_confirmation", token).limit(1).execute().data
+        )
+    except Exception:
+        return None
+    return rows[0] if rows else None
+
+
+def afficher_confirmation_demande(token: str | None) -> None:
+    """Page publique de confirmation (?vue=confirmer_demande&token=...),
+    cliquée depuis le lien reçu par email juste après le dépôt d'une demande
+    de devis (voir _envoyer_email_confirmation_demande) — condition ajoutée
+    le 20/08/2026 avant tout rapprochement round-robin (voir
+    livraison_devis.py::traiter_demandes_en_attente, qui exige
+    statut_confirmation='confirme').
+
+    "Usage unique" appliqué via statut_confirmation, jamais en invalidant le
+    token lui-même (voir sql/init_demandes_devis_particuliers_confirmation.sql) :
+    un 2e clic sur un lien déjà confirmé affiche "déjà confirmé", pas une
+    erreur — même principe que afficher_signature() ci-dessus
+    (yousign_status déjà 'signe')."""
+    if not token:
+        st.error("Lien invalide : jeton manquant.")
+        return
+
+    demande = _get_demande_devis_par_token(token)
+    if not demande:
+        st.error("Lien de confirmation invalide.")
+        st.link_button("Faire une nouvelle demande de devis", "?vue=demande_devis", type="primary")
+        return
+
+    statut_confirmation = demande.get("statut_confirmation")
+
+    if statut_confirmation == "confirme":
+        st.title("Déjà confirmé ✅")
+        with st.container(border=True):
+            st.write("Cette demande a déjà été confirmée, un professionnel qualifié va vous contacter prochainement.")
+        return
+
+    if statut_confirmation != "en_attente_confirmation":
+        # 'expire' (cron déjà passé) ou 'non_confirme' (réservé, jamais posé
+        # à ce jour) : dans les deux cas, ce lien n'est plus valide.
+        st.error("Ce lien de confirmation n'est plus valide (délai dépassé).")
+        st.write("Vous pouvez déposer une nouvelle demande de devis :")
+        st.link_button("Faire une nouvelle demande de devis", "?vue=demande_devis", type="primary")
+        return
+
+    # Filet de sécurité : expire immédiatement au clic si les 24h sont
+    # dépassées, sans attendre le prochain passage du cron horaire
+    # (livraison_devis.py::expirer_confirmations_perimees) — évite de
+    # confirmer une demande qui devrait déjà être hors délai.
+    reference = demande.get("date_envoi_confirmation") or demande.get("created_at")
+    if reference:
+        envoye_le = datetime.fromisoformat(reference.replace("Z", "+00:00"))
+        if datetime.now(timezone.utc) - envoye_le > timedelta(hours=DELAI_EXPIRATION_CONFIRMATION_HEURES):
+            try:
+                supabase.table("demandes_devis_particuliers").update({"statut_confirmation": "expire"}).eq("id", demande["id"]).execute()
+            except Exception as e:
+                log.error(f"Erreur lors du passage en 'expire' de la demande {demande['id']} : {e}")
+            st.error("Ce lien de confirmation a expiré (délai de 24h dépassé).")
+            st.write("Vous pouvez déposer une nouvelle demande de devis :")
+            st.link_button("Faire une nouvelle demande de devis", "?vue=demande_devis", type="primary")
+            return
+
+    try:
+        supabase.table("demandes_devis_particuliers").update({
+            "statut_confirmation": "confirme",
+            "date_confirmation": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", demande["id"]).execute()
+    except Exception as e:
+        log.error(f"Erreur lors de la confirmation de la demande {demande['id']} : {e}")
+        st.error("Erreur lors de la confirmation, réessayez plus tard.")
+        return
+
+    st.title("Merci ✅")
+    with st.container(border=True):
+        st.write("Merci, votre demande a bien été prise en compte, un artisan va vous contacter prochainement.")
 
 
 def afficher_confidentialite() -> None:

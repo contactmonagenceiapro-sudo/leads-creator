@@ -57,12 +57,29 @@ onglet_attente, onglet_propositions, onglet_livrees = st.tabs([
     "⏳ En attente", "💳 Propositions en attente de paiement", "✅ Livrées",
 ])
 
+def _libelle_statut_attente(d: dict) -> str:
+    """Le rapprochement round-robin exige statut_confirmation='confirme'
+    (voir livraison_devis.py::traiter_demandes_en_attente et
+    sql/init_demandes_devis_particuliers_confirmation.sql) : une demande pas
+    encore confirmée ou dont la confirmation a expiré reste 'a_qualifier'
+    indéfiniment, sans jamais être vue par le round-robin — sans ce libellé,
+    elle serait indiscernable ici d'une demande confirmée mais simplement
+    pas encore traitée."""
+    confirmation = d.get("statut_confirmation")
+    if confirmation == "en_attente_confirmation":
+        return "En attente de confirmation e-mail du client"
+    if confirmation == "expire":
+        return "Confirmation e-mail expirée (jamais confirmée)"
+    return "Pas encore traitée" if d["statut"] == "a_qualifier" else "Aucun artisan correspondant"
+
+
 with onglet_attente:
     st.caption(
-        "Demandes sans destinataire pour l'instant — soit pas encore traitées, soit sans "
-        "aucun artisan client actif correspondant (corps de métier + zone). Une forte "
-        "concentration sur un corps de métier/une zone est un signal direct pour prioriser "
-        "le démarchage commercial de nouveaux artisans clients dans ce créneau."
+        "Demandes sans destinataire pour l'instant — en attente de confirmation e-mail du "
+        "client, jamais confirmées (expirées), pas encore traitées, ou sans aucun artisan "
+        "client actif correspondant (corps de métier + zone). Une forte concentration sur un "
+        "corps de métier/une zone confirmée est un signal direct pour prioriser le démarchage "
+        "commercial de nouveaux artisans clients dans ce créneau."
     )
     a_qualifier, erreur_aq = safe_call(get_demandes_devis, "a_qualifier")
     en_attente_artisan, erreur_ea = safe_call(get_demandes_devis, "en_attente_artisan")
@@ -76,7 +93,7 @@ with onglet_attente:
             st.dataframe(
                 [
                     {
-                        "Statut": "Pas encore traitée" if d["statut"] == "a_qualifier" else "Aucun artisan correspondant",
+                        "Statut": _libelle_statut_attente(d),
                         "Corps de métier": d.get("corps_metier") or "—",
                         "Commune": d.get("commune") or "—",
                         "Description": (d.get("message") or "")[:80],

@@ -58,9 +58,21 @@ commune (le formulaire public accepte les deux, voir pages_publiques.py)
 ne matchera aucun artisan tant qu'aucune résolution code postal -> commune
 n'est ajoutée.
 
+Confirmation par email préalable (statut_confirmation, voir
+sql/init_demandes_devis_particuliers_confirmation.sql) : le rapprochement
+round-robin ci-dessus ne considère JAMAIS une demande dont le particulier
+n'a pas cliqué le lien de confirmation reçu par email dans les 24h suivant
+son dépôt (voir dashboard/pages_publiques.py::afficher_demande_devis /
+afficher_devis pour l'envoi, afficher_confirmation_demande pour la
+confirmation elle-même) — traiter_demandes_en_attente() filtre explicitement
+statut_confirmation='confirme', et expirer_confirmations_perimees()
+ci-dessous fait passer à 'expire' toute demande non confirmée sous 24h,
+appelée par ce même script (donc par le même cron horaire,
+.github/workflows/livraison_devis.yml) juste avant expirer_propositions_perimees().
+
 Usage :
-    python3 livraison_devis.py                  # expire les propositions périmées PUIS traite les demandes en attente
-    python3 livraison_devis.py --expirer-seul    # n'expire que les propositions périmées
+    python3 livraison_devis.py                  # expire les confirmations puis les propositions périmées, PUIS traite les demandes en attente
+    python3 livraison_devis.py --expirer-seul    # n'expire que les confirmations et propositions périmées
 """
 
 from __future__ import annotations
@@ -96,6 +108,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [LIVRAISON-DEVIS] %(
 log = logging.getLogger(__name__)
 
 DELAI_EXPIRATION_PROPOSITION_HEURES = int(os.getenv("DELAI_EXPIRATION_PROPOSITION_HEURES", "48"))
+# Délai de confirmation par email avant tout rapprochement (voir
+# sql/init_demandes_devis_particuliers_confirmation.sql et
+# dashboard/pages_publiques.py::afficher_confirmation_demande) — distinct de
+# DELAI_EXPIRATION_PROPOSITION_HEURES ci-dessus (celui-là court APRÈS la
+# proposition à un artisan, celui-ci AVANT, sur le consentement du
+# particulier lui-même).
+DELAI_EXPIRATION_CONFIRMATION_HEURES = int(os.getenv("DELAI_EXPIRATION_CONFIRMATION_HEURES", "24"))
 
 
 def _artisans_clients_actifs() -> list[dict]:
@@ -336,9 +355,16 @@ def traiter_demande(demande: dict, artisans: list[dict], exclure_ids: frozenset 
 
 
 def traiter_demandes_en_attente() -> dict:
+    # statut_confirmation='confirme' : une demande non confirmée par le
+    # particulier (voir sql/init_demandes_devis_particuliers_confirmation.sql)
+    # ne doit jamais entrer dans le rapprochement round-robin, quel que soit
+    # son statut de traitement — voir expirer_confirmations_perimees()
+    # ci-dessous pour la sortie automatique de la file d'attente (statut
+    # 'expire') des demandes jamais confirmées.
     demandes = (
         supabase.table("demandes_devis_particuliers").select("*")
-        .in_("statut", ["a_qualifier", "en_attente_artisan"]).execute().data
+        .in_("statut", ["a_qualifier", "en_attente_artisan"])
+        .eq("statut_confirmation", "confirme").execute().data
     )
     compteurs = {"livree": 0, "proposee": 0, "en_attente_artisan": 0}
     if not demandes:
@@ -433,6 +459,44 @@ def expirer_propositions_perimees() -> dict:
     return {"reattribuees": reattribuees, "en_attente": en_attente, "total": len(perimees)}
 
 
+def expirer_confirmations_perimees() -> dict:
+    """Toute demande encore 'en_attente_confirmation' plus de
+    DELAI_EXPIRATION_CONFIRMATION_HEURES (24h par défaut) après
+    date_envoi_confirmation passe automatiquement à 'expire' — jamais
+    transmise à un artisan, jamais réattribuée (voir traiter_demandes_en_attente,
+    qui exclut déjà tout statut_confirmation != 'confirme' ; ce passage à
+    'expire' rend surtout l'état visible dans le dashboard admin plutôt que
+    de changer un comportement déjà garanti par ce filtre).
+
+    Repli sur created_at si date_envoi_confirmation est resté NULL (échec
+    d'envoi de l'email de confirmation lui-même, voir
+    dashboard/pages_publiques.py::_envoyer_email_confirmation_demande) :
+    sans ce repli, une telle demande resterait bloquée indéfiniment en
+    'en_attente_confirmation' (la comparaison SQL/postgrest sur une colonne
+    NULL ne devient jamais vraie), invisible et jamais nettoyée."""
+    en_attente = (
+        supabase.table("demandes_devis_particuliers").select("id,date_envoi_confirmation,created_at")
+        .eq("statut_confirmation", "en_attente_confirmation").execute().data
+    )
+    if not en_attente:
+        log.info("=== Terminé : aucune confirmation en attente périmée ===")
+        return {"expirees": 0, "total": 0}
+
+    seuil = datetime.now(timezone.utc) - timedelta(hours=DELAI_EXPIRATION_CONFIRMATION_HEURES)
+    expirees = 0
+    for demande in en_attente:
+        reference = demande.get("date_envoi_confirmation") or demande.get("created_at")
+        if not reference:
+            continue
+        envoye_le = datetime.fromisoformat(reference.replace("Z", "+00:00"))
+        if envoye_le < seuil:
+            supabase.table("demandes_devis_particuliers").update({"statut_confirmation": "expire"}).eq("id", demande["id"]).execute()
+            expirees += 1
+
+    log.info(f"=== Terminé : {expirees}/{len(en_attente)} confirmation(s) en attente expirée(s) ===")
+    return {"expirees": expirees, "total": len(en_attente)}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Rapproche les demandes de devis avec les artisans clients actifs.")
     parser.add_argument(
@@ -441,6 +505,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    expirer_confirmations_perimees()
     expirer_propositions_perimees()
     if args.expirer_seul:
         return 0

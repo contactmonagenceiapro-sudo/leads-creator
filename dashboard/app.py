@@ -46,7 +46,7 @@ d'entrée et construit SA PROPRE navigation en plus de celle définie ici via
 st.navigation()/st.Page() — les deux mécanismes entrent alors en conflit.
 
 Pages PUBLIQUES (dashboard/pages_publiques.py) : accessibles via un
-paramètre d'URL dédié (?vue=presentation|intake|devis|demande_devis|signature|confidentialite|accueil|comment_ca_marche|tarifs|a_propos),
+paramètre d'URL dédié (?vue=presentation|intake|devis|demande_devis|confirmer_demande|signature|confidentialite|accueil|comment_ca_marche|tarifs|a_propos),
 interceptées ici AVANT auth.exiger_connexion() — ce sont les liens envoyés
 aux prospects par e-mail (voir mail_processor.py::envoyer_suivi_positif) ou
 partagés publiquement (demande_devis), qui ne doivent évidemment pas
@@ -96,7 +96,7 @@ initialiser_secrets()
 # ---------------------------------------------------------------------
 _vue_publique = st.query_params.get("vue")
 _VUES_PUBLIQUES = (
-    "presentation", "intake", "devis", "demande_devis", "signature", "confidentialite",
+    "presentation", "intake", "devis", "demande_devis", "confirmer_demande", "signature", "confidentialite",
     "accueil", "comment_ca_marche", "tarifs", "a_propos",
 )
 if _vue_publique in _VUES_PUBLIQUES:
@@ -105,6 +105,7 @@ if _vue_publique in _VUES_PUBLIQUES:
         afficher_accueil,
         afficher_comment_ca_marche,
         afficher_confidentialite,
+        afficher_confirmation_demande,
         afficher_demande_devis,
         afficher_devis,
         afficher_intake,
@@ -119,6 +120,8 @@ if _vue_publique in _VUES_PUBLIQUES:
         afficher_intake(st.query_params.get("lead_id"))
     elif _vue_publique == "signature":
         afficher_signature(st.query_params.get("token"))
+    elif _vue_publique == "confirmer_demande":
+        afficher_confirmation_demande(st.query_params.get("token"))
     elif _vue_publique == "confidentialite":
         afficher_confidentialite()
     elif _vue_publique == "demande_devis":
