@@ -1,0 +1,55 @@
+name: Sourcing hebdomadaire B2B (outbound_chantiers)
+
+# Exécute scripts/lancer_pipeline_b2b.py (sourcing seul, sans --envoi-seul)
+# une fois par semaine, pour CHAQUE campagne active (table campagnes,
+# statut='active') — modules 1-3 d'outbound_chantiers.pipeline_outbound_chantiers :
+# sourcing des acteurs pro, filtrage/enrichissement du contact réel, scoring
+# + publication en base.
+#
+# Remplace l'automatisation "Workflow A — Sourcing hebdomadaire" prévue via
+# n8n (voir outbound_chantiers/n8n_workflow_outbound_chantiers.md), qui
+# ciblait un endpoint {API_URL}/agent/trigger supprimé à la migration du
+# dashboard vers Streamlit Community Cloud (voir docker-compose.yml) — donc
+# non fonctionnelle depuis cette migration, jamais remplacée jusqu'ici.
+# Reprend le même horaire déjà conçu dans ce doc (lundi 6h, "le volume de
+# nouveaux permis/acteurs ne justifie pas une fréquence plus élevée").
+#
+# Lundi 6h30 UTC — décalé des crons horaires (mail_check.yml "0 * * * *",
+# livraison_devis.yml "15 * * * *") et de tous les autres crons déjà en
+# place (controle_sante_bdd.yml 4h30, envoyer_enquetes_satisfaction.yml
+# 5h00, ceo_agent.yml 6h20, relance_prospects.yml 6h40, et le lundi
+# controle_echeances.yml 8h00 / controle_delivrabilite.yml 9h00 /
+# outbound_chantiers_campagne.yml 9h30) pour ne jamais les chevaucher.
+
+on:
+  schedule:
+    - cron: "30 6 * * 1" # tous les lundis, 6h30 UTC
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: outbound-chantiers-sourcing
+  cancel-in-progress: false
+
+jobs:
+  sourcing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Lancer le sourcing pour chaque campagne active
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          AGENCY_NAME: ${{ secrets.AGENCY_NAME }}
+        run: python3 scripts/lancer_pipeline_b2b.py

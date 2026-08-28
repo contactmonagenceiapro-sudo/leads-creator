@@ -1,0 +1,59 @@
+name: Campagne et relances quotidiennes B2B (outbound_chantiers)
+
+# Exécute scripts/lancer_pipeline_b2b.py --envoi-seul quotidiennement, pour
+# CHAQUE campagne active (table campagnes, statut='active') — module 4
+# d'outbound_chantiers.pipeline_outbound_chantiers seul (outbound_pro_btp.py) :
+# contacte les nouveaux acteurs jamais sollicités ET relance ceux dont
+# l'échéance J+3/J+7 est atteinte, dans la même passe (voir
+# outbound_chantiers/n8n_workflow_outbound_chantiers.md, Workflow B — les
+# deux fonctions gèrent déjà en interne le cas où rien n'est éligible ce
+# jour-là).
+#
+# Remplace l'automatisation "Workflow B — Campagne + relances quotidiennes"
+# prévue via n8n (même doc), qui ciblait un endpoint {API_URL}/agent/trigger
+# supprimé à la migration du dashboard vers Streamlit Community Cloud (voir
+# docker-compose.yml) — donc non fonctionnelle depuis cette migration,
+# jamais remplacée jusqu'ici.
+#
+# 9h30 UTC — quotidien, proche de l'horaire déjà conçu dans le doc n8n (9h)
+# mais décalé de 30 minutes pour ne jamais tomber exactement sur
+# controle_delivrabilite.yml (lundi 9h00) ; également décalé des crons
+# horaires (mail_check.yml "0 * * * *", livraison_devis.yml "15 * * * *")
+# et de tous les autres crons déjà en place (controle_sante_bdd.yml 4h30,
+# envoyer_enquetes_satisfaction.yml 5h00, ceo_agent.yml 6h20,
+# relance_prospects.yml 6h40, et le lundi outbound_chantiers_sourcing.yml
+# 6h30 / controle_echeances.yml 8h00) pour ne jamais les chevaucher.
+
+on:
+  schedule:
+    - cron: "30 9 * * *" # tous les jours, 9h30 UTC
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: outbound-chantiers-campagne
+  cancel-in-progress: false
+
+jobs:
+  campagne:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Lancer la campagne + relances pour chaque campagne active
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          AGENCY_NAME: ${{ secrets.AGENCY_NAME }}
+          PUBLIC_DASHBOARD_URL: ${{ secrets.PUBLIC_DASHBOARD_URL }}
+        run: python3 scripts/lancer_pipeline_b2b.py --envoi-seul

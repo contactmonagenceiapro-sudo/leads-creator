@@ -161,10 +161,29 @@ def send_email_internal(rapport: str, stats: dict) -> bool:
 
 def run_ceo_analysis() -> None:
     """Campagne de prospection : envoie un email personnalisé à chaque lead
-    non contacté (en priorité le pitch généré par lead_worker.py via Ollama,
-    à défaut un message générique), puis journalise le rapport de campagne."""
+    non contacté (pitch RÉGÉNÉRÉ à chaque envoi via lead_worker.py::generer_pitch(),
+    jamais lead["pitch_commercial"] réutilisé tel quel), puis journalise le
+    rapport de campagne.
+
+    Import différé de lead_worker (pas en tête de module) : lead_worker.py
+    fait lui-même `from ceo_agent import send_email_prospect` — un import en
+    tête de fichier ici créerait une boucle d'import qui échouerait au
+    chargement (send_email_prospect n'existe pas encore dans ce module au
+    moment où lead_worker essaierait de l'importer).
+
+    Régénération ajoutée le 29/08/2026 suite à un incident constaté sur le
+    backlog leads.pitch_commercial (264 leads jamais contactés, scrapés
+    23-25/07/2026, avant le pivot de positionnement) : 95% de ces pitchs
+    stockés en base parlaient encore de refonte de site web/SEO (offre
+    précédente) et 87% contenaient un placeholder non rempli ("[Votre Nom]",
+    signé "La Holding") — les envoyer tels quels aurait été à la fois
+    hors-sujet et non professionnel. generer_pitch() reflète toujours le
+    positionnement actuel et rejette désormais lui-même tout placeholder
+    résiduel (voir RE_PLACEHOLDER_CROCHETS)."""
     start_time = time.time()
     log.info("Démarrage de la campagne de prospection")
+    from lead_worker import generer_pitch  # import différé, voir docstring ci-dessus
+
     leads = get_leads_from_supabase()
 
     if not leads:
@@ -197,11 +216,13 @@ def run_ceo_analysis() -> None:
             continue
 
         try:
-            sujet = f"Une idée pour booster la visibilité de {company}"
-            corps = lead.get("pitch_commercial") or (
-                f"Bonjour, nous avons analysé {company} et avons quelques idées "
-                f"pour améliorer votre présence en ligne."
-            )
+            sujet = f"{company} — apport de clients qualifiés"
+            corps = generer_pitch({
+                "company_name": company,
+                "industry": lead.get("industry") or "Bâtiment",
+                "ville": lead.get("commune"),
+                "score": lead.get("score"),
+            })
             success = send_email_prospect(target_email, sujet, corps, lead_id=lead["id"])
 
             if success:
@@ -220,6 +241,12 @@ def run_ceo_analysis() -> None:
                     "contacted": True,
                     "status": "contacte_attente_reponse",
                     "contacted_at": datetime.now(timezone.utc).isoformat(),
+                    # Écrase l'éventuel pitch_commercial obsolète stocké au
+                    # scraping par le pitch RÉELLEMENT envoyé (voir docstring
+                    # de run_ceo_analysis) — pour que toute relecture
+                    # ultérieure de cette colonne reflète l'email reçu, pas
+                    # un brouillon jamais envoyé.
+                    "pitch_commercial": corps,
                 }).eq("id", lead["id"]).execute()
 
                 sleep_time = random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC)

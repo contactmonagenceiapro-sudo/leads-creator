@@ -1,0 +1,59 @@
+name: Relance quotidienne des prospects B2C sans réponse
+
+# Exécute relance_prospects.py quotidiennement — relance les leads B2C
+# contactés sans réponse après DELAI_PREMIERE_RELANCE_JOURS (4j par défaut),
+# puis DELAI_RELANCE_SUIVANTE_JOURS (4j) après la relance précédente ; au-delà
+# de MAX_RELANCES (2), le lead passe "sans_reponse" et n'est plus recontacté.
+#
+# Auparavant 100% manuel (bouton dashboard "Relancer" ->
+# dashboard/process_runner.py::lancer_relance). Passage en cron le
+# 29/08/2026 : vérifié le 29/08/2026 que les 146 leads alors en attente de
+# réponse dataient tous d'après le pivot de positionnement (26/07-13/08/2026,
+# aucun n'évoque l'ancienne offre "site web/SEO") — contrairement au
+# backlog jamais-contacté (voir ceo_agent.yml), ce lot était donc déjà
+# pertinent tel quel, pas de régénération nécessaire ici (les messages de
+# relance eux-mêmes sont génériques et ne réaffirment aucune offre, voir
+# relance_prospects.py::MESSAGES_RELANCE).
+#
+# 6h40 UTC — quotidien, cohérent avec les délais en jours du script
+# lui-même (pas besoin d'une fréquence plus fine) ; décalé des crons
+# horaires (mail_check.yml "0 * * * *", livraison_devis.yml "15 * * * *")
+# et de tous les autres crons déjà en place (controle_sante_bdd.yml 4h30,
+# envoyer_enquetes_satisfaction.yml 5h00, ceo_agent.yml 6h20, le lundi
+# outbound_chantiers_sourcing.yml 6h30/controle_echeances.yml 8h00/
+# controle_delivrabilite.yml 9h00, outbound_chantiers_campagne.yml 9h30)
+# pour ne jamais les chevaucher.
+
+on:
+  schedule:
+    - cron: "40 6 * * *" # tous les jours, 6h40 UTC
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: relance-prospects
+  cancel-in-progress: false
+
+jobs:
+  relance-prospects:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Relancer les prospects sans réponse
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CEO_EMAIL: ${{ secrets.CEO_EMAIL }}
+        run: python3 relance_prospects.py

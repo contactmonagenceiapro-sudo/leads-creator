@@ -1,0 +1,62 @@
+name: Campagne de prospection B2C (ceo_agent)
+
+# Exécute ceo_agent.py quotidiennement — envoie un pitch RÉGÉNÉRÉ (voir
+# lead_worker.py::generer_pitch(), jamais le pitch_commercial mis en cache
+# au scraping) à chaque lead B2C non contacté dont l'email a été réellement
+# vérifié (voir ceo_agent.py::get_leads_from_supabase). Journalise le
+# résultat de la campagne dans la table ceo_reports.
+#
+# Auparavant 100% manuel (bouton dashboard "Rapport CEO" ->
+# dashboard/process_runner.py::lancer_ceo_report). Passage en cron le
+# 29/08/2026 après correction du pitch (voir lead_worker.py,
+# RE_PLACEHOLDER_CROCHETS) suite à un backlog constaté de leads scrapés
+# avant le pivot de positionnement (23-25/07/2026), dont le pitch en cache
+# était obsolète ("refonte de site web", signé "La Holding") et souvent
+# cassé (placeholder "[Votre Nom]" non rempli). Le filtre email vérifié de
+# get_leads_from_supabase exclut déjà, indépendamment de ce cron, la grande
+# majorité de ce backlog historique (email jamais confirmé) — ce cron ne
+# leur enverra donc rien tant que leur email n'est pas re-vérifié
+# séparément (hors périmètre de cette automatisation).
+#
+# 6h20 UTC — quotidien, décalé des crons horaires (mail_check.yml "0 * * * *",
+# livraison_devis.yml "15 * * * *") et de tous les autres crons
+# quotidiens/hebdomadaires déjà en place (controle_sante_bdd.yml 4h30,
+# envoyer_enquetes_satisfaction.yml 5h00, controle_echeances.yml et
+# controle_delivrabilite.yml le lundi 8h/9h, outbound_chantiers_sourcing.yml
+# le lundi 6h30, outbound_chantiers_campagne.yml 9h30) pour ne jamais les
+# chevaucher.
+
+on:
+  schedule:
+    - cron: "20 6 * * *" # tous les jours, 6h20 UTC
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: ceo-agent
+  cancel-in-progress: false
+
+jobs:
+  ceo-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Lancer la campagne de prospection B2C
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CEO_EMAIL: ${{ secrets.CEO_EMAIL }}
+          AGENCY_NAME: ${{ secrets.AGENCY_NAME }}
+        run: python3 ceo_agent.py
