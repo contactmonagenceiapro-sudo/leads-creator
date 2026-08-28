@@ -79,7 +79,7 @@ from generation_contrats import (
 from scraper_batiment import SECTEURS_NAF, VILLES_CIBLES
 from signature_interne import enregistrer_signature, envoyer_contrat_signature_interne, get_contrat_par_token
 from supabase_client import supabase
-from theme_vitrine import bandeau_confiance, carte_tarif, tampon_confiance
+from theme_vitrine import bandeau_confiance, carte_tarif, ligne_cordeau, tampon_confiance
 from verification_pro import (
     STATUT_EN_ATTENTE,
     STATUT_VERIFIE,
@@ -312,15 +312,22 @@ def _navigation_publique(vue_active: str) -> None:
     """Menu horizontal commun aux pages vitrine — un st.button désactivé pour
     la page courante (pas de lien mort cliquable), un st.link_button vers
     `?vue=...` pour les autres, même pattern que les liens `?vue=intake&...`
-    déjà utilisés ailleurs dans ce fichier."""
-    colonnes = st.columns(len(_NAVIGATION_VITRINE))
-    for colonne, (vue, libelle) in zip(colonnes, _NAVIGATION_VITRINE):
-        with colonne:
-            if vue == vue_active:
-                st.button(libelle, disabled=True, use_container_width=True, key=f"nav_actuelle_{vue_active}")
-            else:
-                st.link_button(libelle, f"?vue={vue}", use_container_width=True)
-    st.divider()
+    déjà utilisés ailleurs dans ce fichier.
+
+    Enveloppé dans st.container(key="nav-vitrine") depuis le plan de design
+    v2 (28/08/2026) : cette clé génère une classe CSS stable `st-key-nav-vitrine`
+    sur le conteneur (voir dashboard/theme_vitrine.py), qui permet de donner
+    à CES boutons précis une identité de navigation (trait de mesure sous
+    chaque item) sans changer l'apparence des autres boutons de la page."""
+    with st.container(key="nav-vitrine"):
+        colonnes = st.columns(len(_NAVIGATION_VITRINE))
+        for colonne, (vue, libelle) in zip(colonnes, _NAVIGATION_VITRINE):
+            with colonne:
+                if vue == vue_active:
+                    st.button(libelle, disabled=True, use_container_width=True, key=f"nav_actuelle_{vue_active}")
+                else:
+                    st.link_button(libelle, f"?vue={vue}", use_container_width=True)
+    ligne_cordeau()
 
 
 def _footer_publique() -> None:
@@ -329,7 +336,7 @@ def _footer_publique() -> None:
     rédigées : on ne fabrique pas de fausses pages vides pour ces deux
     liens, seule une adresse de contact est fournie en attendant (option
     explicitement laissée ouverte par le fichier de contenu)."""
-    st.divider()
+    ligne_cordeau()
     col_accroche, col_legal, col_contact = st.columns(3)
     with col_accroche:
         st.markdown(f"**{AGENCY_NAME}**")
@@ -384,7 +391,7 @@ def afficher_accueil() -> None:
         "7 jours — remplacement si invalide",
     ])
 
-    st.divider()
+    ligne_cordeau("Pour les professionnels")
 
     st.header("Vous recevez des demandes réelles, vous n'avez qu'à répondre.", anchor="pour-les-professionnels")
     st.write(
@@ -410,7 +417,7 @@ def afficher_accueil() -> None:
     with col_cta_contact:
         st.link_button("Nous contacter", f"mailto:{AGENCY_CONTACT_EMAIL}", use_container_width=True)
 
-    st.divider()
+    ligne_cordeau("Pour les particuliers")
 
     st.header("Un projet de travaux ? Trouvez le bon professionnel près de chez vous.")
     st.write(
@@ -465,7 +472,7 @@ def afficher_comment_ca_marche() -> None:
         "Sous 7 jours, remplacement ou avoir, sans discussion inutile.",
     )
 
-    st.divider()
+    ligne_cordeau()
 
     st.title("Comment obtenir un devis")
     st.caption("Pour les particuliers")
@@ -533,7 +540,7 @@ def afficher_tarifs() -> None:
                 f"/mois — {formule['volume']} leads",
             )
 
-    st.divider()
+    ligne_cordeau("Pour les professionnels du bâtiment")
 
     st.title("Grille tarifaire")
     st.caption("Pour les architectes, promoteurs, maîtres d'œuvre")
