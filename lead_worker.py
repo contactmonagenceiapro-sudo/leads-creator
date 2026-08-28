@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import random
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -219,6 +220,16 @@ MENTION_DESINSCRIPTION = (
     f"\nPolitique de confidentialité : {PUBLIC_DASHBOARD_URL}/?vue=confidentialite"
 )
 
+# Détecte un placeholder entre crochets non rempli (ex: "[Votre Nom]",
+# "[zone d'activité]") laissé par le LLM malgré la consigne explicite du
+# prompt de generer_pitch() de ne jamais en produire — cette consigne
+# n'est PAS fiable à 100% (repli sur _pitch_generique_repli constaté sur un
+# échantillon réel du 29/08/2026, voir l'incident du backlog leads.pitch_commercial
+# de juillet 2026 : "La Holding", "[Votre Nom]", etc.). \[[^\[\]]+\] plutôt
+# qu'un \[.*\] glouton, pour ne pas fusionner deux crochets distincts sur la
+# même ligne en un seul faux positif géant.
+RE_PLACEHOLDER_CROCHETS = re.compile(r"\[[^\[\]]+\]")
+
 
 def _pitch_generique_repli(lead: dict) -> str:
     """Modèle de secours si le LLM (local ou cloud, voir llm_config.py) est
@@ -266,8 +277,12 @@ def generer_pitch(lead: dict) -> str:
     llm_config.py — local en dev, cloud en prod selon LLM_API_URL/
     OLLAMA_HOST). Retombe sur un modèle générique (_pitch_generique_repli)
     en cas d'échec réseau, timeout ou réponse vide après épuisement des
-    tentatives : ne retourne jamais None et ne lève jamais d'exception, pour
-    ne jamais bloquer ni vider la boucle d'envoi faute d'IA disponible.
+    tentatives, OU si le texte généré contient encore un placeholder entre
+    crochets malgré la consigne du prompt (voir RE_PLACEHOLDER_CROCHETS —
+    la consigne seule ne suffit pas, constaté sur un échantillon réel) : ne
+    retourne jamais None et ne lève jamais d'exception, pour ne jamais
+    bloquer ni vider la boucle d'envoi faute d'IA disponible ou de sortie
+    invalide.
 
     Angle commercial : apport de clients qualifiés (génération de leads en
     tant que service), et non plus la refonte de site web des versions
@@ -303,6 +318,14 @@ def generer_pitch(lead: dict) -> str:
     mention_prioritaire = (
         _mention_prioritaire(lead) if (lead.get("score") or 0) >= SEUIL_LEAD_PRIORITAIRE_B2C else ""
     )
+    if pitch and RE_PLACEHOLDER_CROCHETS.search(pitch):
+        log.warning(
+            f"Pitch généré par l'IA pour {lead['company_name']} rejeté (placeholder "
+            f"entre crochets détecté malgré la consigne) — utilisation du pitch "
+            f"générique de repli."
+        )
+        pitch = None
+
     if pitch:
         return mention_prioritaire + pitch + MENTION_DESINSCRIPTION
 
