@@ -54,20 +54,18 @@ jobs:
           ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
         run: |
           python3 -c "
-          import os, smtplib
+          import hashlib, os, smtplib, sys
           user = os.environ['ZOHO_USER']
           pwd = os.environ['ZOHO_PASSWORD']
-          print('ZOHO_USER =', user)
-          print('ZOHO_USER contient un espace parasite (début/fin) :', user != user.strip())
-          print('mot de passe défini :', bool(pwd), '- longueur :', len(pwd))
-          print('mot de passe contient un espace/retour à la ligne parasite (début/fin) :', pwd != pwd.strip())
-          if len(pwd) >= 4:
-              print('mot de passe (masqué) :', pwd[:2] + '*' * (len(pwd) - 4) + pwd[-2:])
-          else:
-              print('mot de passe trop court pour un aperçu masqué sûr')
+          print('ZOHO_USER contient un espace parasite (début/fin) :', user != user.strip(), flush=True)
+          print('mot de passe défini :', bool(pwd), '- longueur (octets utf-8) :', len(pwd.encode('utf-8')), flush=True)
+          print('mot de passe contient un espace/retour à la ligne parasite (début/fin) :', pwd != pwd.strip(), flush=True)
+          print('SHA256(ZOHO_USER)     =', hashlib.sha256(user.encode('utf-8')).hexdigest(), flush=True)
+          print('SHA256(ZOHO_PASSWORD) =', hashlib.sha256(pwd.encode('utf-8')).hexdigest(), flush=True)
+          sys.stdout.flush()
           with smtplib.SMTP_SSL('smtp.zoho.eu', 465, timeout=15) as s:
               s.login(user, pwd)
-              print('LOGIN OK')
+              print('LOGIN OK', flush=True)
           "
 
   campagne:
