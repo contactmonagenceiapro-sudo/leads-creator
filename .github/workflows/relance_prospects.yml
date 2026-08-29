@@ -36,7 +36,14 @@ concurrency:
 jobs:
   relance-prospects:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 120 min, pas 10 : ce script fait une pause anti-spam de 60-120s ENTRE
+    # CHAQUE relance et peut traiter jusqu'au plafond quotidien PARTAGÉ avec
+    # le B2C initial et le B2B (25/j au 29/08/2026, jusqu'à 50/j au plateau —
+    # voir email_tracking.PALIERS_RAMP_ENVOI_QUOTIDIEN). Avec le backlog de
+    # 146 leads en attente de relance constaté le 29/08/2026, un timeout de
+    # 10 min n'aurait laissé traiter qu'une poignée de leads par jour — bien
+    # trop lent pour écouler ce backlog dans un délai raisonnable.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 

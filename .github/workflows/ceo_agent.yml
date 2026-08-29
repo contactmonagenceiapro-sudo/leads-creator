@@ -38,7 +38,13 @@ concurrency:
 jobs:
   ceo-agent:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 120 min, pas 10 comme les crons horaires existants (mail_check.yml,
+    # livraison_devis.yml) : ce script fait une pause anti-spam de 60-120s
+    # ENTRE CHAQUE envoi et peut traiter jusqu'au plafond quotidien PARTAGÉ
+    # avec le B2B (25/j au 29/08/2026, jusqu'à 50/j au plateau — voir
+    # email_tracking.PALIERS_RAMP_ENVOI_QUOTIDIEN) — un timeout de 10 min
+    # couperait un run légitime en cours de route sur un vrai backlog.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 

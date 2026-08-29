@@ -102,9 +102,22 @@ def est_blocage_compte_zoho(exception: Exception) -> bool:
     disponible ici) : couvre le message exact rencontré en usage réel
     ("Unusual sending activity detected") et son code SMTP associé (5.4.6),
     en restant volontairement large plutôt que de coller au mot près à un
-    seul message précis qui pourrait varier légèrement."""
+    seul message précis qui pourrait varier légèrement.
+
+    "authentication failed"/535 ajouté le 29/08/2026 : constaté en
+    production sur outbound_chantiers (100% des envois d'un run rejetés à
+    ce login) — un échec d'AUTH SMTP ne peut structurellement PAS être
+    spécifique à un destinataire (le login précède l'annonce de tout
+    destinataire au serveur), donc c'est nécessairement un problème de
+    compte/identifiants, jamais un cas à traiter comme un simple échec
+    ponctuel puis continuer sur le lead suivant."""
     texte = str(exception).lower()
-    return "unusual sending activity" in texte or "5.4.6" in texte
+    return (
+        "unusual sending activity" in texte
+        or "5.4.6" in texte
+        or "authentication failed" in texte
+        or "535" in texte
+    )
 
 
 def alerter_blocage_compte_zoho(contexte: str, exception: Exception) -> None:

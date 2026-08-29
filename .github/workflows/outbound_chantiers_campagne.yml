@@ -36,7 +36,15 @@ concurrency:
 jobs:
   campagne:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 120 min : outbound_pro_btp.py fait une pause anti-spam de 60-120s
+    # ENTRE CHAQUE envoi (même logique que ceo_agent.py/relance_prospects.py),
+    # et peut traiter jusqu'au plafond quotidien PARTAGÉ (25/j au 29/08/2026,
+    # jusqu'à 50/j au plateau — voir email_tracking.PALIERS_RAMP_ENVOI_QUOTIDIEN)
+    # si ceo_agent.yml/relance_prospects.yml n'en ont rien consommé ce
+    # jour-là. Un premier run réel (29/08/2026, 17 leads à contacter) a
+    # dépassé les 15 minutes initialement configurées ici — augmenté après
+    # coup, ce n'était PAS un blocage mais la pacing normale.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
 

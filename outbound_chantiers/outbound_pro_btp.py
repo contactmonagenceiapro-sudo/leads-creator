@@ -118,6 +118,12 @@ def envoyer_email(destinataire: str, sujet: str, corps: str, lead_id: str | None
     jour. Le pixel/liens trackés ont été retirés (dépendaient du backend
     FastAPI supprimé).
 
+    demarrer_tracking() appelé APRÈS envoyer_smtp(), jamais avant (corrigé
+    le 29/08/2026 — l'ordre inverse journalisait un envoi comme "envoyé"
+    même en cas d'échec SMTP, faussant le budget quotidien partagé ET
+    l'historique email_events ; voir ceo_agent.py::send_email_prospect pour
+    le bon ordre, déjà correct de ce côté).
+
     Lève CompteZohoBloqueError (au lieu de renvoyer False) si l'échec est un
     blocage du COMPTE Zoho lui-même (voir alertes.py) — à catcher dans la
     boucle appelante pour arrêter le run entier immédiatement, pas
@@ -132,10 +138,9 @@ def envoyer_email(destinataire: str, sujet: str, corps: str, lead_id: str | None
         message["To"] = destinataire
         message.attach(MIMEText(corps, "plain", "utf-8"))
 
+        envoyer_smtp(message, ZOHO_USER, [destinataire])
         if lead_id:
             demarrer_tracking("lead_professionnel", lead_id, client_final=CLIENT_FINAL)
-
-        envoyer_smtp(message, ZOHO_USER, [destinataire])
         return True
     except smtplib.SMTPException as e:
         log.error(f"Échec d'envoi à {destinataire} : {e}")
