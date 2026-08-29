@@ -2,7 +2,7 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-08-27 21:10 UTC
+Généré le : 2026-08-29 00:01 UTC
 
 ## 1. Schéma de la base de données
 
@@ -33,7 +33,7 @@ erDiagram
         uuid id PK
         text keyword
         text content
-        int32 word_count
+        integer word_count
         double_precision quality_score
         uuid client_id
         text status
@@ -61,7 +61,7 @@ erDiagram
         timestamp_with_time_zone updated_at
     }
     ceo_reports {
-        int64 id PK
+        bigint id PK
         timestamp_with_time_zone created_at
         text title
         text content
@@ -78,7 +78,7 @@ erDiagram
         text stripe_payment_link_id
         text stripe_payment_url
         text payment_status
-        int32 montant_centimes
+        integer montant_centimes
         timestamp_with_time_zone signed_at
         timestamp_with_time_zone paid_at
         timestamp_with_time_zone created_at
@@ -96,7 +96,7 @@ erDiagram
     couts_infrastructure {
         uuid id PK
         text service
-        int32 cout_mensuel_centimes
+        integer cout_mensuel_centimes
         numeric pourcentage_du_ca
         date date_debut
         date date_fin
@@ -121,7 +121,7 @@ erDiagram
         timestamp_with_time_zone livree_le
         text stripe_payment_link_id
         text stripe_payment_url
-        int32 montant_centimes
+        integer montant_centimes
         text stripe_payment_intent_id
         text statut_confirmation
         uuid token_confirmation
@@ -135,7 +135,7 @@ erDiagram
         date date_echeance
         text statut
         text notes
-        int32 recurrence_jours
+        integer recurrence_jours
         timestamp_with_time_zone date_traitement
         timestamp_with_time_zone created_at
     }
@@ -202,7 +202,7 @@ erDiagram
         text company
         text secteur
         text status
-        int32 score
+        integer score
         text source
         text notes
         timestamp_with_time_zone created_at
@@ -218,10 +218,10 @@ erDiagram
         text siren
         text adresse
         timestamp_with_time_zone contacted_at
-        int32 relance_count
+        integer relance_count
         timestamp_with_time_zone last_relance_at
         text email_alternatif
-        int32 nb_delais_livraison
+        integer nb_delais_livraison
         timestamp_with_time_zone dernier_delai_livraison_at
         text email_status
         text commune
@@ -250,7 +250,7 @@ erDiagram
         text statut
         boolean contacted
         timestamp_with_time_zone contacted_at
-        int32 relance_count
+        integer relance_count
         timestamp_with_time_zone last_relance_at
         text notes
         timestamp_with_time_zone created_at
@@ -261,24 +261,24 @@ erDiagram
         text enrichissement_statut
         timestamp_with_time_zone enrichi_at
         text email_alternatif
-        int32 nb_delais_livraison
+        integer nb_delais_livraison
         timestamp_with_time_zone dernier_delai_livraison_at
         text email_status
         text tranche_effectif_salarie
     }
     mail_check_lock {
-        int32 id PK
+        smallint id PK
         timestamp_with_time_zone locked_at
         text locked_by
     }
     mail_check_runs {
-        int64 id PK
+        bigint id PK
         timestamp_with_time_zone executed_at
         text source
         text statut
-        int32 messages_scannes
-        int32 bounces_total
-        int32 bounces_blackliste
+        integer messages_scannes
+        integer bounces_total
+        integer bounces_blackliste
         text erreur
     }
     migrations_appliquees {
@@ -292,7 +292,7 @@ erDiagram
         uuid artisan_id
         text corps_metier
         text commune
-        int32 montant_centimes
+        integer montant_centimes
         timestamp_with_time_zone proposee_le
         timestamp_with_time_zone expire_le
     }
@@ -327,7 +327,7 @@ erDiagram
         uuid contract_id
         uuid lead_professionnel_id
         text client_final
-        int32 montant_centimes
+        integer montant_centimes
         text motif
         text type_remboursement
         text statut
@@ -349,7 +349,7 @@ erDiagram
         uuid lead_id
         uuid contract_id
         timestamp_with_time_zone envoyee_le
-        int32 note
+        integer note
         text commentaire
         timestamp_with_time_zone repondu_le
     }
@@ -361,7 +361,7 @@ erDiagram
         jsonb input_data
         jsonb output_data
         double_precision quality_score
-        int32 tokens_used
+        integer tokens_used
         timestamp_with_time_zone created_at
         timestamp_with_time_zone completed_at
     }
@@ -407,12 +407,16 @@ erDiagram
 ```mermaid
 flowchart LR
     subgraph CRON["GitHub Actions (cron)"]
+        ceo_agent_yml["Campagne de prospection B2C (ceo_agent)<br/>(20 6 * * *)"] --> ceo_agent_yml_script(["ceo_agent.py"])
         controle_delivrabilite_yml["Contrôle hebdomadaire de la délivrabilité e-mail<br/>(0 9 * * 1)"] --> controle_delivrabilite_yml_script(["scripts/controle_delivrabilite.py"])
         controle_echeances_yml["Contrôle hebdomadaire des échéances<br/>(0 8 * * 1)"] --> controle_echeances_yml_script(["scripts/controle_echeances.py"])
         controle_sante_bdd_yml["Contrôle de santé de la base de données<br/>(30 4 * * *)"] --> controle_sante_bdd_yml_script(["scripts/controle_sante_bdd.py"])
         envoyer_enquetes_satisfaction_yml["Envoi quotidien des enquêtes de satisfaction<br/>(0 5 * * *)"] --> envoyer_enquetes_satisfaction_yml_script(["scripts/envoyer_enquetes_satisfaction.py"])
         livraison_devis_yml["Réattribution automatique des demandes de devis expirées<br/>(15 * * * *)"] --> livraison_devis_yml_script(["livraison_devis.py"])
         mail_check_yml["Relève automatique des mails (bounces / réponses)<br/>(0 * * * *)"] --> mail_check_yml_script(["mail_processor.py"])
+        outbound_chantiers_campagne_yml["Campagne et relances quotidiennes B2B (outbound_chantiers)<br/>(30 9 * * *)"] --> outbound_chantiers_campagne_yml_script(["scripts/lancer_pipeline_b2b.py"])
+        outbound_chantiers_sourcing_yml["Sourcing hebdomadaire B2B (outbound_chantiers)<br/>(30 6 * * 1)"] --> outbound_chantiers_sourcing_yml_script(["scripts/lancer_pipeline_b2b.py"])
+        relance_prospects_yml["Relance quotidienne des prospects B2C sans réponse<br/>(40 6 * * *)"] --> relance_prospects_yml_script(["relance_prospects.py"])
     end
     subgraph SYNC["Déclenchement synchrone (pas de cron)"]
         sync_0["Confirmation par e-mail d'une demande de devis"]
@@ -423,12 +427,16 @@ flowchart LR
 
 | Workflow | Fréquence | Script | Rôle |
 |---|---|---|---|
+| `ceo_agent.yml` | `20 6 * * *` | `ceo_agent.py` | Exécute ceo_agent.py quotidiennement — envoie un pitch RÉGÉNÉRÉ (voir lead_worker.py::generer_pitch(), jamais le pitch_commercial mis en cache au scraping) à chaque lead B2C non contacté dont l'email a été réellement vérifié (voir ceo_agent.py::get_leads_from_supabase). Journalise le résultat de la campagne dans la table ceo_reports. |
 | `controle_delivrabilite.yml` | `0 9 * * 1` | `scripts/controle_delivrabilite.py` | Exécute scripts/controle_delivrabilite.py une fois par semaine — alerte (Discord ou e-mail en repli) si le taux de hard bounce dépasse 5 % sur les 30 derniers jours, sur les artisans ou le B2B (voir dashboard/data_access.py::get_taux_bounce). |
 | `controle_echeances.yml` | `0 8 * * 1` | `scripts/controle_echeances.py` | Exécute scripts/controle_echeances.py une fois par semaine — alerte (Discord ou e-mail en repli) sur toute échéance légale/administrative encore 'a_traiter' à moins de 30 jours (voir sql/init_echeances.sql). |
 | `controle_sante_bdd.yml` | `30 4 * * *` | `scripts/controle_sante_bdd.py` | Exécute scripts/controle_sante_bdd.py quotidiennement — sécurité (couverture RLS, fonctions exposées), opérationnel (demandes de devis bloquées, réclamations en retard) et dérive (croissance anormale, données de test résiduelles, FK non indexées). Objectif : détecter une régression avant qu'un utilisateur ou un test manuel ne la découvre par hasard (voir sql/init_demandes_devis_particuliers_confirmation.sql pour l'incident qui a motivé ce système). |
 | `envoyer_enquetes_satisfaction.yml` | `0 5 * * *` | `scripts/envoyer_enquetes_satisfaction.py` | Exécute scripts/envoyer_enquetes_satisfaction.py une fois par jour — envoie une enquête de satisfaction aux artisans dont le premier paiement date d'environ une semaine (voir sql/init_satisfaction_enquetes.sql). |
 | `livraison_devis.yml` | `15 * * * *` | `livraison_devis.py` | Exécute livraison_devis.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — sans ce déclenchement automatique, l'engagement de délai affiché publiquement ("un professionnel qualifié vous recontacte sous 48h maximum, ou votre demande est automatiquement proposée à un autre professionnel", voir dashboard/pages_publiques.py) ne serait vrai que si un admin pense à cliquer le bouton manuel du dashboard au bon moment — pas une vraie garantie. |
 | `mail_check.yml` | `0 * * * *` | `mail_processor.py` | Exécute mail_processor.py à intervalle régulier, indépendamment du dashboard Streamlit Community Cloud (qui n'a ni cron ni garantie de rester éveillé) — voir mail_processor.py::check_for_replies pour le verrou partagé (table Supabase mail_check_lock) qui empêche ce run automatique de se chevaucher avec un clic simultané sur le bouton manuel "Vérifier mails" du dashboard. |
+| `outbound_chantiers_campagne.yml` | `30 9 * * *` | `scripts/lancer_pipeline_b2b.py` | Exécute scripts/lancer_pipeline_b2b.py --envoi-seul quotidiennement, pour CHAQUE campagne active (table campagnes, statut='active') — module 4 d'outbound_chantiers.pipeline_outbound_chantiers seul (outbound_pro_btp.py) : contacte les nouveaux acteurs jamais sollicités ET relance ceux dont l'échéance J+3/J+7 est atteinte, dans la même passe (voir outbound_chantiers/n8n_workflow_outbound_chantiers.md, Workflow B — les deux fonctions gèrent déjà en interne le cas où rien n'est éligible ce jour-là). |
+| `outbound_chantiers_sourcing.yml` | `30 6 * * 1` | `scripts/lancer_pipeline_b2b.py` | Exécute scripts/lancer_pipeline_b2b.py (sourcing seul, sans --envoi-seul) une fois par semaine, pour CHAQUE campagne active (table campagnes, statut='active') — modules 1-3 d'outbound_chantiers.pipeline_outbound_chantiers : sourcing des acteurs pro, filtrage/enrichissement du contact réel, scoring + publication en base. |
+| `relance_prospects.yml` | `40 6 * * *` | `relance_prospects.py` | Exécute relance_prospects.py quotidiennement — relance les leads B2C contactés sans réponse après DELAI_PREMIERE_RELANCE_JOURS (4j par défaut), puis DELAI_RELANCE_SUIVANTE_JOURS (4j) après la relance précédente ; au-delà de MAX_RELANCES (2), le lead passe "sans_reponse" et n'est plus recontacté. |
 
 ### Déclenchées de façon synchrone (pas de cron)
 
@@ -489,7 +497,7 @@ Détectées par recherche des imports/appels réels dans le code (pas une liste 
 
 | Service | Rôle dans le projet | Utilisé dans |
 |---|---|---|
-| Supabase (Postgres + Auth) | Base de données applicative (toutes les tables métier) et authentification native pour l'espace Artisans (landing/). Accès serveur exclusivement via la clé service_role (bypass RLS). | `ceo_agent.py`, `dashboard/supabase_client.py`, `livraison_devis.py`, `mail_processor.py`, `relance_prospects.py`, … (+1) |
+| Supabase (Postgres + Auth) | Base de données applicative (toutes les tables métier) et authentification native pour l'espace Artisans (landing/). Accès serveur exclusivement via la clé service_role (bypass RLS). | `ceo_agent.py`, `dashboard/supabase_client.py`, `livraison_devis.py`, `mail_processor.py`, `relance_prospects.py`, … (+2) |
 | Stripe | Lien de paiement (Payment Links) généré à la signature du contrat B2C, et remboursements (Refunds API). Confirmation de paiement 100% manuelle côté admin (pas de webhook). | `dashboard/contrats_signature.py`, `dashboard/data_access.py`, `livraison_devis.py` |
 | Zoho Mail (SMTP/IMAP) | Envoi des campagnes/relances/e-mails transactionnels (SMTP) et relève des bounces/réponses (IMAP). | `alertes.py`, `mail_processor.py`, `outbound_chantiers/outbound_pro_btp.py` |
 | Signature électronique interne | Provider de signature par défaut (art. 1367 code civil, lien token + preuve IP/user-agent). | `alertes.py`, `dashboard/app_pages/gestion_clients.py`, `dashboard/contrats_signature.py`, `dashboard/pages_publiques.py`, `dashboard/signature_interne.py`, … (+1) |
@@ -499,7 +507,7 @@ Détectées par recherche des imports/appels réels dans le code (pas une liste 
 | DNS-over-HTTPS (dns.google) | Vérification live des enregistrements SPF/DKIM/DMARC (app_pages/deliverabilite.py), gratuit. | `dashboard/app_pages/deliverabilite.py` |
 | Discord (webhook) | Alertes temps réel (lead ultra-qualifié, erreurs) — voir alertes.py. | `alertes.py`, `dashboard/data_access.py`, `mail_processor.py`, `scraper_batiment.py`, `scripts/controle_delivrabilite.py`, … (+2) |
 | Ollama | Génération des pitchs de prospection (LLM local, avec repli générique si injoignable). | `dashboard/data_access.py`, `lead_worker.py`, `llm_config.py`, `outbound_chantiers/config.py` |
-| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `controle_delivrabilite.yml`, `controle_echeances.yml`, `controle_sante_bdd.yml`, `envoyer_enquetes_satisfaction.yml`, `livraison_devis.yml`, `mail_check.yml` |
+| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `ceo_agent.yml`, `controle_delivrabilite.yml`, `controle_echeances.yml`, `controle_sante_bdd.yml`, `envoyer_enquetes_satisfaction.yml`, `livraison_devis.yml`, `mail_check.yml`, `outbound_chantiers_campagne.yml`, `outbound_chantiers_sourcing.yml`, `relance_prospects.yml` |
 
 ## 5. Surveillance continue de la base
 
