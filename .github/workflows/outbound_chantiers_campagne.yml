@@ -27,14 +27,45 @@ name: Campagne et relances quotidiennes B2B (outbound_chantiers)
 on:
   schedule:
     - cron: "30 9 * * *" # tous les jours, 9h30 UTC
-  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "campagne = envoi réel (défaut) ; test_login = login SMTP seul, aucun envoi, aucun accès aux leads"
+        required: false
+        default: "campagne"
+        type: choice
+        options:
+          - campagne
+          - test_login
 
 concurrency:
   group: outbound-chantiers-campagne
   cancel-in-progress: false
 
 jobs:
+  test-login:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'test_login'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Tester uniquement le login SMTP (aucun envoi, aucun accès aux leads)
+        env:
+          ZOHO_USER: ${{ secrets.ZOHO_USER }}
+          ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
+        run: |
+          python3 -c "
+          import os, smtplib
+          user = os.environ['ZOHO_USER']
+          pwd = os.environ['ZOHO_PASSWORD']
+          print('ZOHO_USER =', user)
+          print('mot de passe défini :', bool(pwd), '- longueur :', len(pwd))
+          with smtplib.SMTP_SSL('smtp.zoho.eu', 465, timeout=15) as s:
+              s.login(user, pwd)
+              print('LOGIN OK')
+          "
+
   campagne:
+    if: github.event_name == 'schedule' || inputs.mode == 'campagne'
     runs-on: ubuntu-latest
     # 120 min : outbound_pro_btp.py fait une pause anti-spam de 60-120s
     # ENTRE CHAQUE envoi (même logique que ceo_agent.py/relance_prospects.py),
