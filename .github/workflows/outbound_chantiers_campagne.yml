@@ -58,7 +58,13 @@ jobs:
           user = os.environ['ZOHO_USER']
           pwd = os.environ['ZOHO_PASSWORD']
           print('ZOHO_USER =', user)
+          print('ZOHO_USER contient un espace parasite (début/fin) :', user != user.strip())
           print('mot de passe défini :', bool(pwd), '- longueur :', len(pwd))
+          print('mot de passe contient un espace/retour à la ligne parasite (début/fin) :', pwd != pwd.strip())
+          if len(pwd) >= 4:
+              print('mot de passe (masqué) :', pwd[:2] + '*' * (len(pwd) - 4) + pwd[-2:])
+          else:
+              print('mot de passe trop court pour un aperçu masqué sûr')
           with smtplib.SMTP_SSL('smtp.zoho.eu', 465, timeout=15) as s:
               s.login(user, pwd)
               print('LOGIN OK')
