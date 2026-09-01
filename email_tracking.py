@@ -21,6 +21,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 import requests
 
@@ -87,7 +88,26 @@ def _email_events_get(params: str) -> list[dict]:
         reponse = requests.get(
             f"{SUPABASE_URL}/rest/v1/email_events?{params}", headers=_supabase_headers(), timeout=10
         )
-        return reponse.json() if reponse.status_code == 200 else []
+        if reponse.status_code != 200:
+            # Avant ce correctif, une réponse non-200 (ex: filtre malformé)
+            # retombait silencieusement sur [] — voir incident réel du
+            # 29/08/2026 : un "+" non encodé dans un timestamp ISO
+            # (created_at=gte.2026-08-29T00:00:00+00:00) était décodé en
+            # espace côté PostgREST ("... 00:00", invalid input syntax), et
+            # l'échec passait totalement inaperçu : comptage à 0, budget
+            # quotidien perçu comme intact, ET le cron GitHub Actions se
+            # terminait quand même en "succeeded" (aucune exception ne
+            # remontait). Voir le correctif ci-dessous (quote() sur
+            # debut_jour_iso) pour la cause racine ; ceci reste une
+            # deuxième ligne de défense pour toute AUTRE requête
+            # malformée future — on lève au lieu de rendre [] pour que
+            # l'appelant (verifier_budget_quotidien -> lancer_campagne_initiale/
+            # lancer_relances -> pipeline_outbound_chantiers.py::executer_etape)
+            # échoue explicitement (log ÉCHEC + exit code 1) plutôt que de
+            # continuer avec un budget calculé sur des données fausses.
+            log.error(f"Erreur lecture email_events : HTTP {reponse.status_code} — {reponse.text}")
+            raise RuntimeError(f"Requête email_events invalide : HTTP {reponse.status_code} — {reponse.text}")
+        return reponse.json()
     except requests.exceptions.RequestException as e:
         log.error(f"Erreur lecture email_events : {e}")
         return []
@@ -133,8 +153,14 @@ def verifier_budget_quotidien() -> dict:
     plafond_jour = plafond_envoi_du_jour(jour_ramp - 1)
 
     debut_jour_iso = maintenant.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    # quote() est indispensable ici : _email_events_get() reçoit une URL déjà
+    # construite en chaîne (pas de params= géré par requests, qui aurait
+    # encodé automatiquement) — un "+" littéral (ex: "...T00:00:00+00:00")
+    # part donc tel quel dans le querystring, où PostgREST le décode comme un
+    # espace (convention application/x-www-form-urlencoded), invalidant le
+    # timestamp côté Postgres. Voir _email_events_get pour l'incident réel.
     envoyes_aujourdhui = len(_email_events_get(
-        f"select=id&type_evenement=eq.envoye&created_at=gte.{debut_jour_iso}"
+        f"select=id&type_evenement=eq.envoye&created_at=gte.{quote(debut_jour_iso, safe='')}"
     ))
 
     return {

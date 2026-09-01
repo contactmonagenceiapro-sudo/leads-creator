@@ -324,9 +324,14 @@ def lancer_campagne_initiale(limite: int = 20) -> None:
         except CompteZohoBloqueError:
             # Déjà loggé + alerté dans envoyer_email — inutile de tenter les
             # acteurs restants, ils échoueraient tous de la même façon tant
-            # que le blocage n'est pas levé côté Zoho.
+            # que le blocage n'est pas levé côté Zoho. On PROPAGE (raise, pas
+            # juste break) pour que pipeline_outbound_chantiers.py::executer_etape
+            # marque cette étape en échec — avant ce correctif, la fonction
+            # se terminait normalement après le break, donc ce cas s'affichait
+            # comme "OK" (voir incident réel du 29/08/2026 : cron "succeeded"
+            # alors qu'aucun e-mail n'était parti, compte Zoho bloqué).
             log.error("Campagne B2B interrompue (compte Zoho bloqué).")
-            break
+            raise
         except Exception as e:
             # Filet générique (ex: champ manquant sur cet acteur) : ne doit
             # jamais interrompre la campagne pour les acteurs restants.
@@ -408,9 +413,10 @@ def lancer_relances() -> None:
             sujet, corps = message_relance(acteur, relance_count + 1)
             envoi_reussi = envoyer_email(acteur["email"], sujet, corps, lead_id=acteur["id"])
         except CompteZohoBloqueError:
-            # Voir la même gestion dans lancer_campagne_initiale ci-dessus.
+            # Voir la même gestion (raise, pas break) dans lancer_campagne_initiale
+            # ci-dessus.
             log.error("Relances B2B interrompues (compte Zoho bloqué).")
-            break
+            raise
         except Exception as e:
             # Filet générique, voir lancer_campagne_initiale ci-dessus.
             log.error(f"Relance ignorée pour {acteur.get('nom_entreprise') or acteur.get('email')} (erreur inattendue) : {e}")
