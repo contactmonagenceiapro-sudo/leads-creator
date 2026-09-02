@@ -269,8 +269,15 @@ def statut_ramp_warmup() -> dict:
     Agrège maintenant TOUS les envois de prospection, B2B ET artisans/B2C
     confondus — la boîte d'envoi est partagée, sa réputation ne se découpe
     ni par campagne ni par pipeline (ancienne limitation : le B2C n'était
-    pas compté alors qu'il partage la même boîte Zoho)."""
-    return verifier_budget_quotidien()
+    pas compté alors qu'il partage la même boîte Zoho).
+
+    pipeline='b2b' : le B2B peut prendre toute la part du budget partagé non
+    consommée par le B2C, celui-ci étant désormais plafonné en amont pour
+    laisser une réserve garantie au B2B (voir RESERVE_QUOTIDIENNE_B2B) —
+    corrige la famine constatée en base : plus un seul envoi
+    lead_professionnel depuis le 02/08/2026, le B2C consommant tout le
+    budget partagé chaque jour avant l'exécution du cron B2B (9h30 UTC)."""
+    return verifier_budget_quotidien("b2b")
 
 
 def lancer_campagne_initiale(limite: int = 20) -> None:

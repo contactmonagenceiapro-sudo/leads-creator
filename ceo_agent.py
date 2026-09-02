@@ -194,9 +194,10 @@ def run_ceo_analysis() -> None:
     total_processed = len(leads)
 
     # Budget quotidien PARTAGÉ avec le pipeline B2B (même boîte Zoho, même
-    # réputation à protéger) — voir email_tracking.py::verifier_budget_quotidien.
-    budget_restant = verifier_budget_quotidien()["budget_restant"]
-    log.info(f"Budget d'envoi quotidien restant (partagé avec le B2B) : {budget_restant}")
+    # réputation à protéger), plafonné pour laisser une réserve garantie au
+    # B2B — voir email_tracking.py::verifier_budget_quotidien.
+    budget_restant = verifier_budget_quotidien("b2c")["budget_restant"]
+    log.info(f"Budget d'envoi quotidien restant (partagé avec le B2B, réserve B2B déduite) : {budget_restant}")
 
     for lead in leads:
         company = lead.get("company") or "votre entreprise"

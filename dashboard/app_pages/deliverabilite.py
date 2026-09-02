@@ -31,8 +31,10 @@ st.caption("Montée en charge du domaine d'envoi (warmup) & enregistrements DNS 
 
 st.subheader("Montée en charge de l'envoi B2B")
 st.caption(
-    "Plafond quotidien partagé par toutes les campagnes B2B (même boîte d'envoi) — "
-    "voir PALIERS_RAMP_ENVOI_QUOTIDIEN dans outbound_chantiers/config.py."
+    "Plafond quotidien PARTAGÉ avec le pipeline artisans/B2C (même boîte d'envoi Zoho, "
+    "même réputation à protéger) — voir PALIERS_RAMP_ENVOI_QUOTIDIEN dans email_tracking.py. "
+    "Une réserve quotidienne est garantie au B2B pour qu'il ne soit jamais privé de budget "
+    "par le B2C (voir RESERVE_QUOTIDIENNE_B2B)."
 )
 
 ramp, erreur = safe_call(get_warmup_status)
@@ -41,8 +43,13 @@ if erreur:
 elif ramp:
     col1, col2, col3 = st.columns(3)
     col1.metric("Jour de warmup", f"J{ramp['jour_ramp']}")
-    col2.metric("Envoyés aujourd'hui", f"{ramp['envoyes_aujourdhui']} / {ramp['plafond_jour']}")
-    col3.metric("Budget restant aujourd'hui", ramp["budget_restant"])
+    col2.metric("Envoyés aujourd'hui (tous pipelines)", f"{ramp['envoyes_aujourdhui']} / {ramp['plafond_jour']}")
+    col3.metric("Budget restant aujourd'hui (B2B)", ramp["budget_restant"])
+
+    st.caption(
+        f"Dont {ramp['envoyes_b2b_aujourdhui']} B2B et {ramp['envoyes_b2c_aujourdhui']} B2C aujourd'hui — "
+        f"réserve garantie au B2B : {ramp['reserve_b2b']}."
+    )
 
     if ramp["plafond_jour"] > 0:
         st.progress(min(ramp["envoyes_aujourdhui"] / ramp["plafond_jour"], 1.0))

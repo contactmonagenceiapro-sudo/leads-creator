@@ -59,6 +59,17 @@ PALIERS_RAMP_ENVOI_QUOTIDIEN = [
     (60, 50),  # au-delà (plateau, atteint en ~2 mois au lieu de 3 semaines)
 ]
 
+# Réserve quotidienne garantie au B2B (lead_professionnel) sur le budget
+# partagé ci-dessus. Sans elle, le B2C (artisans, cron 6h20/6h40 UTC —
+# lead_worker.py tourne même plusieurs fois par jour) épuise systématiquement
+# tout le budget du jour AVANT que le cron B2B (9h30 UTC) ne s'exécute :
+# constaté en base le 02/09/2026, aucun envoi lead_professionnel depuis le
+# 02/08/2026 alors que le compteur "budget_restant" fonctionnait correctement
+# (25/25 envoyés, tous lead_artisan). Seul le B2C est plafonné à
+# (plafond_jour - réserve) ; le B2B peut lui prendre tout le budget restant,
+# y compris la part non consommée par le B2C — voir verifier_budget_quotidien.
+RESERVE_QUOTIDIENNE_B2B = 5
+
 
 def plafond_envoi_du_jour(jours_ecoules: int) -> int:
     """Plafond d'e-mails de prospection (artisans + B2B confondus)
@@ -125,7 +136,7 @@ def _parser_horodatage(valeur: str) -> datetime:
     return datetime.fromisoformat(valeur)
 
 
-def verifier_budget_quotidien() -> dict:
+def verifier_budget_quotidien(pipeline: str | None = None) -> dict:
     """Où en est la montée en charge progressive du domaine d'envoi
     (warmup) — voir PALIERS_RAMP_ENVOI_QUOTIDIEN ci-dessus. Agrège TOUS les
     envois de prospection, artisans ET B2B confondus (lead_type IN
@@ -133,12 +144,28 @@ def verifier_budget_quotidien() -> dict:
     partagée, sa réputation ne se découpe pas par pipeline ni par
     campagne.
 
+    `pipeline` détermine le `budget_restant` retourné :
+    - 'b2c' (artisans — ceo_agent.py/lead_worker.py/relance_prospects.py) :
+      plafonné à (plafond_jour - réserve B2B effective) pour ne jamais
+      épuiser la part garantie au B2B, même si le B2C tourne systématiquement
+      avant le cron B2B (constaté en base : plus un seul envoi
+      lead_professionnel depuis le 02/08/2026, le B2C consommant tout le
+      budget partagé chaque jour avant 9h30 UTC).
+    - 'b2b' (outbound_chantiers/outbound_pro_btp.py) ou None (dashboard,
+      affichage global) : budget partagé restant SANS plafond
+      supplémentaire — le B2B peut prendre toute la part non consommée par
+      le B2C, la réserve n'est qu'un plancher garanti, jamais un plafond
+      pour le B2B lui-même.
+
     À appeler par CHAQUE script qui envoie de la prospection à froid,
     AVANT de commencer sa boucle d'envoi (voir ceo_agent.py, lead_worker.py,
     relance_prospects.py, outbound_chantiers/outbound_pro_btp.py) — jamais
     une requête par lead, un seul calcul en début de run, décrémenté
     localement au fil des envois réussis (même principe que le reste du
     projet, ex: email_blacklist.emails_blacklistes)."""
+    if pipeline not in (None, "b2b", "b2c"):
+        raise ValueError(f"pipeline inconnu : {pipeline!r} (attendu 'b2b', 'b2c' ou None)")
+
     premiers = _email_events_get(
         "select=created_at&type_evenement=eq.envoye&order=created_at.asc&limit=1"
     )
@@ -159,15 +186,31 @@ def verifier_budget_quotidien() -> dict:
     # part donc tel quel dans le querystring, où PostgREST le décode comme un
     # espace (convention application/x-www-form-urlencoded), invalidant le
     # timestamp côté Postgres. Voir _email_events_get pour l'incident réel.
-    envoyes_aujourdhui = len(_email_events_get(
-        f"select=id&type_evenement=eq.envoye&created_at=gte.{quote(debut_jour_iso, safe='')}"
-    ))
+    evenements_jour = _email_events_get(
+        f"select=lead_type&type_evenement=eq.envoye&created_at=gte.{quote(debut_jour_iso, safe='')}"
+    )
+    envoyes_aujourdhui = len(evenements_jour)
+    envoyes_b2b_aujourdhui = sum(1 for e in evenements_jour if e.get("lead_type") == "lead_professionnel")
+    envoyes_b2c_aujourdhui = envoyes_aujourdhui - envoyes_b2b_aujourdhui
+
+    # Plafonnée à la moitié du plafond du jour : sur les tout premiers
+    # paliers (ex. 2/jour), une réserve fixe de 5 bloquerait le B2C à 0 sans
+    # jamais rien garantir au B2B non plus au-delà du plafond lui-même.
+    reserve_b2b_effective = min(RESERVE_QUOTIDIENNE_B2B, plafond_jour // 2)
+
+    if pipeline == "b2c":
+        budget_restant = max(0, plafond_jour - reserve_b2b_effective - envoyes_b2c_aujourdhui)
+    else:
+        budget_restant = max(0, plafond_jour - envoyes_aujourdhui)
 
     return {
         "jour_ramp": jour_ramp,
         "plafond_jour": plafond_jour,
         "envoyes_aujourdhui": envoyes_aujourdhui,
-        "budget_restant": max(0, plafond_jour - envoyes_aujourdhui),
+        "envoyes_b2b_aujourdhui": envoyes_b2b_aujourdhui,
+        "envoyes_b2c_aujourdhui": envoyes_b2c_aujourdhui,
+        "reserve_b2b": reserve_b2b_effective,
+        "budget_restant": budget_restant,
         "paliers": PALIERS_RAMP_ENVOI_QUOTIDIEN,
     }
 
