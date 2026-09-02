@@ -13,9 +13,10 @@ Portail Client).
 Trois vues : en attente (pas encore de destinataire, ou aucun artisan
 correspondant — utile pour prioriser le démarchage commercial sur un corps
 de métier/zone en tension), propositions en attente de paiement (formule à
-l'unité, avec confirmation manuelle du paiement — pas de webhook Stripe
-dans ce projet, voir data_access.marquer_demande_devis_payee_et_livree),
-livrées (historique, avec artisan destinataire et date).
+l'unité, confirmée automatiquement par le webhook Stripe — voir
+scripts/traiter_paiements_stripe.py, sql/init_stripe_webhook_events.sql ;
+data_access.marquer_demande_devis_payee_et_livree reste un bouton manuel de
+secours), livrées (historique, avec artisan destinataire et date).
 """
 
 from datetime import datetime, timedelta, timezone

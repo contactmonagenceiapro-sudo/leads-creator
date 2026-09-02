@@ -866,7 +866,9 @@ def get_pipeline_conversion() -> dict:
 
 
 # ---------------------------------------------------------------------
-# Contrats / paiements (Stripe) — confirmation manuelle (plus de webhooks)
+# Contrats / paiements (Stripe) — confirmation automatique par webhook
+# (scripts/traiter_paiements_stripe.py, sql/init_stripe_webhook_events.sql) ;
+# marquer_contrat_paye ci-dessous reste un bouton manuel de secours.
 # ---------------------------------------------------------------------
 
 @st.cache_data(ttl=CACHE_TTL_SECONDES)
@@ -935,8 +937,13 @@ def marquer_contrat_signe(contract_id: str) -> dict:
 
 
 def marquer_contrat_paye(contract_id: str, stripe_payment_intent_id: str) -> dict:
-    """Remplace le webhook Stripe : l'admin vérifie manuellement dans Stripe
-    que le paiement est passé, saisit le payment_intent_id affiché dans le
+    """Bouton manuel de SECOURS uniquement — le cas nominal est désormais le
+    webhook Stripe (scripts/traiter_paiements_stripe.py, alimenté par
+    supabase/functions/stripe-webhook/, voir sql/init_stripe_webhook_events.sql),
+    qui appelle le même enchaînement de mises à jour indépendamment de ce
+    bouton. À utiliser seulement si un événement a été manqué (webhook down,
+    secret mal configuré...) : l'admin vérifie manuellement dans Stripe que
+    le paiement est passé, saisit le payment_intent_id affiché dans le
     dashboard Stripe (indispensable pour un remboursement futur), et clique
     ce bouton."""
     try:
@@ -1303,14 +1310,15 @@ def get_demandes_devis(statut: str | None = None, limit: int = 200) -> dict:
 
 
 def marquer_demande_devis_payee_et_livree(demande_id: str, stripe_payment_intent_id: str | None = None) -> dict:
-    """Confirmation MANUELLE du paiement d'une proposition 'à l'unité' —
-    même principe que marquer_contrat_paye ci-dessus (pas de webhook Stripe
-    dans ce projet) : l'admin vérifie lui-même dans Stripe que le paiement
-    de la demande est passé, puis clique ce bouton. C'est CE moment précis
-    qui révèle enfin les coordonnées complètes du particulier à l'artisan
-    (jamais avant, voir livraison_devis.py::_proposer — la proposition
-    initiale ne contenait qu'une description du besoin, pas nom/email/
-    téléphone).
+    """Bouton manuel de SECOURS uniquement — même principe que
+    marquer_contrat_paye ci-dessus : le cas nominal est désormais le webhook
+    Stripe (scripts/traiter_paiements_stripe.py), qui appelle le même
+    enchaînement. À utiliser seulement si un événement a été manqué : l'admin
+    vérifie lui-même dans Stripe que le paiement de la demande est passé,
+    puis clique ce bouton. C'est CE moment précis qui révèle enfin les
+    coordonnées complètes du particulier à l'artisan (jamais avant, voir
+    livraison_devis.py::_proposer — la proposition initiale ne contenait
+    qu'une description du besoin, pas nom/email/téléphone).
 
     stripe_payment_intent_id est optionnel (contrairement à
     marquer_contrat_paye) : une demande de devis n'est jamais remboursée

@@ -1,0 +1,48 @@
+name: Traitement des paiements Stripe (webhook)
+
+# Exécute scripts/traiter_paiements_stripe.py à intervalle régulier —
+# consomme la file d'attente stripe_webhook_events remplie par la Supabase
+# Edge Function supabase/functions/stripe-webhook/ (le vrai récepteur HTTPS
+# du webhook Stripe ; Streamlit Community Cloud, où tourne le dashboard, ne
+# peut pas recevoir de requête HTTP entrante — voir
+# sql/init_stripe_webhook_events.sql pour l'architecture complète).
+#
+# Remplace la confirmation manuelle du paiement (dashboard/data_access.py::
+# marquer_contrat_paye / marquer_demande_devis_payee_et_livree, gardés comme
+# filet de secours) dans le cas nominal.
+#
+# Fréquence 10 minutes, plus serrée que les autres crons de ce projet
+# (mail_check.yml, livraison_devis.yml : horaires) — un client qui vient de
+# payer attend une confirmation quasi immédiate, contrairement aux autres
+# automatisations de ce projet.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}   # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: traiter-paiements-stripe
+  cancel-in-progress: false  # jamais annuler un run en cours, seulement en éviter un doublon en attente
+
+jobs:
+  traiter-paiements-stripe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Installer les dépendances
+        run: pip install -r requirements.txt
+
+      - name: Traiter la file d'attente des événements Stripe
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python3 scripts/traiter_paiements_stripe.py

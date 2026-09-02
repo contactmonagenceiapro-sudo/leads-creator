@@ -11,11 +11,14 @@ facturation persistée en base à ce jour ; ce module ne produit donc aucun
 chiffre B2B, à la page appelante de l'expliquer plutôt que d'inventer un
 CA B2B à partir de rien.
 
-Confirmation de paiement/signature 100% MANUELLE (pas de webhook Stripe/
-Yousign, voir data_access.marquer_contrat_paye/marquer_contrat_signe) :
-`payment_status`/`yousign_status` sont mis à jour par un admin qui vérifie
-lui-même dans Stripe/Yousign — d'où deux indicateurs distincts ci-dessous
-("signé" et "payé"), jamais confondus l'un avec l'autre.
+Confirmation de signature 100% MANUELLE (pas de webhook Yousign, voir
+data_access.marquer_contrat_signe) : `yousign_status` est mis à jour par un
+admin qui vérifie lui-même dans Yousign. Le paiement (`payment_status`), lui,
+est confirmé automatiquement par le webhook Stripe (voir
+scripts/traiter_paiements_stripe.py, sql/init_stripe_webhook_events.sql) —
+data_access.marquer_contrat_paye reste un filet de secours manuel. D'où
+deux indicateurs distincts ci-dessous ("signé" et "payé"), jamais confondus
+l'un avec l'autre.
 """
 
 from __future__ import annotations

@@ -13,10 +13,12 @@ docstring : "Rien n'est enregistré côté serveur pour les bons de
 commande"). Cette page l'affiche donc explicitement (encart ci-dessous)
 plutôt que d'inventer ou d'omettre silencieusement un CA B2B.
 
-Confirmation de paiement/signature 100% MANUELLE (pas de webhook Stripe/
-Yousign, voir data_access.marquer_contrat_paye/marquer_contrat_signe) :
-d'où la distinction explicite "Contrats signés" vs "Paiements confirmés"
-en KPI, jamais confondus l'un avec l'autre.
+Confirmation de signature 100% MANUELLE (pas de webhook Yousign, voir
+data_access.marquer_contrat_signe). Le paiement, lui, est confirmé
+automatiquement par le webhook Stripe (scripts/traiter_paiements_stripe.py) —
+data_access.marquer_contrat_paye reste un filet de secours manuel. D'où la
+distinction explicite "Contrats signés" vs "Paiements confirmés" en KPI,
+jamais confondus l'un avec l'autre.
 
 Toute la logique de calcul (KPIs, répartitions, série cumulée, table des
 transactions) vit dans finances_calc.py, volontairement sans dépendance à
