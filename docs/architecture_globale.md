@@ -2,7 +2,7 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-09-02 14:20 UTC
+Généré le : 2026-09-02 19:47 UTC
 
 ## 1. Schéma de la base de données
 
@@ -417,6 +417,7 @@ flowchart LR
         outbound_chantiers_campagne_yml["Campagne et relances quotidiennes B2B (outbound_chantiers)<br/>(30 9 * * *)"] --> outbound_chantiers_campagne_yml_script(["scripts/lancer_pipeline_b2b.py"])
         outbound_chantiers_sourcing_yml["Sourcing hebdomadaire B2B (outbound_chantiers)<br/>(30 6 * * 1)"] --> outbound_chantiers_sourcing_yml_script(["scripts/lancer_pipeline_b2b.py"])
         relance_prospects_yml["Relance quotidienne des prospects B2C sans réponse<br/>(40 6 * * *)"] --> relance_prospects_yml_script(["relance_prospects.py"])
+        traiter_paiements_stripe_yml["Traitement des paiements Stripe (webhook)<br/>(*/10 * * * *)"] --> traiter_paiements_stripe_yml_script(["scripts/traiter_paiements_stripe.py"])
     end
     subgraph SYNC["Déclenchement synchrone (pas de cron)"]
         sync_0["Confirmation par e-mail d'une demande de devis"]
@@ -437,6 +438,7 @@ flowchart LR
 | `outbound_chantiers_campagne.yml` | `30 9 * * *` | `scripts/lancer_pipeline_b2b.py` | Exécute scripts/lancer_pipeline_b2b.py --envoi-seul quotidiennement, pour CHAQUE campagne active (table campagnes, statut='active') — module 4 d'outbound_chantiers.pipeline_outbound_chantiers seul (outbound_pro_btp.py) : contacte les nouveaux acteurs jamais sollicités ET relance ceux dont l'échéance J+3/J+7 est atteinte, dans la même passe (voir outbound_chantiers/n8n_workflow_outbound_chantiers.md, Workflow B — les deux fonctions gèrent déjà en interne le cas où rien n'est éligible ce jour-là). |
 | `outbound_chantiers_sourcing.yml` | `30 6 * * 1` | `scripts/lancer_pipeline_b2b.py` | Exécute scripts/lancer_pipeline_b2b.py (sourcing seul, sans --envoi-seul) une fois par semaine, pour CHAQUE campagne active (table campagnes, statut='active') — modules 1-3 d'outbound_chantiers.pipeline_outbound_chantiers : sourcing des acteurs pro, filtrage/enrichissement du contact réel, scoring + publication en base. |
 | `relance_prospects.yml` | `40 6 * * *` | `relance_prospects.py` | Exécute relance_prospects.py quotidiennement — relance les leads B2C contactés sans réponse après DELAI_PREMIERE_RELANCE_JOURS (4j par défaut), puis DELAI_RELANCE_SUIVANTE_JOURS (4j) après la relance précédente ; au-delà de MAX_RELANCES (2), le lead passe "sans_reponse" et n'est plus recontacté. |
+| `traiter_paiements_stripe.yml` | `*/10 * * * *` | `scripts/traiter_paiements_stripe.py` | Exécute scripts/traiter_paiements_stripe.py à intervalle régulier — consomme la file d'attente stripe_webhook_events remplie par la Supabase Edge Function supabase/functions/stripe-webhook/ (le vrai récepteur HTTPS du webhook Stripe ; Streamlit Community Cloud, où tourne le dashboard, ne peut pas recevoir de requête HTTP entrante — voir sql/init_stripe_webhook_events.sql pour l'architecture complète). |
 
 ### Déclenchées de façon synchrone (pas de cron)
 
@@ -497,7 +499,7 @@ Détectées par recherche des imports/appels réels dans le code (pas une liste 
 
 | Service | Rôle dans le projet | Utilisé dans |
 |---|---|---|
-| Supabase (Postgres + Auth) | Base de données applicative (toutes les tables métier) et authentification native pour l'espace Artisans (landing/). Accès serveur exclusivement via la clé service_role (bypass RLS). | `ceo_agent.py`, `dashboard/supabase_client.py`, `livraison_devis.py`, `mail_processor.py`, `relance_prospects.py`, … (+2) |
+| Supabase (Postgres + Auth) | Base de données applicative (toutes les tables métier) et authentification native pour l'espace Artisans (landing/). Accès serveur exclusivement via la clé service_role (bypass RLS). | `ceo_agent.py`, `dashboard/supabase_client.py`, `livraison_devis.py`, `mail_processor.py`, `relance_prospects.py`, … (+3) |
 | Stripe | Lien de paiement (Payment Links) généré à la signature du contrat B2C, et remboursements (Refunds API). Confirmation de paiement 100% manuelle côté admin (pas de webhook). | `dashboard/contrats_signature.py`, `dashboard/data_access.py`, `livraison_devis.py` |
 | Zoho Mail (SMTP/IMAP) | Envoi des campagnes/relances/e-mails transactionnels (SMTP) et relève des bounces/réponses (IMAP). | `alertes.py`, `mail_processor.py`, `outbound_chantiers/outbound_pro_btp.py` |
 | Signature électronique interne | Provider de signature par défaut (art. 1367 code civil, lien token + preuve IP/user-agent). | `alertes.py`, `dashboard/app_pages/gestion_clients.py`, `dashboard/contrats_signature.py`, `dashboard/pages_publiques.py`, `dashboard/signature_interne.py`, … (+1) |
@@ -507,7 +509,7 @@ Détectées par recherche des imports/appels réels dans le code (pas une liste 
 | DNS-over-HTTPS (dns.google) | Vérification live des enregistrements SPF/DKIM/DMARC (app_pages/deliverabilite.py), gratuit. | `dashboard/app_pages/deliverabilite.py` |
 | Discord (webhook) | Alertes temps réel (lead ultra-qualifié, erreurs) — voir alertes.py. | `alertes.py`, `dashboard/data_access.py`, `mail_processor.py`, `scraper_batiment.py`, `scripts/controle_delivrabilite.py`, … (+2) |
 | Ollama | Génération des pitchs de prospection (LLM local, avec repli générique si injoignable). | `dashboard/data_access.py`, `lead_worker.py`, `llm_config.py`, `outbound_chantiers/config.py` |
-| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `ceo_agent.yml`, `controle_delivrabilite.yml`, `controle_echeances.yml`, `controle_sante_bdd.yml`, `envoyer_enquetes_satisfaction.yml`, `livraison_devis.yml`, `mail_check.yml`, `outbound_chantiers_campagne.yml`, `outbound_chantiers_sourcing.yml`, `relance_prospects.yml` |
+| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `ceo_agent.yml`, `controle_delivrabilite.yml`, `controle_echeances.yml`, `controle_sante_bdd.yml`, `envoyer_enquetes_satisfaction.yml`, `livraison_devis.yml`, `mail_check.yml`, `outbound_chantiers_campagne.yml`, `outbound_chantiers_sourcing.yml`, `relance_prospects.yml`, `traiter_paiements_stripe.yml` |
 
 ## 5. Surveillance continue de la base
 
