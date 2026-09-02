@@ -503,14 +503,23 @@ def _blocs_create_table(texte: str) -> list[tuple[str, str]]:
 _MOTIF_INDEX = re.compile(r"CREATE (?:UNIQUE )?INDEX[^;]*?ON\s+([a-z_]+)\s*\(([^)]+)\)", re.IGNORECASE)
 _MOTIF_PK_COMPOSITE = re.compile(r"PRIMARY KEY\s*\(([^)]+)\)", re.IGNORECASE)
 _MOTIF_PK_INLINE = re.compile(r"^\s*([a-z_][a-z0-9_]*)\s+\S.*\bPRIMARY KEY\b", re.IGNORECASE | re.MULTILINE)
+# Une contrainte UNIQUE (composite ou inline) crée elle aussi un index B-tree
+# implicite en Postgres (même mécanisme qu'une PRIMARY KEY) — sans cette
+# reconnaissance, une colonne FK déjà couverte par UNIQUE (ex.
+# satisfaction_enquetes.contract_id, voir sql/init_satisfaction_enquetes.sql)
+# remontait comme "non indexée" alors qu'elle l'était réellement en base
+# (faux positif constaté le 02/09/2026). Règle du préfixe gauche appliquée
+# pour la forme composite, comme pour PRIMARY KEY ci-dessus.
+_MOTIF_UNIQUE_COMPOSITE = re.compile(r"\bUNIQUE\s*\(([^)]+)\)", re.IGNORECASE)
+_MOTIF_UNIQUE_INLINE = re.compile(r"^\s*([a-z_][a-z0-9_]*)\s+\S.*\bUNIQUE\b(?!\s*\()", re.IGNORECASE | re.MULTILINE)
 
 
 def _colonnes_indexees_par_table() -> dict[str, set[str]]:
     """Colonnes couvertes par un index, qu'il soit explicite (CREATE INDEX)
-    ou implicite (clé primaire — mono-colonne, ou EN TÊTE d'une clé primaire
-    composite : un index B-tree sur (a, b) couvre déjà les lookups sur `a`
-    seul, règle du préfixe gauche — voir utilisateur_campagnes/
-    utilisateur_leads dans sql/init_portail_client.sql /
+    ou implicite (clé primaire ou contrainte UNIQUE — mono-colonne, ou EN
+    TÊTE d'une clé/contrainte composite : un index B-tree sur (a, b) couvre
+    déjà les lookups sur `a` seul, règle du préfixe gauche — voir
+    utilisateur_campagnes/utilisateur_leads dans sql/init_portail_client.sql /
     init_utilisateur_leads.sql, sinon faussement signalées non indexées)."""
     resultat: dict[str, set[str]] = {}
 
@@ -528,6 +537,11 @@ def _colonnes_indexees_par_table() -> dict[str, set[str]]:
                 premiere_colonne = m.group(1).split(",")[0].strip()
                 ajouter(table, {premiere_colonne})
             for m in _MOTIF_PK_INLINE.finditer(corps):
+                ajouter(table, {m.group(1)})
+            for m in _MOTIF_UNIQUE_COMPOSITE.finditer(corps):
+                premiere_colonne = m.group(1).split(",")[0].strip()
+                ajouter(table, {premiere_colonne})
+            for m in _MOTIF_UNIQUE_INLINE.finditer(corps):
                 ajouter(table, {m.group(1)})
 
     return resultat
