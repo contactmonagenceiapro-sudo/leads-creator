@@ -9,15 +9,13 @@ bouton manuel du dashboard (voir dashboard/process_runner.py::construire_env_cam
 mais sans dépendre d'un humain qui sélectionne une campagne dans le menu à
 chaque run. Une campagne 'brouillon' n'est jamais incluse.
 
-Remplace l'automatisation prévue via n8n (voir
-outbound_chantiers/n8n_workflow_outbound_chantiers.md, workflows A et B) qui
-ciblait un endpoint `{API_URL}/agent/trigger` — supprimé à la migration du
-dashboard vers Streamlit Community Cloud (voir docker-compose.yml : "il n'y
-a plus de backend FastAPI... à faire tourner ici"). Ce doc n8n décrit donc
-une automatisation qui ne fonctionne plus depuis cette migration ; ce script
-reprend les mêmes horaires prévus (lundi 6h sourcing, 9h quotidien
-campagne — voir .github/workflows/outbound_chantiers_sourcing.yml et
-outbound_chantiers_campagne.yml) mais via GitHub Actions, cohérent avec le
+Remplace l'automatisation prévue via n8n (workflows A et B, ciblant un
+endpoint `{API_URL}/agent/trigger`) — supprimée à la migration du dashboard
+vers Streamlit Community Cloud (plus de backend FastAPI à faire tourner) ;
+n8n lui-même a été retiré du projet le 04/09/2026, confirmé inutilisé.
+Ce script reprend les mêmes horaires prévus à l'origine (lundi 6h sourcing,
+9h quotidien campagne — voir .github/workflows/outbound_chantiers_sourcing.yml
+et outbound_chantiers_campagne.yml) mais via GitHub Actions, cohérent avec le
 reste des automatisations du projet (voir docs/architecture_globale.md,
 section "Pipelines et automatisations").
 

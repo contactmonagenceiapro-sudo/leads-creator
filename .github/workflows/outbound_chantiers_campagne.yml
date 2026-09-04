@@ -4,18 +4,16 @@ name: Campagne et relances quotidiennes B2B (outbound_chantiers)
 # CHAQUE campagne active (table campagnes, statut='active') — module 4
 # d'outbound_chantiers.pipeline_outbound_chantiers seul (outbound_pro_btp.py) :
 # contacte les nouveaux acteurs jamais sollicités ET relance ceux dont
-# l'échéance J+3/J+7 est atteinte, dans la même passe (voir
-# outbound_chantiers/n8n_workflow_outbound_chantiers.md, Workflow B — les
-# deux fonctions gèrent déjà en interne le cas où rien n'est éligible ce
-# jour-là).
+# l'échéance J+3/J+7 est atteinte, dans la même passe (les deux fonctions
+# gèrent déjà en interne le cas où rien n'est éligible ce jour-là).
 #
 # Remplace l'automatisation "Workflow B — Campagne + relances quotidiennes"
-# prévue via n8n (même doc), qui ciblait un endpoint {API_URL}/agent/trigger
-# supprimé à la migration du dashboard vers Streamlit Community Cloud (voir
-# docker-compose.yml) — donc non fonctionnelle depuis cette migration,
-# jamais remplacée jusqu'ici.
+# prévue via n8n, qui ciblait un endpoint {API_URL}/agent/trigger supprimé
+# à la migration du dashboard vers Streamlit Community Cloud — donc non
+# fonctionnelle depuis cette migration, jamais remplacée jusqu'ici. n8n
+# lui-même a été retiré du projet le 04/09/2026, confirmé inutilisé.
 #
-# 9h30 UTC — quotidien, proche de l'horaire déjà conçu dans le doc n8n (9h)
+# 9h30 UTC — quotidien, proche de l'horaire déjà conçu à l'origine pour n8n (9h)
 # mais décalé de 30 minutes pour ne jamais tomber exactement sur
 # controle_delivrabilite.yml (lundi 9h00) ; également décalé des crons
 # horaires (mail_check.yml "0 * * * *", livraison_devis.yml "15 * * * *")

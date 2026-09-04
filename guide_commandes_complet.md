@@ -25,14 +25,10 @@
 - **Ollama** : génère les pitchs commerciaux (`llm_config.py`). Tourne en
   local (`http://127.0.0.1:11434` par défaut, ou l'URL fixée par
   `OLLAMA_HOST`/`LLM_API_URL`) — plus conteneurisé par défaut.
-- **n8n** (optionnel, via `docker-compose.yml`, seul service qu'il fait
-  encore tourner) : prévu pour la génération planifiée de contenu SEO
-  uniquement. **Ne sert plus à orchestrer le pipeline B2B** — l'automatisation
-  décrite dans `outbound_chantiers/n8n_workflow_outbound_chantiers.md`
-  ciblait l'ancien endpoint `/agent/trigger`, supprimé ; le pipeline B2B
-  tourne désormais via `scripts/lancer_pipeline_b2b.py` + GitHub Actions (voir
-  le docstring de ce script). Statut d'usage réel de n8n pour le contenu :
-  non confirmé au 04/09/2026, à vérifier dans l'interface n8n si besoin.
+- **n8n** : retiré du projet (04/09/2026, confirmé inutilisé) — `docker-compose.yml`
+  et `outbound_chantiers/n8n_workflow_outbound_chantiers.md` supprimés.
+  L'automatisation qu'il visait à couvrir (pipeline B2B) tourne désormais via
+  `scripts/lancer_pipeline_b2b.py` + GitHub Actions.
 - Tout communique avec **Supabase** (base de données) et **Zoho** (e-mails).
   Les paiements passent par **Stripe** (webhook reçu par
   `supabase/functions/stripe-webhook/`, une Edge Function — le dashboard ne
@@ -97,19 +93,6 @@ complet dans `docs/architecture_globale.md` section 1) pour voir les autres
 tables. Tu peux aussi ouvrir directement l'interface web Supabase (Table
 Editor) avec l'URL de ton projet — plus confortable pour parcourir
 visuellement.
-
----
-
-## 5. n8n (génération de contenu, si toujours actif)
-
-```bash
-docker compose up -d n8n
-```
-
-**http://localhost:5678** — identifiants dans `N8N_USER`/`N8N_PASSWORD` du
-`.env`. À vérifier dans l'interface n8n si le workflow de génération
-d'article quotidien y est encore actif — ne concerne en rien le pipeline B2B
-(voir plus haut).
 
 ---
 

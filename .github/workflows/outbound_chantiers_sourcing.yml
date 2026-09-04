@@ -7,11 +7,11 @@ name: Sourcing hebdomadaire B2B (outbound_chantiers)
 # + publication en base.
 #
 # Remplace l'automatisation "Workflow A — Sourcing hebdomadaire" prévue via
-# n8n (voir outbound_chantiers/n8n_workflow_outbound_chantiers.md), qui
-# ciblait un endpoint {API_URL}/agent/trigger supprimé à la migration du
-# dashboard vers Streamlit Community Cloud (voir docker-compose.yml) — donc
-# non fonctionnelle depuis cette migration, jamais remplacée jusqu'ici.
-# Reprend le même horaire déjà conçu dans ce doc (lundi 6h, "le volume de
+# n8n, qui ciblait un endpoint {API_URL}/agent/trigger supprimé à la
+# migration du dashboard vers Streamlit Community Cloud — donc non
+# fonctionnelle depuis cette migration, jamais remplacée jusqu'ici. n8n
+# lui-même a été retiré du projet le 04/09/2026, confirmé inutilisé.
+# Reprend le même horaire déjà conçu à l'origine (lundi 6h, "le volume de
 # nouveaux permis/acteurs ne justifie pas une fréquence plus élevée").
 #
 # Lundi 6h30 UTC — décalé des crons horaires (mail_check.yml "0 * * * *",
