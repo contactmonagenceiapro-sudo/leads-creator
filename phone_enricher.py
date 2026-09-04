@@ -50,6 +50,19 @@ URL_RECHERCHE = "https://maps.googleapis.com/maps/api/place/findplacefromtext/js
 URL_DETAILS = "https://maps.googleapis.com/maps/api/place/details/json"
 
 
+def _message_sans_cle(e: Exception) -> str:
+    """str(e) sur une requests.exceptions.RequestException (notamment
+    HTTPError levée par raise_for_status()) embarque souvent l'URL complète
+    de la requête, GOOGLE_PLACES_API_KEY en clair incluse (paramètre
+    key=...) — jamais loggée telle quelle (trouvé par audit le 04/09/2026).
+    Le reste du message (type d'erreur, code HTTP...) reste utile pour le
+    diagnostic, seule la clé est masquée."""
+    message = str(e)
+    if GOOGLE_PLACES_API_KEY:
+        message = message.replace(GOOGLE_PLACES_API_KEY, "***")
+    return message
+
+
 def telephone_enrichissement_disponible() -> bool:
     return bool(GOOGLE_PLACES_API_KEY)
 
@@ -73,7 +86,7 @@ def _trouver_place_id(nom_entreprise: str, commune: str) -> str | None:
         candidats = data.get("candidates", [])
         return candidats[0]["place_id"] if candidats else None
     except requests.exceptions.RequestException as e:
-        log.warning(f"Google Places (recherche) indisponible pour « {nom_entreprise} » : {e}")
+        log.warning(f"Google Places (recherche) indisponible pour « {nom_entreprise} » : {_message_sans_cle(e)}")
         return None
     except (KeyError, ValueError, IndexError) as e:
         log.warning(f"Réponse Google Places (recherche) inattendue pour « {nom_entreprise} » : {e}")
@@ -110,7 +123,7 @@ def enrichir_telephone_via_google_places(nom_entreprise: str, commune: str) -> s
         resultat = reponse.json().get("result", {})
         return resultat.get("formatted_phone_number") or resultat.get("international_phone_number") or None
     except requests.exceptions.RequestException as e:
-        log.warning(f"Google Places (détails) indisponible pour « {nom_entreprise} » : {e}")
+        log.warning(f"Google Places (détails) indisponible pour « {nom_entreprise} » : {_message_sans_cle(e)}")
         return None
     except (KeyError, ValueError) as e:
         log.warning(f"Réponse Google Places (détails) inattendue pour « {nom_entreprise} » : {e}")
