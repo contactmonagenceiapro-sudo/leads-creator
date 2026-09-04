@@ -2,11 +2,11 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-09-04 20:22 UTC
+Généré le : 2026-09-04 20:40 UTC
 
 ## 1. Schéma de la base de données
 
-31 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
+32 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
 
 ```mermaid
 erDiagram
@@ -265,6 +265,11 @@ erDiagram
         timestamp_with_time_zone dernier_delai_livraison_at
         text email_status
         text tranche_effectif_salarie
+    }
+    livraison_devis_lock {
+        smallint id PK
+        timestamp_with_time_zone locked_at
+        text locked_by
     }
     mail_check_lock {
         smallint id PK
