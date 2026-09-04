@@ -116,6 +116,19 @@ DELAI_EXPIRATION_PROPOSITION_HEURES = int(os.getenv("DELAI_EXPIRATION_PROPOSITIO
 # particulier lui-même).
 DELAI_EXPIRATION_CONFIRMATION_HEURES = int(os.getenv("DELAI_EXPIRATION_CONFIRMATION_HEURES", "24"))
 
+# Garde-fou de sécurité PROPRE à ce script, VOLONTAIREMENT indépendant du
+# budget partagé de warmup cold-outreach (email_tracking.py::
+# verifier_budget_quotidien, utilisé par ceo_agent.py/lead_worker.py/
+# relance_prospects.py/outbound_pro_btp.py) : ces envois-ci sont
+# transactionnels, adressés à des artisans DÉJÀ clients payants, sous
+# l'engagement public de délai ("un professionnel qualifié vous recontacte
+# sous 48h maximum", voir dashboard/pages_publiques.py) — ils ne doivent
+# jamais être retardés par un budget de prospection à froid déjà épuisé
+# (paliers très bas au départ, 2/jour les 6 premiers jours). Ce plafond
+# protège seulement contre un bug qui enverrait un volume anormal en boucle,
+# pas contre l'usage normal (voir memory livraison_devis_pas_de_plafond_envoi).
+PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN = int(os.getenv("PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN", "30"))
+
 
 def _artisans_clients_actifs() -> list[dict]:
     """Artisans clients payants (leads.status='paye'), avec leur dernier
@@ -322,6 +335,28 @@ def _proposer(demande: dict, candidat: dict) -> bool:
     return True
 
 
+def _envois_livraison_aujourdhui() -> int:
+    """Compte les livraisons/propositions déjà envoyées aujourd'hui par CE
+    script (livree_le ou proposee_le du jour dans demandes_devis_particuliers)
+    — délibérément lu depuis cette table plutôt que depuis email_events
+    (email_tracking.py) : ce dernier agrège aussi la prospection à froid
+    sous le même tag 'lead_artisan', ce qui empêcherait de distinguer
+    proprement le volume de CE garde-fou de celui du warmup cold-outreach
+    (voir PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN ci-dessus). proposee_le est
+    posé même si l'email échoue ensuite (voir _proposer) : légèrement
+    conservateur, ce qui convient à un garde-fou de sécurité."""
+    debut_jour_iso = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    livrees = (
+        supabase.table("demandes_devis_particuliers").select("id", count="exact")
+        .gte("livree_le", debut_jour_iso).execute()
+    )
+    proposees = (
+        supabase.table("demandes_devis_particuliers").select("id", count="exact")
+        .gte("proposee_le", debut_jour_iso).execute()
+    )
+    return (livrees.count or 0) + (proposees.count or 0)
+
+
 def traiter_demande(demande: dict, artisans: list[dict], exclure_ids: frozenset = frozenset()) -> str:
     """Traite une demande 'a_qualifier' ou 'en_attente_artisan' (ou une
     demande de proposition périmée déjà réinitialisée par
@@ -372,7 +407,15 @@ def traiter_demandes_en_attente() -> dict:
         return {"livrees": 0, "proposees": 0, "en_attente": 0, "total": 0}
 
     artisans = _artisans_clients_actifs()
+    plafond_restant = PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN - _envois_livraison_aujourdhui()
     for i, demande in enumerate(demandes, start=1):
+        if plafond_restant <= 0:
+            log.error(
+                f"Garde-fou de sécurité atteint ({PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN} envois/jour, "
+                f"indépendant du warmup prospection) — {len(demandes) - i + 1} demande(s) non traitée(s), "
+                f"retentées au prochain run."
+            )
+            break
         try:
             issue = traiter_demande(demande, artisans)
         except CompteZohoBloqueError:
@@ -382,6 +425,8 @@ def traiter_demandes_en_attente() -> dict:
             log.error(f"Traitement interrompu après {i - 1}/{len(demandes)} demande(s) (compte Zoho bloqué).")
             break
         compteurs[issue] += 1
+        if issue in ("livree", "proposee"):
+            plafond_restant -= 1
 
     log.info(
         f"=== Terminé : {sum(compteurs.values())}/{len(demandes)} demande(s) traitée(s) — "
@@ -405,8 +450,16 @@ def expirer_propositions_perimees() -> dict:
         return {"reattribuees": 0, "en_attente": 0, "total": 0}
 
     artisans = _artisans_clients_actifs()
+    plafond_restant = PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN - _envois_livraison_aujourdhui()
     reattribuees, en_attente = 0, 0
     for i, demande in enumerate(perimees, start=1):
+        if plafond_restant <= 0:
+            log.error(
+                f"Garde-fou de sécurité atteint ({PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN} envois/jour, "
+                f"indépendant du warmup prospection) — {len(perimees) - i + 1} proposition(s) périmée(s) "
+                f"non ré-attribuée(s), retentées au prochain run."
+            )
+            break
         candidat_expire = demande.get("lead_id_livraison")
         if candidat_expire:
             # Module 9 (pilotage) — journalise l'expiration AVANT le reset
@@ -448,6 +501,7 @@ def expirer_propositions_perimees() -> dict:
 
         if issue in ("livree", "proposee"):
             reattribuees += 1
+            plafond_restant -= 1
         else:
             en_attente += 1
         log.info(f"Proposition périmée pour la demande {demande['id']} (candidat précédent exclu) -> {issue}.")
