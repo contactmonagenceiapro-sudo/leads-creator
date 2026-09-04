@@ -197,32 +197,41 @@ def relancer_prospects() -> None:
             log.error(f"Relances interrompues après {i-1}/{len(prospects)} (compte Zoho bloqué).")
             break
 
-        nouveau_count = relance_count + 1
-        maj = {
-            "relance_count": nouveau_count,
-            "last_relance_at": datetime.now(timezone.utc).isoformat(),
-        }
-        if succes and nouveau_count >= MAX_RELANCES:
-            # Dernière relance envoyée sans obtenir de réponse : on arrête
-            # définitivement les tentatives automatiques sur ce lead plutôt
-            # que de le solliciter indéfiniment.
-            maj["status"] = "sans_reponse"
-
-        if succes:
+        if not succes:
+            # Ne JAMAIS incrémenter relance_count/last_relance_at pour un
+            # envoi qui n'a pas eu lieu (même principe que
+            # livraison_devis.py::_livrer_directement — ne pas mentir sur
+            # l'état réel) : un échec transitoire (timeout SMTP...) ne doit
+            # pas rapprocher ce lead de MAX_RELANCES sans qu'aucune relance
+            # réelle n'ait jamais été reçue, sous peine de le faire sortir de
+            # recuperer_prospects_a_relancer() (filtre relance_count <
+            # MAX_RELANCES) sans jamais avoir été relancé ni clôturé — état
+            # zombie, trouvé par audit le 04/09/2026. Retenté au run suivant.
+            log.error(f"Échec de la relance pour {company} <{email}> — non comptabilisée, retentée au prochain run.")
+        else:
             log.info(f"Relance envoyée à {company}")
             budget_restant -= 1
-        else:
-            log.error(f"Échec de la relance pour {company} <{email}>")
 
-        try:
-            supabase.table("leads").update(maj).eq("id", lead["id"]).execute()
-        except Exception as e:
-            # Ne doit jamais interrompre les relances suivantes : une panne
-            # réseau/Supabase ici ne remet pas en cause l'envoi déjà effectué,
-            # elle empêche seulement sa comptabilisation (relance_count /
-            # last_relance_at pas à jour pour ce lead — au pire une relance
-            # en double au prochain run, jamais un crash du process).
-            log.error(f"Échec de la mise à jour Supabase pour {company} <{email}> après relance : {e}")
+            nouveau_count = relance_count + 1
+            maj = {
+                "relance_count": nouveau_count,
+                "last_relance_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if nouveau_count >= MAX_RELANCES:
+                # Dernière relance envoyée sans obtenir de réponse : on arrête
+                # définitivement les tentatives automatiques sur ce lead plutôt
+                # que de le solliciter indéfiniment.
+                maj["status"] = "sans_reponse"
+
+            try:
+                supabase.table("leads").update(maj).eq("id", lead["id"]).execute()
+            except Exception as e:
+                # Ne doit jamais interrompre les relances suivantes : une panne
+                # réseau/Supabase ici ne remet pas en cause l'envoi déjà effectué,
+                # elle empêche seulement sa comptabilisation (relance_count /
+                # last_relance_at pas à jour pour ce lead — au pire une relance
+                # en double au prochain run, jamais un crash du process).
+                log.error(f"Échec de la mise à jour Supabase pour {company} <{email}> après relance : {e}")
 
         if i < len(prospects):
             pause = random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC)
