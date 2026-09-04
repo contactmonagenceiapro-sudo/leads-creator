@@ -347,6 +347,10 @@ def _proposer(demande: dict, candidat: dict) -> bool:
         lien = stripe.PaymentLink.create(
             line_items=[{"price": prix.id, "quantity": 1}],
             metadata={"demande_id": demande["id"], "lead_id": candidat["id"]},
+            # Lien à usage unique : sans cette restriction, un double-clic ou
+            # une réutilisation du lien envoyé à l'artisan déclenche un
+            # second paiement Stripe RÉEL pour la même demande de devis.
+            restrictions={"completed_sessions": {"limit": 1}},
         )
     except stripe.error.StripeError as e:
         log.error(f"Échec création du lien de paiement pour la demande {demande['id']} : {e}")

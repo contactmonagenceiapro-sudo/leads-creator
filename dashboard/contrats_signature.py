@@ -359,6 +359,13 @@ def creer_et_envoyer_lien_paiement(lead_id: str, contract_id: str) -> bool:
         lien = stripe.PaymentLink.create(
             line_items=[{"price": prix.id, "quantity": 1}],
             metadata={"lead_id": lead_id, "contract_id": contract_id, "type_offre": type_offre},
+            # Lien à usage unique : sans cette restriction, un double-clic,
+            # un retour navigateur + re-soumission, ou une réutilisation du
+            # lien transféré déclenche un second paiement Stripe RÉEL (ou une
+            # seconde souscription pour la formule abonnement) — invisible
+            # côté application (idempotente sur l'écriture métier, mais rien
+            # ne détecte le double paiement Stripe lui-même).
+            restrictions={"completed_sessions": {"limit": 1}},
         )
     except stripe.error.StripeError as e:
         log.error(f"Erreur création lien de paiement Stripe pour {lead_id} : {e}")
