@@ -2,10 +2,13 @@
 
 Complète [docs/organigramme.md](organigramme.md) et [architecture_agents.md](architecture_agents.md).
 Toutes les tables sont interrogées en **service_role** (clé `SUPABASE_KEY`, qui contourne
-le RLS) depuis les scripts et le dashboard — seule la table `artisans` est aussi exposée
-côté navigateur avec la clé **anon** publique (`landing/supabase-client.js`), ce qui rend
-son RLS réellement critique. Voir [architecture_integrations.md](architecture_integrations.md)
-pour le détail des deux clés.
+le RLS) depuis les scripts et le dashboard — aucune table n'est exposée côté navigateur avec
+la clé **anon** publique en usage normal (`SUPABASE_ANON_KEY` ne sert plus qu'au test de
+couverture RLS de `scripts/controle_sante_bdd.py`, voir
+[architecture_integrations.md](architecture_integrations.md)). La table `artisans` l'était
+jusqu'au 05/09/2026 (espace self-service artisans en auto-inscription, `landing/artisan-*.html` —
+reliquat de l'ancien modèle "site vitrine", jamais relié au pipeline `leads` actuel, supprimé
+avec la table restée en base mais inerte, voir `sql/init_artisans.sql`).
 
 **Statut RLS** — les 20 tables du projet ont désormais toutes été testées en conditions
 réelles avec la clé anon publique et sont **protégées** (audits du 14/08/2026 et du
@@ -26,7 +29,6 @@ flowchart TD
     subgraph B2C_DOM["Domaine B2C — artisans (Expertise Digitale)"]
         LEADS["leads 🔒\nname, email, company, industry,\nscore, status, pitch_commercial,\ncommune, siren, contacted_at..."]
         INTAKE["intake_responses 🔒\nRéponses formulaire post-contact\n(description, zone, photos, GBP)"]
-        ARTISANS["artisans 🔒 (policy dédiée)\nEspace self-service artisans\n(auth Supabase, RLS artisans_select_own)"]
     end
 
     subgraph B2B_DOM["Domaine B2B — outbound_chantiers (multi-clients)"]
@@ -76,7 +78,7 @@ flowchart TD
     LEADS --> EVENTS
     LPRO --> EVENTS
 
-    class LEADS,ARTISANS,DEVIS,CONTRACTS,REGISTRE,MEMORIES,TASKS,KPIS,INTAKE,LPRO,CAMP,REMB,AGCONF,EVENTS,BLACKLIST,MAILLOCK,MAILRUNS,UDASH,UCAMP,ERRLOG protege
+    class LEADS,DEVIS,CONTRACTS,REGISTRE,MEMORIES,TASKS,KPIS,INTAKE,LPRO,CAMP,REMB,AGCONF,EVENTS,BLACKLIST,MAILLOCK,MAILRUNS,UDASH,UCAMP,ERRLOG protege
 ```
 
 ## Qui écrit / lit quoi (principaux flux)

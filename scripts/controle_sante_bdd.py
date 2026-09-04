@@ -99,15 +99,19 @@ TABLES_SURVEILLEES_CROISSANCE = ["leads", "leads_professionnels", "demandes_devi
 
 
 def _cle_anon() -> str:
-    """Même clé anon publique que celle exposée aux visiteurs
-    (landing/supabase-client.js) : c'est justement CE rôle-là que RLS doit
-    bloquer, donc c'est avec lui qu'il faut tester — pas de secret
-    supplémentaire à gérer, cette clé est publique par design."""
-    js = (RACINE / "landing" / "supabase-client.js").read_text(encoding="utf-8")
-    m = re.search(r'SUPABASE_ANON_KEY = "([^"]+)"', js)
-    if not m:
-        raise RuntimeError("Clé anon introuvable dans landing/supabase-client.js")
-    return m.group(1)
+    """Clé anon publique du projet Supabase (rôle "anon" dans le JWT) :
+    c'est justement CE rôle-là que RLS doit bloquer, donc c'est avec lui
+    qu'il faut tester. Lue depuis SUPABASE_ANON_KEY (.env) — anciennement
+    extraite de landing/supabase-client.js (page d'auto-inscription
+    artisans, supprimée le 05/09/2026, reliquat de l'ancien modèle "site
+    vitrine" jamais relié au pipeline leads actuel, voir sql/init_artisans.sql).
+    Pas un secret à protéger : cette clé est publique par design (sans
+    risque à exposer côté navigateur), la vraie barrière de sécurité est
+    RLS lui-même — exactement ce que cette fonction sert à vérifier."""
+    cle = os.environ.get("SUPABASE_ANON_KEY", "")
+    if not cle:
+        raise RuntimeError("SUPABASE_ANON_KEY manquante dans .env")
+    return cle
 
 
 def _schema_openapi() -> dict:

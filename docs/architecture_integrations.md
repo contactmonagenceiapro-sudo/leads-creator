@@ -12,12 +12,10 @@ flowchart TD
 
     subgraph SUPA["Supabase"]
         PG["Postgres\n(toutes les tables métier)"]
-        SBAUTH["Supabase Auth\n(comptes espace Artisans)"]
     end
     DASH -->|"clé service_role\n(SUPABASE_KEY, bypass RLS)"| PG
     SCRIPTS -->|"clé service_role"| PG
-    LANDING["landing/*.html\n(site vitrine + espace Artisans)"] -->|"clé anon publique\n(landing/supabase-client.js)"| SBAUTH
-    LANDING -->|"clé anon, protégée par RLS\n(policy artisans_select_own)"| PG
+    SCRIPTS -->|"clé anon publique\n(SUPABASE_ANON_KEY, test RLS)"| PG
 
     subgraph ZOHO["Zoho Mail"]
         SMTP["SMTP\n(envoi campagnes/relances)"]
@@ -34,12 +32,15 @@ flowchart TD
     DASH -.->|"bouton manuel 'Vérifier mails'\n(même script, même verrou)"| IMAP
 
     subgraph STRIPE["Stripe"]
-        PAYLINK["Payment Links\n(lien de paiement)"]
+        PAYLINK["Payment Links\n(lien de paiement, usage unique)"]
         REFUND["Refunds API"]
+        WEBHOOK["Webhook\ncheckout.session.completed"]
     end
-    DASH -->|"contrats_signature.py::creer_et_envoyer_lien_paiement()"| PAYLINK
+    DASH -->|"contrats_signature.py::creer_et_envoyer_lien_paiement()\nlivraison_devis.py::_proposer()"| PAYLINK
     DASH -->|"data_access.py::executer_remboursement()\n(type_remboursement='stripe')"| REFUND
-    DASH -.->|"confirmation paiement 100% MANUELLE\n(pas de webhook, vérif admin dans Stripe)"| STRIPE
+    WEBHOOK -->|"vérifie la signature,\nfile d'attente"| EDGEFN["Supabase Edge Function\nstripe-webhook/"]
+    EDGEFN -->|"insert (dédoublonné)"| PG
+    CRON2["GitHub Actions\ntraiter_paiements_stripe.yml\n(*/10 * * * *)"] -->|"scripts/traiter_paiements_stripe.py\nconsomme stripe_webhook_events"| PG
 
     subgraph SIGN["Signature électronique"]
         YOUSIGN["Yousign\n(sandbox — non valable légalement\nau 10/08, conservé réactivable)"]
@@ -80,13 +81,20 @@ flowchart TD
 
 - **Deux clés Supabase bien distinctes** : `SUPABASE_KEY` (service_role, utilisée
   partout côté serveur — dashboard et scripts) contourne le RLS par conception Supabase ;
-  `SUPABASE_ANON_KEY` (exposée en clair dans `landing/supabase-client.js`, sans risque par
-  design) ne peut lire/écrire que ce que le RLS autorise explicitement — aujourd'hui
-  uniquement la table `artisans`. Voir [architecture_donnees.md](architecture_donnees.md)
+  `SUPABASE_ANON_KEY` (publique par design, sans risque à exposer) ne peut lire/écrire que
+  ce que le RLS autorise explicitement — utilisée uniquement par
+  `scripts/controle_sante_bdd.py::_cle_anon()` pour tester la couverture RLS avec le même
+  rôle qu'un visiteur non authentifié (05/09/2026 : anciennement lue depuis
+  `landing/supabase-client.js`, avant la suppression de l'espace Artisans en auto-inscription,
+  reliquat de l'ancien modèle "site vitrine" jamais relié au pipeline `leads` actuel — voir
+  `sql/init_artisans.sql`). Voir [architecture_donnees.md](architecture_donnees.md)
   pour le statut RLS de chaque table.
-- **Ancien backend FastAPI (`api/main.py`) supprimé** : les webhooks Stripe et Yousign qui
-  y étaient définis n'existent plus — toutes les confirmations (paiement, signature) sont
-  redevenues **manuelles**, vérifiées par l'admin puis actées dans le dashboard.
+- **Ancien backend FastAPI (`api/main.py`) supprimé** : le webhook Yousign qui y était défini
+  n'existe plus — la confirmation de signature reste **manuelle**, vérifiée par l'admin puis
+  actée dans le dashboard. Le webhook Stripe, lui, est de nouveau automatisé, mais via une
+  Supabase Edge Function (`supabase/functions/stripe-webhook/`) plutôt que ce backend, avec
+  `scripts/traiter_paiements_stripe.py` (cron toutes les 10 min) qui consomme la file
+  `stripe_webhook_events` qu'elle remplit.
 - **GitHub Actions est le seul déclencheur non-Streamlit** du projet : nécessaire car
   Streamlit Community Cloud n'a ni cron ni garantie de rester éveillé ; coordonné avec le
   bouton manuel du dashboard via le verrou Supabase `mail_check_lock`.

@@ -1,3 +1,16 @@
+-- ⚠️ OBSOLÈTE (05/09/2026) : les 3 pages statiques qui utilisaient ce
+-- circuit (landing/artisan-inscription.html, artisan-connexion.html,
+-- artisan-tableau-de-bord.html, ainsi que landing/supabase-client.js) ont
+-- été supprimées — reliquat de l'ancien modèle "site vitrine Done For You"
+-- (voir DOSSIER_PRESENTATION.md), jamais relié au pipeline `leads` actuel,
+-- table confirmée vide en base (0 ligne) avant suppression. La table
+-- `artisans`, la policy `artisans_select_own` et le trigger
+-- `handle_new_artisan` restent en base (DDL non appliquée automatiquement
+-- par ce projet, voir sql/init_migrations_appliquees.sql) — inertes, sans
+-- risque, à supprimer manuellement si besoin un jour (DROP TRIGGER
+-- on_auth_user_created_artisan ON auth.users; DROP FUNCTION
+-- public.handle_new_artisan(); DROP TABLE artisans;).
+--
 -- Espace Artisans — auto-inscription / connexion via Supabase Auth
 -- (landing/artisan-inscription.html, artisan-connexion.html,
 -- artisan-tableau-de-bord.html).

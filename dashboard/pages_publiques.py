@@ -113,10 +113,8 @@ AGENCY_CONTACT_EMAIL = os.getenv("AGENCY_CONTACT_EMAIL", "expertisedigitale@zoho
 # Lien relatif (même app) vers la page de politique de confidentialité
 # ci-dessous — réutilisé partout où une mention RGPD est requise sur cette
 # page (intake, signature) : lead_worker.py::MENTION_DESINSCRIPTION (email
-# en texte brut, pas de lien cliquable côté serveur) et
-# landing/artisan-inscription.html (page statique hors de cette app,
-# nécessite l'URL absolue de PUBLIC_DASHBOARD_URL en dur) ont chacun leur
-# propre construction du même lien.
+# en texte brut, pas de lien cliquable côté serveur) construit le même lien
+# séparément.
 LIEN_CONFIDENTIALITE = "?vue=confidentialite"
 LIBELLE_LIEN_CONFIDENTIALITE = "politique de confidentialité"
 
@@ -1248,9 +1246,8 @@ def afficher_confidentialite() -> None:
     """Politique de confidentialité — page publique statique, affichée
     telle quelle depuis politique-confidentialite.md (racine du dépôt,
     source unique : toute mise à jour du contenu se fait dans ce seul
-    fichier, jamais dans le code). Liée depuis l'intake, la signature, le
-    pitch email (lead_worker.py) et le portail artisan
-    (landing/artisan-inscription.html)."""
+    fichier, jamais dans le code). Liée depuis l'intake, la signature et le
+    pitch email (lead_worker.py)."""
     st.title("Politique de confidentialité")
     try:
         contenu = CHEMIN_POLITIQUE_CONFIDENTIALITE.read_text(encoding="utf-8")
