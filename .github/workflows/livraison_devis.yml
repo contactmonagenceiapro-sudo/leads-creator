@@ -59,4 +59,5 @@ jobs:
           ZOHO_PASSWORD: ${{ secrets.ZOHO_PASSWORD }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           AGENCY_NAME: ${{ secrets.AGENCY_NAME }}
+          LIVRAISON_DEVIS_SOURCE: auto
         run: python3 livraison_devis.py

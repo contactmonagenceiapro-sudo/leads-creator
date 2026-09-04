@@ -129,6 +129,52 @@ DELAI_EXPIRATION_CONFIRMATION_HEURES = int(os.getenv("DELAI_EXPIRATION_CONFIRMAT
 # pas contre l'usage normal (voir memory livraison_devis_pas_de_plafond_envoi).
 PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN = int(os.getenv("PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN", "30"))
 
+# Verrou partagé (voir sql/init_livraison_devis_lock.sql) — même doctrine
+# que mail_processor.py::_acquerir_verrou/_liberer_verrou (mail_check_lock) :
+# le cron horaire (.github/workflows/livraison_devis.yml, runner GitHub
+# Actions) et le bouton manuel du dashboard (dashboard/process_runner.py::
+# lancer_livraison_devis, subprocess Streamlit Community Cloud) lancent
+# tous les deux CE MÊME script, sur des machines différentes — aucun état
+# en mémoire/fichier local ne peut donc coordonner les deux. Sans ce verrou,
+# un chevauchement peut livrer la même demande à deux artisans différents
+# (viole la garantie "un seul candidat à la fois" documentée plus haut) ou
+# dépasser le quota d'un abonnement (_quota_disponible est un check-then-act).
+LIVRAISON_DEVIS_SOURCE = os.getenv("LIVRAISON_DEVIS_SOURCE", "manuel")
+VERROU_STALE_MINUTES = 15  # > le timeout-minutes:10 du workflow GitHub Actions
+
+
+def _acquerir_verrou() -> bool:
+    """Tentative d'acquisition atomique du verrou (UPDATE conditionnel —
+    Postgres sérialise les UPDATE concurrents au niveau de la ligne, donc un
+    seul appelant peut voir sa condition satisfaite même en cas de double
+    déclenchement simultané). True si acquis, False si déjà tenu par un run
+    en cours et non périmé."""
+    seuil_perime = (datetime.now(timezone.utc) - timedelta(minutes=VERROU_STALE_MINUTES)).isoformat()
+    try:
+        reponse = (
+            supabase.table("livraison_devis_lock")
+            .update({"locked_at": datetime.now(timezone.utc).isoformat(), "locked_by": LIVRAISON_DEVIS_SOURCE})
+            .eq("id", 1)
+            .or_(f"locked_at.is.null,locked_at.lt.{seuil_perime}")
+            .execute()
+        )
+        return bool(reponse.data)
+    except Exception as e:
+        # Panne Supabase (ou migration sql/init_livraison_devis_lock.sql pas
+        # encore appliquée) au moment d'acquérir le verrou : on préfère
+        # laisser passer le run (comportement d'avant l'introduction du
+        # verrou) plutôt que de bloquer indéfiniment la livraison pour une
+        # simple indisponibilité de la table de verrouillage.
+        log.warning(f"Verrou livraison_devis indisponible, run lancé sans coordination : {e}")
+        return True
+
+
+def _liberer_verrou() -> None:
+    try:
+        supabase.table("livraison_devis_lock").update({"locked_at": None, "locked_by": None}).eq("id", 1).execute()
+    except Exception as e:
+        log.warning(f"Impossible de libérer le verrou livraison_devis (se libérera de lui-même après {VERROU_STALE_MINUTES} min) : {e}")
+
 
 def _artisans_clients_actifs() -> list[dict]:
     """Artisans clients payants (leads.status='paye'), avec leur dernier
@@ -559,12 +605,18 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    expirer_confirmations_perimees()
-    expirer_propositions_perimees()
-    if args.expirer_seul:
+    if not _acquerir_verrou():
+        log.warning("Une livraison de devis est déjà en cours (bouton manuel ou run automatique) — run ignoré.")
         return 0
-    traiter_demandes_en_attente()
-    return 0
+    try:
+        expirer_confirmations_perimees()
+        expirer_propositions_perimees()
+        if args.expirer_seul:
+            return 0
+        traiter_demandes_en_attente()
+        return 0
+    finally:
+        _liberer_verrou()
 
 
 if __name__ == "__main__":
