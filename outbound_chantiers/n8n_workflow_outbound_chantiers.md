@@ -1,5 +1,15 @@
 # Workflow n8n — Département "Outbound & Génération de Chantiers"
 
+> ⚠️ **OBSOLÈTE (04/09/2026)** : cible l'endpoint `/agent/trigger`, supprimé
+> lors de la migration du dashboard vers Streamlit Community Cloud (voir
+> `docker-compose.yml`). Le pipeline B2B tourne aujourd'hui via
+> `scripts/lancer_pipeline_b2b.py` + GitHub Actions (`outbound_chantiers_sourcing.yml`
+> lundi 6h30, `outbound_chantiers_campagne.yml` quotidien 9h30 — voir
+> `docs/architecture_globale.md` section 2), plus n8n. Conservé ici pour
+> mémoire du raisonnement (pourquoi une orchestration séquentielle bloquante
+> plutôt que des appels HTTP chaînés) mais aucun de ces workflows n'existe
+> réellement dans n8n aujourd'hui.
+
 ## Pourquoi orchestrer depuis n8n plutôt que d'enchaîner des appels HTTP
 
 L'endpoint `/agent/trigger` de l'API (comme les actions existantes
