@@ -1,6 +1,7 @@
 import logging
 import os
 import random
+import sys
 import time
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
@@ -159,7 +160,7 @@ def send_email_internal(rapport: str, stats: dict) -> bool:
         return False
 
 
-def run_ceo_analysis() -> None:
+def run_ceo_analysis() -> bool:
     """Campagne de prospection : envoie un email personnalisé à chaque lead
     non contacté (pitch RÉGÉNÉRÉ à chaque envoi via lead_worker.py::generer_pitch(),
     jamais lead["pitch_commercial"] réutilisé tel quel), puis journalise le
@@ -179,7 +180,16 @@ def run_ceo_analysis() -> None:
     signé "La Holding") — les envoyer tels quels aurait été à la fois
     hors-sujet et non professionnel. generer_pitch() reflète toujours le
     positionnement actuel et rejette désormais lui-même tout placeholder
-    résiduel (voir RE_PLACEHOLDER_CROCHETS)."""
+    résiduel (voir RE_PLACEHOLDER_CROCHETS).
+
+    Renvoie False UNIQUEMENT si la campagne a été interrompue par un compte
+    Zoho bloqué (voir CompteZohoBloqueError plus bas) — jamais pour un
+    plafond de warmup atteint (arrêt normal, reprise prévue le lendemain,
+    même distinction que lead_worker.py::main()). Sans ce retour, le run
+    GitHub Actions se termine en "succeeded" même quand aucun e-mail n'est
+    réellement parti — incident réel déjà rencontré et corrigé pour le B2B
+    (voir outbound_chantiers/outbound_pro_btp.py::lancer_campagne_initiale,
+    29/08/2026), trouvé par audit le 05/09/2026 comme non corrigé ici."""
     start_time = time.time()
     log.info("Démarrage de la campagne de prospection")
     from lead_worker import generer_pitch  # import différé, voir docstring ci-dessus
@@ -188,10 +198,11 @@ def run_ceo_analysis() -> None:
 
     if not leads:
         log.warning("Aucun nouveau lead à contacter.")
-        return
+        return True
 
     emails_sent_count = 0
     total_processed = len(leads)
+    interrompu_bloque_compte = False
 
     # Budget quotidien PARTAGÉ avec le pipeline B2B (même boîte Zoho, même
     # réputation à protéger), plafonné pour laisser une réserve garantie au
@@ -259,6 +270,7 @@ def run_ceo_analysis() -> None:
             # tenter les leads restants, ils échoueraient tous de la même
             # façon tant que le blocage n'est pas levé côté Zoho.
             log.error(f"Campagne interrompue après {emails_sent_count}/{total_processed} envois (compte Zoho bloqué).")
+            interrompu_bloque_compte = True
             break
         except Exception as e:
             log.error(f"Erreur lors du traitement de {company} : {e}")
@@ -281,7 +293,8 @@ def run_ceo_analysis() -> None:
         f"{total_processed} leads en {duration} minutes."
     )
     save_report_to_supabase(rapport, stats)
+    return not interrompu_bloque_compte
 
 
 if __name__ == "__main__":
-    run_ceo_analysis()
+    sys.exit(0 if run_ceo_analysis() else 1)

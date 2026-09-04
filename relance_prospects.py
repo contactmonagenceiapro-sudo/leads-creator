@@ -31,6 +31,7 @@ import logging
 import os
 import random
 import re
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -147,11 +148,20 @@ def recuperer_prospects_a_relancer() -> list[dict]:
     return resultats
 
 
-def relancer_prospects() -> None:
+def relancer_prospects() -> bool:
+    """Renvoie False UNIQUEMENT si les relances ont été interrompues par un
+    compte Zoho bloqué (voir CompteZohoBloqueError plus bas) — jamais pour
+    un plafond de warmup atteint (arrêt normal, reprise prévue le
+    lendemain). Sans ce retour, le run GitHub Actions se termine en
+    "succeeded" même quand aucune relance n'est réellement partie —
+    incident réel déjà rencontré et corrigé côté B2B (voir
+    outbound_chantiers/outbound_pro_btp.py, 29/08/2026), trouvé par audit le
+    05/09/2026 comme non corrigé ici (même défaut que ceo_agent.py, corrigé
+    dans le même audit)."""
     prospects = recuperer_prospects_a_relancer()
     if not prospects:
         log.info("Aucun prospect à relancer aujourd'hui.")
-        return
+        return True
 
     log.info(f"{len(prospects)} prospect(s) à relancer.")
 
@@ -161,6 +171,7 @@ def relancer_prospects() -> None:
     budget_restant = verifier_budget_quotidien("b2c")["budget_restant"]
     log.info(f"Budget d'envoi quotidien restant (partagé avec le B2B, réserve B2B déduite) : {budget_restant}")
 
+    interrompu_bloque_compte = False
     for i, lead in enumerate(prospects, 1):
         company = lead.get("company") or "votre entreprise"
         email = lead.get("email")
@@ -195,6 +206,7 @@ def relancer_prospects() -> None:
             # tenter les relances restantes, elles échoueraient toutes de la
             # même façon tant que le blocage n'est pas levé côté Zoho.
             log.error(f"Relances interrompues après {i-1}/{len(prospects)} (compte Zoho bloqué).")
+            interrompu_bloque_compte = True
             break
 
         if not succes:
@@ -237,6 +249,8 @@ def relancer_prospects() -> None:
             pause = random.uniform(PAUSE_MIN_SEC, PAUSE_MAX_SEC)
             time.sleep(pause)
 
+    return not interrompu_bloque_compte
+
 
 if __name__ == "__main__":
-    relancer_prospects()
+    sys.exit(0 if relancer_prospects() else 1)

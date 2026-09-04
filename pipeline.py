@@ -140,8 +140,16 @@ def etape_rapport_final(rapport: RapportPipeline, envoyer_emails: bool) -> bool:
     try:
         import ceo_agent
 
-        ceo_agent.run_ceo_analysis()
+        # run_ceo_analysis() renvoie False UNIQUEMENT si le compte Zoho est
+        # bloqué (voir sa docstring) — sans ce contrôle, ce pipeline
+        # rapporterait "succès" même quand aucun e-mail n'est réellement
+        # parti (même incident déjà rencontré/corrigé côté B2B, trouvé ici
+        # par audit le 05/09/2026).
+        campagne_ok = ceo_agent.run_ceo_analysis()
         duree = time.time() - debut
+        if not campagne_ok:
+            rapport.ajouter("3. Rapport + campagne d'emails", False, duree, "compte Zoho bloqué — campagne interrompue")
+            return False
         rapport.ajouter("3. Rapport + campagne d'emails", True, duree, "campagne exécutée (voir logs CEO ci-dessus)")
         return True
     except Exception as erreur:
