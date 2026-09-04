@@ -100,7 +100,7 @@ initialiser_secrets()
 _vue_publique = st.query_params.get("vue")
 _VUES_PUBLIQUES = (
     "presentation", "intake", "devis", "demande_devis", "confirmer_demande", "signature", "confidentialite",
-    "accueil", "comment_ca_marche", "tarifs", "a_propos",
+    "accueil", "comment_ca_marche", "tarifs", "a_propos", "devenir_client",
 )
 if _vue_publique in _VUES_PUBLIQUES:
     from pages_publiques import (
@@ -110,6 +110,7 @@ if _vue_publique in _VUES_PUBLIQUES:
         afficher_confidentialite,
         afficher_confirmation_demande,
         afficher_demande_devis,
+        afficher_devenir_client,
         afficher_devis,
         afficher_intake,
         afficher_presentation,
@@ -126,7 +127,7 @@ if _vue_publique in _VUES_PUBLIQUES:
     # 28/08/2026) — ces vues gardent le thème sombre natif par défaut.
     _VUES_VITRINE_CLAIRE = (
         "accueil", "comment_ca_marche", "tarifs", "demande_devis", "a_propos",
-        "devis", "confirmer_demande", "confidentialite",
+        "devis", "confirmer_demande", "confidentialite", "devenir_client",
     )
     if _vue_publique in _VUES_VITRINE_CLAIRE:
         from theme_vitrine import injecter_theme_vitrine
@@ -152,6 +153,8 @@ if _vue_publique in _VUES_PUBLIQUES:
         afficher_tarifs()
     elif _vue_publique == "a_propos":
         afficher_a_propos()
+    elif _vue_publique == "devenir_client":
+        afficher_devenir_client()
     else:
         afficher_devis(st.query_params.get("slug"))
     st.stop()

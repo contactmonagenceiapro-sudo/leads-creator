@@ -62,6 +62,7 @@ import streamlit as st
 
 from contrats_signature import envoyer_contrat_signature, generer_pdf_devis, libelle_prestation, normaliser_type_offre
 from alertes import alerter_discord
+from email_validator import email_blackliste_ou_a_risque
 from generation_contrats import (
     FORMULES_ABONNEMENT,
     GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR,
@@ -128,6 +129,14 @@ CHEMIN_POLITIQUE_CONFIDENTIALITE = Path(__file__).resolve().parent.parent / "pol
 # gardé disponible pour plus tard (budget/volume suffisant, ou contrat à enjeu plus
 # important) — voir diagnostic + plan validés le 10/08.
 SIGNATURE_PROVIDER = os.getenv("SIGNATURE_PROVIDER_PAR_DEFAUT", "interne")
+
+# Valeur de leads.source posée par afficher_devenir_client() ci-dessous —
+# seul second canal d'acquisition réel à ce jour, à côté de "scraper_batiment"
+# (voir lead_worker.py::inserer_lead). Sert de base au Module 6 (pilotage,
+# canal d'acquisition, voir docs/architecture_globale.md) : jusqu'ici
+# leads.source ne prenait jamais qu'une seule valeur, donc aucun KPI de
+# répartition par canal n'avait de sens à construire.
+SOURCE_AUTO_INSCRIPTION = "auto_inscription"
 
 # Tout statut atteint APRÈS une soumission d'intake réussie (voir
 # envoyer_contrat_signature / marquer_contrat_signe / marquer_contrat_paye
@@ -411,7 +420,9 @@ def afficher_accueil() -> None:
         st.markdown("**Transparent**")
         st.caption("grille tarifaire claire, remplacement garanti si un contact s'avère invalide.")
 
-    col_cta_tarifs, col_cta_contact = st.columns(2)
+    col_cta_devenir_client, col_cta_tarifs, col_cta_contact = st.columns(3)
+    with col_cta_devenir_client:
+        st.link_button("Devenir client", "?vue=devenir_client", type="primary", use_container_width=True)
     with col_cta_tarifs:
         st.link_button("Voir nos tarifs", "?vue=tarifs", use_container_width=True)
     with col_cta_contact:
@@ -576,6 +587,92 @@ def afficher_a_propos() -> None:
     st.caption("Statut légal : [SIRET à venir]")
 
     _footer_publique()
+
+
+def afficher_devenir_client() -> None:
+    """Auto-inscription publique (?vue=devenir_client) — second point d'entrée
+    réel pour un artisan, à côté du circuit de prospection à froid
+    (scraper_batiment.py -> email -> lien avec lead_id). Jusqu'ici, un
+    visiteur arrivant sur le site vitrine sans avoir été scrapé/contacté ne
+    pouvait que nous écrire par mailto (voir afficher_accueil) — aucune
+    inscription en libre-service n'existait.
+
+    Crée directement une ligne `leads` (voir SOURCE_AUTO_INSCRIPTION
+    ci-dessus) puis enchaîne SANS rupture sur le même formulaire de
+    qualification que les leads scrapés (afficher_intake, via
+    st.query_params) : aucune duplication de la logique de devis/signature,
+    seule la création initiale de la ligne diffère.
+
+    `notes` ci-dessous NE contient volontairement AUCUN des motifs de
+    ceo_agent.py::SOURCES_EMAIL_VERIFIEES ("email_verifie_site",
+    "domaine_verifie_sans_email") : un lead auto-inscrit ne doit jamais être
+    capté par get_leads_from_supabase() et recevoir une campagne de
+    prospection à froid — il nous a déjà trouvés de lui-même."""
+    _navigation_publique("devenir_client")
+
+    st.title("Devenez client")
+    st.write(
+        "Vous êtes artisan ou professionnel du bâtiment et souhaitez recevoir des "
+        "demandes de devis qualifiées dans votre zone d'intervention ? Laissez-nous vos "
+        "coordonnées pour démarrer votre inscription."
+    )
+    bandeau_confiance(["48h max — réponse garantie", "Vérifié — contact qualifié", "7 jours — remplacement si invalide"])
+
+    with st.form("form_devenir_client_public"):
+        nom_entreprise = st.text_input("Nom de votre entreprise", max_chars=200)
+        email = st.text_input("E-mail professionnel", max_chars=200)
+        telephone = st.text_input("Téléphone (optionnel)", placeholder="0X XX XX XX XX", max_chars=50)
+        st.caption(
+            "Vos informations sont utilisées uniquement pour finaliser votre inscription. "
+            f"Voir notre [{LIBELLE_LIEN_CONFIDENTIALITE}]({LIEN_CONFIDENTIALITE})."
+        )
+        envoyer = st.form_submit_button("Continuer mon inscription", type="primary", use_container_width=True)
+
+    _footer_publique()
+
+    if not envoyer:
+        return
+    if not nom_entreprise.strip():
+        st.warning("Merci de renseigner le nom de votre entreprise.")
+        return
+    a_ecarter, raison = email_blackliste_ou_a_risque(email)
+    if a_ecarter:
+        st.warning(
+            f"Cette adresse e-mail ne peut pas être utilisée ({raison}). "
+            f"Vérifiez-la, ou contactez-nous directement à {AGENCY_CONTACT_EMAIL}."
+        )
+        return
+
+    payload = {
+        "company": nom_entreprise.strip(),
+        "email": email.strip().lower(),
+        "telephone": telephone.strip() or None,
+        "source": SOURCE_AUTO_INSCRIPTION,
+        "notes": "Auto-inscription publique (?vue=devenir_client)",
+    }
+    try:
+        reponse = supabase.table("leads").insert(payload).execute()
+    except Exception as e:
+        # Contrainte unique sur `company` ou `email` (idx_leads_company_unique/
+        # idx_leads_email_unique, voir sql/init.sql) — même détection que
+        # data_access.py::_erreur_upsert_campagne (le client supabase-py
+        # n'expose pas le code Postgres autrement que dans le message
+        # d'erreur brut).
+        message = str(e)
+        if "23505" in message or "duplicate" in message.lower() or "unique" in message.lower():
+            st.warning(
+                "Une entreprise avec ce nom ou cet e-mail est déjà enregistrée chez nous. "
+                f"Contactez-nous directement à {AGENCY_CONTACT_EMAIL} si besoin."
+            )
+        else:
+            st.error("Erreur lors de l'enregistrement, réessayez plus tard.")
+        return
+
+    lead_id = reponse.data[0]["id"]
+    alerter_discord(f"🆕 Auto-inscription artisan : {nom_entreprise}")
+    st.query_params["vue"] = "intake"
+    st.query_params["lead_id"] = lead_id
+    st.rerun()
 
 
 def afficher_presentation(lead_id: str | None) -> None:
