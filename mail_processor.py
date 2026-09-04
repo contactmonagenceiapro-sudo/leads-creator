@@ -11,6 +11,7 @@ import requests
 from dotenv import load_dotenv
 from supabase import create_client
 
+from alertes import CompteZohoBloqueError
 from email_blacklist import blacklister_email
 
 load_dotenv()
@@ -863,6 +864,7 @@ def _scanner_boite() -> tuple[dict, int, str | None]:
     # dans le log final ci-dessous.
     compteurs = {
         "bounces": 0, "bounces_hard": 0, "absences": 0, "negatifs": 0, "positifs": 0, "sans_mot_cle": 0,
+        "erreurs": 0,
     }
 
     try:
@@ -880,95 +882,128 @@ def _scanner_boite() -> tuple[dict, int, str | None]:
             return compteurs, 0, None
 
         for num in email_ids:
-            _, msg_data = mail.fetch(num, "(RFC822)")
-            msg = email.message_from_bytes(msg_data[0][1])
-            sender_brut = msg.get("From") or ""
-            sender = extraire_email(sender_brut)
-            subject = msg.get("Subject") or ""
+            # Isole CHAQUE message : sans ce try/except, une exception levée
+            # en traitant UN message (ex. CompteZohoBloqueError depuis
+            # envoyer_suivi_positif, ou toute autre erreur imprévue) sort du
+            # for et abandonne tous les messages suivants du lot — qui
+            # peuvent contenir un "STOP" RGPD ou un hard bounce à
+            # blacklister. Comme un message ainsi abandonné en cours de
+            # traitement reste UNSEEN, il serait en plus repris EN PREMIER
+            # au run suivant : un message qui déclenche systématiquement la
+            # même erreur (ex. compte Zoho bloqué) rebloquerait alors le
+            # scan à chaque run tant que le problème sous-jacent persiste
+            # (poison message) — voir même principe déjà appliqué au garde
+            # get_payload(decode=True) juste en dessous.
+            try:
+                _, msg_data = mail.fetch(num, "(RFC822)")
+                msg = email.message_from_bytes(msg_data[0][1])
+                sender_brut = msg.get("From") or ""
+                sender = extraire_email(sender_brut)
+                subject = msg.get("Subject") or ""
 
-            # Vérifié EN PREMIER, avant toute détection de mot-clé : un
-            # bounce n'est jamais une vraie réponse humaine, et son
-            # expéditeur (mailer-daemon) n'est de toute façon jamais
-            # l'adresse du lead concerné (voir traiter_bounce, qui extrait
-            # la vraie adresse depuis le contenu du rapport DSN).
-            if est_message_bounce(sender_brut, subject):
-                statut_bounce = traiter_bounce(sender_brut, subject, msg)
-                # Un bounce est toujours 100% automatique (jamais une
-                # réponse humaine à laisser en attente) : on le marque lu
-                # dans tous les cas, et on le déplace en plus hors de
-                # l'inbox si ZOHO_DOSSIER_BOUNCES_TRAITES est configuré —
-                # objectif : ne plus le voir s'accumuler par centaines.
-                marquer_message_traite(mail, num, ZOHO_DOSSIER_BOUNCES_TRAITES)
-                log.info(f"📭 Bounce ({statut_bounce}) marqué comme lu.")
-                compteurs["bounces"] += 1
-                if statut_bounce == "hard_bounce":
-                    compteurs["bounces_hard"] += 1
-                continue
+                # Vérifié EN PREMIER, avant toute détection de mot-clé : un
+                # bounce n'est jamais une vraie réponse humaine, et son
+                # expéditeur (mailer-daemon) n'est de toute façon jamais
+                # l'adresse du lead concerné (voir traiter_bounce, qui extrait
+                # la vraie adresse depuis le contenu du rapport DSN).
+                if est_message_bounce(sender_brut, subject):
+                    statut_bounce = traiter_bounce(sender_brut, subject, msg)
+                    # Un bounce est toujours 100% automatique (jamais une
+                    # réponse humaine à laisser en attente) : on le marque lu
+                    # dans tous les cas, et on le déplace en plus hors de
+                    # l'inbox si ZOHO_DOSSIER_BOUNCES_TRAITES est configuré —
+                    # objectif : ne plus le voir s'accumuler par centaines.
+                    marquer_message_traite(mail, num, ZOHO_DOSSIER_BOUNCES_TRAITES)
+                    log.info(f"📭 Bounce ({statut_bounce}) marqué comme lu.")
+                    compteurs["bounces"] += 1
+                    if statut_bounce == "hard_bounce":
+                        compteurs["bounces_hard"] += 1
+                    continue
 
-            # get_payload(decode=True) peut renvoyer None (payload vide ou
-            # malformé) : sans ce garde, un message ainsi formé lève
-            # AttributeError sur .decode(), non catché ici, ce qui arrête le
-            # scan pour tous les messages suivants — et comme il reste
-            # UNSEEN, il rebloquerait de la même façon à chaque run suivant
-            # (poison message). Voir le même garde ligne ~354 plus haut.
-            body = ""
-            if msg.is_multipart():
-                for part in msg.walk():
-                    if part.get_content_type() == "text/plain":
-                        brut = part.get_payload(decode=True)
-                        if brut:
-                            body = brut.decode(errors="ignore")
-                        break
-            else:
-                brut = msg.get_payload(decode=True)
-                if brut:
-                    body = brut.decode(errors="ignore")
-
-            texte_normalise = normaliser(body)
-
-            # Vérifié avant les mots-clés positifs/négatifs (comme un bounce,
-            # cf. plus haut) : une notification d'absence est 100%
-            # automatique, jamais une vraie réponse humaine.
-            if est_reponse_automatique_absence(msg, subject, texte_normalise):
-                contact_alternatif = extraire_contact_alternatif(body, sender, ZOHO_USER)
-                suffixe = f" — contact alternatif trouvé : {contact_alternatif}" if contact_alternatif else ""
-                log.info(f"🌴 Réponse automatique d'absence détectée de {sender}{suffixe}")
-                update_lead_absence(sender, contact_alternatif)
-                update_lead_professionnel_absence(sender, contact_alternatif)
-                compteurs["absences"] += 1
-                continue
-
-            # Passé les gardes bounce/absence ci-dessus, on sait déjà qu'il
-            # s'agit d'une vraie réponse humaine (positive, négative, ou sans
-            # mot-clé reconnu) — journalisée une seule fois ici plutôt que
-            # dans chacune des 3 branches ci-dessous (voir journaliser_reponse,
-            # sql/init_email_reponses.sql).
-            journaliser_reponse(sender)
-
-            mot_negatif = contient_un_mot(texte_normalise, MOTS_NEGATIFS)
-            if mot_negatif:
-                log.info(f"🛑 Refus/désinscription détecté de {sender} (mot-clé : {mot_negatif!r})")
-                update_lead_status(sender, "decline")
-                update_lead_professionnel_status(sender, "decline")
-                compteurs["negatifs"] += 1
-                continue
-
-            mot_positif = contient_un_mot(texte_normalise, MOTS_POSITIFS)
-            if mot_positif:
-                log.info(f"🎯 Réponse positive détectée de {sender} (mot-clé : {mot_positif!r})")
-                update_lead_status(sender, "interested")
-                update_lead_professionnel_status(sender, "interested")
-                send_discord_alert(f"Le prospect {sender} est intéressé par vos services !")
-                compteurs["positifs"] += 1
-
-                lead = recuperer_lead_par_email(sender)
-                if lead:
-                    envoyer_suivi_positif(lead)
+                # get_payload(decode=True) peut renvoyer None (payload vide ou
+                # malformé) : sans ce garde, un message ainsi formé lève
+                # AttributeError sur .decode() — désormais catché par le
+                # try/except ci-dessus de toute façon, gardé explicite pour
+                # rester un simple "body vide" plutôt qu'une erreur journalisée
+                # sans raison.
+                body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        if part.get_content_type() == "text/plain":
+                            brut = part.get_payload(decode=True)
+                            if brut:
+                                body = brut.decode(errors="ignore")
+                            break
                 else:
-                    log.warning(f"Lead introuvable en base pour {sender}, suivi automatique non envoyé")
-            else:
-                log.info(f"Message de {sender} reçu (aucun mot-clé détecté).")
-                compteurs["sans_mot_cle"] += 1
+                    brut = msg.get_payload(decode=True)
+                    if brut:
+                        body = brut.decode(errors="ignore")
+
+                texte_normalise = normaliser(body)
+
+                # Vérifié avant les mots-clés positifs/négatifs (comme un bounce,
+                # cf. plus haut) : une notification d'absence est 100%
+                # automatique, jamais une vraie réponse humaine.
+                if est_reponse_automatique_absence(msg, subject, texte_normalise):
+                    contact_alternatif = extraire_contact_alternatif(body, sender, ZOHO_USER)
+                    suffixe = f" — contact alternatif trouvé : {contact_alternatif}" if contact_alternatif else ""
+                    log.info(f"🌴 Réponse automatique d'absence détectée de {sender}{suffixe}")
+                    update_lead_absence(sender, contact_alternatif)
+                    update_lead_professionnel_absence(sender, contact_alternatif)
+                    compteurs["absences"] += 1
+                    continue
+
+                # Passé les gardes bounce/absence ci-dessus, on sait déjà qu'il
+                # s'agit d'une vraie réponse humaine (positive, négative, ou sans
+                # mot-clé reconnu) — journalisée une seule fois ici plutôt que
+                # dans chacune des 3 branches ci-dessous (voir journaliser_reponse,
+                # sql/init_email_reponses.sql).
+                journaliser_reponse(sender)
+
+                mot_negatif = contient_un_mot(texte_normalise, MOTS_NEGATIFS)
+                if mot_negatif:
+                    log.info(f"🛑 Refus/désinscription détecté de {sender} (mot-clé : {mot_negatif!r})")
+                    update_lead_status(sender, "decline")
+                    update_lead_professionnel_status(sender, "decline")
+                    compteurs["negatifs"] += 1
+                    continue
+
+                mot_positif = contient_un_mot(texte_normalise, MOTS_POSITIFS)
+                if mot_positif:
+                    log.info(f"🎯 Réponse positive détectée de {sender} (mot-clé : {mot_positif!r})")
+                    update_lead_status(sender, "interested")
+                    update_lead_professionnel_status(sender, "interested")
+                    send_discord_alert(f"Le prospect {sender} est intéressé par vos services !")
+                    compteurs["positifs"] += 1
+
+                    lead = recuperer_lead_par_email(sender)
+                    if lead:
+                        try:
+                            envoyer_suivi_positif(lead)
+                        except CompteZohoBloqueError:
+                            # Déjà loggé + alerté dans send_email_prospect.
+                            # Contrairement à ceo_agent.py/lead_worker.py/
+                            # relance_prospects.py/livraison_devis.py (où
+                            # CHAQUE itération tente un envoi, donc arrêter
+                            # la boucle entière a du sens), ici seule une
+                            # réponse positive déclenche un envoi — les
+                            # messages suivants du lot (bounces, STOP RGPD...)
+                            # n'en ont pas besoin et doivent continuer à être
+                            # traités normalement, voir docstring du try
+                            # englobant.
+                            log.warning(
+                                f"Compte Zoho bloqué : suivi automatique non envoyé à {sender} "
+                                "— scan des messages suivants poursuivi (pas de nouvel envoi tenté ce run)."
+                            )
+                    else:
+                        log.warning(f"Lead introuvable en base pour {sender}, suivi automatique non envoyé")
+                else:
+                    log.info(f"Message de {sender} reçu (aucun mot-clé détecté).")
+                    compteurs["sans_mot_cle"] += 1
+            except Exception as e:
+                log.error(f"Erreur en traitant le message {num!r}, message ignoré (scan des suivants poursuivi) : {e}")
+                compteurs["erreurs"] += 1
+                continue
 
         # EXPUNGE unique après la boucle (et non message par message) :
         # supprimer un message en cours d'itération décalerait les numéros
@@ -981,7 +1016,7 @@ def _scanner_boite() -> tuple[dict, int, str | None]:
             f"=== Scan terminé : {len(email_ids)} message(s) — "
             f"{compteurs['positifs']} positif(s), {compteurs['negatifs']} négatif(s)/désinscription(s), "
             f"{compteurs['absences']} absence(s), {compteurs['bounces']} bounce(s), "
-            f"{compteurs['sans_mot_cle']} sans mot-clé ==="
+            f"{compteurs['sans_mot_cle']} sans mot-clé, {compteurs['erreurs']} erreur(s) ==="
         )
         return compteurs, len(email_ids), None
     except Exception as e:
