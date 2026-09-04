@@ -22,8 +22,8 @@ leads.json
 leads.json.bak
 exports/
 dashboard/data/
-outbound_chantiers/acteurs_pro_bruts.json
-outbound_chantiers/acteurs_pro_enrichis.json
+outbound_chantiers/acteurs_pro_bruts*.json
+outbound_chantiers/acteurs_pro_enrichis*.json
 
 # Documents d'exemple générés pour démo (tests à blanc du tunnel de vente,
 # jamais du code source ni des données réelles)

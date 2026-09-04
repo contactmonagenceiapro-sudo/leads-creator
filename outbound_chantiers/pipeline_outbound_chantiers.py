@@ -58,23 +58,17 @@ def main() -> int:
         from outbound_chantiers.sourcing_acteurs_pro import sourcer_acteurs_pro
         from outbound_chantiers.enrichir_acteurs_pro import filtrer_et_enrichir
         from outbound_chantiers.scorer_et_publier import scorer_et_publier
-        import json
-        from pathlib import Path
 
-        def etape_sourcing():
-            acteurs = sourcer_acteurs_pro()
-            (Path(__file__).parent / "acteurs_pro_bruts.json").write_text(
-                json.dumps(acteurs, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-
-        def etape_enrichissement():
-            resultats = filtrer_et_enrichir()
-            (Path(__file__).parent / "acteurs_pro_enrichis.json").write_text(
-                json.dumps(resultats, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-
-        etapes_ok.append(executer_etape("Sourcing des acteurs professionnels", etape_sourcing))
-        etapes_ok.append(executer_etape("Filtrage + enrichissement", etape_enrichissement))
+        # sourcer_acteurs_pro()/filtrer_et_enrichir() écrivent déjà elles-mêmes
+        # leur résultat sur disque (FICHIER_SORTIE, scopé par CLIENT_FINAL
+        # depuis le fix du 04/09/2026) : les anciens wrappers ré-écrivaient en
+        # plus sur un chemin fixe non scopé par client, jamais relu par
+        # personne (filtrer_et_enrichir()/scorer_et_publier() lisent toujours
+        # depuis FICHIER_ENTREE, pas depuis la valeur de retour) — code mort
+        # qui, en plus, aurait pu faire fuiter des acteurs d'une campagne vers
+        # une autre en cas de runs concurrents. Retiré plutôt que corrigé.
+        etapes_ok.append(executer_etape("Sourcing des acteurs professionnels", sourcer_acteurs_pro))
+        etapes_ok.append(executer_etape("Filtrage + enrichissement", filtrer_et_enrichir))
         etapes_ok.append(executer_etape("Scoring + publication en base", scorer_et_publier))
 
     if args.avec_envoi or args.envoi_seul:

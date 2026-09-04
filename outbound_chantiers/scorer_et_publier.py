@@ -50,7 +50,10 @@ log = logging.getLogger(__name__)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
-FICHIER_ENTREE = Path(__file__).parent / "acteurs_pro_enrichis.json"
+# Suffixé par CLIENT_FINAL — voir sourcing_acteurs_pro.py::FICHIER_SORTIE
+# pour le raisonnement complet (fuite de données entre campagnes concurrentes
+# sinon, trouvé par audit le 04/09/2026).
+FICHIER_ENTREE = Path(__file__).parent / f"acteurs_pro_enrichis_{CLIENT_FINAL}.json"
 
 # Code INSEE de tranche d'effectif salarié (établissement) -> score 0-1,
 # croissant puis plafonné : au-delà d'une cinquantaine de salariés, "plus
@@ -239,7 +242,7 @@ def scorer_et_publier() -> None:
     log.info(f"Publication terminée : {publies} acteurs publiés, {ignores} ignorés (aucun contact exploitable)")
     if not acteurs:
         log.warning(
-            "Aucun acteur en entrée (acteurs_pro_enrichis.json vide) — le sourcing (module 1) "
+            f"Aucun acteur en entrée ({FICHIER_ENTREE.name} vide) — le sourcing (module 1) "
             "n'a probablement rien trouvé. Vérifier les logs de sourcing_acteurs_pro.py."
         )
     elif publies == 0:

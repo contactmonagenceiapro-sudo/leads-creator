@@ -51,14 +51,17 @@ from bs4 import BeautifulSoup
 
 from email_enricher import MOTIF_EMAIL_INVALIDE
 from email_validator import email_exploitable
-from outbound_chantiers.config import COMMUNES_CIBLES
+from outbound_chantiers.config import CLIENT_FINAL, COMMUNES_CIBLES
 from phone_enricher import enrichir_telephone_via_google_places
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [ENRICHISSEMENT-PRO] %(message)s")
 log = logging.getLogger(__name__)
 
-FICHIER_ENTREE = Path(__file__).parent / "acteurs_pro_bruts.json"
-FICHIER_SORTIE = Path(__file__).parent / "acteurs_pro_enrichis.json"
+# Suffixés par CLIENT_FINAL — voir sourcing_acteurs_pro.py::FICHIER_SORTIE
+# pour le raisonnement complet (fuite de données entre campagnes concurrentes
+# sinon, trouvé par audit le 04/09/2026).
+FICHIER_ENTREE = Path(__file__).parent / f"acteurs_pro_bruts_{CLIENT_FINAL}.json"
+FICHIER_SORTIE = Path(__file__).parent / f"acteurs_pro_enrichis_{CLIENT_FINAL}.json"
 
 TIMEOUT_SECONDES = 5
 PAUSE_ENTRE_REQUETES_SECONDES = 1.0

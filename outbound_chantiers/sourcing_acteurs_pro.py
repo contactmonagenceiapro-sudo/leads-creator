@@ -34,7 +34,15 @@ log = logging.getLogger(__name__)
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
-FICHIER_SORTIE = Path(__file__).parent / "acteurs_pro_bruts.json"
+# Suffixé par CLIENT_FINAL (même principe que dashboard/process_runner.py::
+# _fichier_log pour les logs) — sans ça, deux campagnes lancées en
+# chevauchement depuis le bouton dashboard (subprocess.Popen non bloquant,
+# voir dashboard/process_runner.py::lancer) écriraient/liraient le MÊME
+# fichier : l'enrichissement du Client A pourrait alors publier en base les
+# acteurs sourcés pour le Client B (fuite entre clients — trouvé par audit
+# le 04/09/2026). scripts/lancer_pipeline_b2b.py (cron) reste séquentiel
+# bloquant et n'était pas concerné, mais le bouton manuel du dashboard l'était.
+FICHIER_SORTIE = Path(__file__).parent / f"acteurs_pro_bruts_{CLIENT_FINAL}.json"
 
 # Backoff/rate-limiting : l'API est publique et gratuite mais reste soumise
 # à une limite de requêtes par minute (documentée par api.gouv.fr) — on reste
