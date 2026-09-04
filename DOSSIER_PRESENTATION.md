@@ -1,200 +1,214 @@
 # Expertise Digitale — Dossier de présentation
 
-*Document généré à partir d'une analyse complète du code source, du schéma Supabase, des scripts d'automatisation et des fichiers de configuration du projet `ai-company`. Toute affirmation ci-dessous est vérifiable dans le dépôt ; les points non tranchés (statut légal, tarifs définitifs) sont signalés comme tels plutôt qu'inventés.*
+*Document généré à partir d'une analyse complète du code source, du schéma Supabase, des scripts d'automatisation et des fichiers de configuration du dépôt `leads-creator`. Toute affirmation ci-dessous est vérifiable dans le dépôt ; les points non tranchés (statut légal, tarifs définitifs) sont signalés comme tels plutôt qu'inventés. Remplace la version du 26/07/2026, dont le modèle économique et l'architecture technique décrits ne correspondent plus au système actuel.*
 
 ---
 
 ## 1. Résumé exécutif
 
-**Expertise Digitale** est une structure d'automatisation commerciale ciblant les artisans et TPE du secteur du Bâtiment (BTP) dépourvus de présence digitale, principalement sur la Métropole de Lyon. Le système :
+**Expertise Digitale** exploite deux moteurs commerciaux distincts, tous deux ciblant le secteur du Bâtiment (BTP) :
 
-1. **Identifie** ces entreprises via des données publiques officielles (SIRENE),
-2. **Vérifie** leur absence de site web et l'existence réelle d'un contact joignable,
-3. **Sollicite** ces prospects par e-mail avec un pitch personnalisé généré par IA,
-4. **Relance** automatiquement les sans-réponse selon un calendrier défini,
-5. **Traite** les réponses positives (formulaire d'intake, devis, signature électronique, paiement),
-6. **Livre** une prestation "Done For You" : refonte de site vitrine + SEO local + captation de devis.
+1. **Marketplace de leads B2C** : des particuliers déposent une demande de devis (formulaire public) ; le système la rapproche automatiquement d'un artisan client (abonné ou payant à l'unité) dont le corps de métier et la zone d'intervention correspondent, en round-robin. L'artisan reçoit le contact du particulier dès livraison (abonnement) ou après paiement d'un lien Stripe à usage unique (à l'unité).
+2. **Plateforme outbound B2B multi-clients** (`outbound_chantiers/`) : pour le compte de clients (agences, entreprises du BTP), le système source des acteurs professionnels (architectes, promoteurs, maîtres d'œuvre) actifs sur des chantiers récents (signal d'activité via données d'urbanisme publiques), les enrichit, les scoreet les contacte par campagne — chaque client a sa propre configuration (secteur, communes ciblées, types d'acteurs).
 
-Un second flux de revenu, indépendant du premier, consiste en la **revente de fichiers de prospection B2B qualifiés** (export CSV avec/sans email vérifié).
+Les deux moteurs partagent la même infrastructure d'envoi (boîte Zoho, budget de warmup) et le même arrière-plan technique (Supabase, dashboard Streamlit, automatisations GitHub Actions).
 
-L'ensemble du pipeline — scraping, enrichissement, rédaction commerciale, envoi, relance, veille des réponses, facturation — tourne **de façon autonome et continue**, orchestré par un unique planificateur de tâches intégré à l'API.
+> **Changement de modèle depuis la version précédente de ce dossier (26/07/2026)** : l'offre "site vitrine Done For You à 990 € TTC" a été abandonnée. Le système ne vend plus de site vitrine ni de fichiers CSV en vrac — il vend des leads qualifiés, livrés en continu, sur abonnement ou à l'unité.
 
 ---
 
 ## 2. Modèle économique
 
-### 2.1 Deux offres identifiées dans le code
+### 2.1 Offre B2C — vente de demandes de devis aux artisans
 
-| Offre | Où c'est implémenté | Statut |
+| Formule | Détail | Où c'est implémenté |
 |---|---|---|
-| **Génération de leads qualifiés** (paiement au lead ou abonnement) — c'est l'angle utilisé dans *tous* les e-mails de prospection sortants (`lead_worker.py`, pitch : "apport de clients qualifiés") | Pitch IA + envoi automatique | ✅ Actif, en cours de discussion commerciale réelle (ex. échange avec SBG Travaux) |
-| **Site vitrine "Done For You" clé en main**, 990 € TTC, avec devis PDF, signature électronique (Yousign) et paiement (Stripe) | `generer_pdf_devis`, `/webhooks/yousign`, `/webhooks/stripe`, table `contracts` | ✅ Circuit technique complet et câblé, **Yousign en mode sandbox** (voir §5) |
-| **Revente de fichiers de prospection B2B** (`premium_leads.csv` avec email vérifié, `base_entreprises.csv` données SIREN/adresse seules) | `export_leads_commerciaux.py` | ✅ Outil fonctionnel, filtrage par secteur/ville |
+| **À l'unité** | Prix variable selon la qualité du lead (score 0-100 calculé par `scorer_leads.py`) : **Basique 30 €**, **Standard 45 €**, **Premium 65 €**. Le particulier n'est révélé qu'après paiement (lien Stripe à usage unique). | `generation_contrats.py::palier_pour_score/prix_lead_unite_eur`, `livraison_devis.py::_proposer` |
+| **Abonnement mensuel** | Volume inclus, livraison directe sans paiement supplémentaire : **Petit 420 €/mois (10 leads)**, **Moyen 760 €/mois (20 leads)**, **Grand 990 €/mois (30 leads)**. Quota suivi sur le cycle de facturation réel (ancré sur la date de premier paiement Stripe). | `generation_contrats.py::FORMULES_ABONNEMENT`, `livraison_devis.py::_livrer_directement` |
 
-> **Point d'attention** : le pitch envoyé aux prospects ("on vous apporte des leads") et le contrat effectivement signé ("refonte de site + SEO") ne décrivent pas le même service. C'est probablement voulu (le lead-gen est l'accroche, le site vitrine avec capture de devis intégrée *est* le mécanisme qui génère ces leads pour l'artisan) — mais ça mérite d'être formulé de façon limpide dans le discours commercial pour éviter toute ambiguïté avec un client qui, comme SBG Travaux, pose des questions précises sur "paiement au contact" vs abonnement.
+> Valeurs actuellement en vigueur dans l'environnement de production (confirmées en base le 04/09/2026), mais toujours qualifiées de **placeholder** dans le code lui-même (`generation_contrats.py`) — montants définitifs non figés par l'agence, à ajuster avant tout engagement commercial à grande échelle.
 
-### 2.2 Cible et zone
+Aucun paiement récurrent réel : les abonnements sont des Payment Links Stripe à usage unique, reconduits manuellement — le projet n'enregistre aucune carte bancaire.
 
-Artisans du Bâtiment (gros œuvre, plâtrerie, plomberie/chauffage, etc.) sans site recensé dans les données SIRENE publiques, sur la Métropole de Lyon : Lyon 1-9e, Villeurbanne, Vénissieux, Saint-Priest, Bron, Vaulx-en-Velin, Caluire-et-Cuire, Oullins, **Rillieux-la-Pape**, Écully.
+Zone couverte (sourcing des artisans clients potentiels) : **Métropole de Lyon** (Lyon 1er-9e + Villeurbanne, Vénissieux, Saint-Priest, Bron, Vaulx-en-Velin, Caluire-et-Cuire, Oullins-Pierre-Bénite, Rillieux-la-Pape, Écully) **et zone Grand Est** (Reims, Strasbourg, Metz, Nancy, Troyes, Mulhouse, Colmar, Charleville-Mézières) — voir `scraper_batiment.py::VILLES_CIBLES`.
 
-### 2.3 Tunnel de conversion réel
+### 2.2 Offre B2B — sourcing d'acteurs pro pour le compte de clients
+
+Plateforme multi-clients/multi-secteurs (table `campagnes`) : chaque client (ex. une entreprise du BTP cherchant des prescripteurs) définit ses communes cibles et types d'acteurs recherchés. Le système source, enrichit (contact réel) et contacte ces acteurs, avec relance automatique (J+3, J+7).
+
+| Type d'acteur | Prix indicatif | 
+|---|---|
+| Architectes | 70 €/lead |
+| Promoteurs immobiliers | 60 €/lead |
+| Maîtres d'œuvre | 50 €/lead |
+
+Grille indicative uniquement (`generation_contrats.py::GRILLE_PRIX_PAR_TYPE_ACTEUR_EUR`) — le prix réel est **saisi à la main** sur chaque bon de commande, jamais calculé automatiquement (permet une remise négociée ou un palier de volume sans changer le code).
+
+Un outil legacy (`export_leads_commerciaux.py`, export CSV brut avec/sans email vérifié) existe encore mais n'est plus l'offre B2B principale — la plateforme de campagnes ci-dessus l'a remplacé.
+
+### 2.3 Tunnel de conversion réel (B2C)
 
 ```
-Scraping SIRENE (public, officiel)
+Scraping SIRENE (public, officiel) — artisans potentiels, zone Lyon + Grand Est
       ↓
-Vérification domaine/email/téléphone réels (anti-bounce, anti-homonyme)
+Vérification email/téléphone réels (anti-bounce, anti-homonyme)
       ↓
-Génération pitch personnalisé (IA locale, Ollama)
+Génération pitch personnalisé (IA locale, Ollama) — RÉGÉNÉRÉ à chaque envoi
       ↓
-Envoi e-mail (SMTP Zoho) + pause aléatoire anti-spam
+Envoi e-mail (SMTP Zoho), budget de warmup progressif partagé B2B/B2C
       ↓
-Relance à J+4 puis J+8 si sans réponse (2 relances max, puis abandon)
+Relance à J+4 puis J+8 si sans réponse (2 relances max, puis "sans_reponse")
       ↓
-Réponse positive détectée (mots-clés) → envoi auto présentation + formulaire d'intake
+Artisan intéressé → formulaire d'intake (corps de métier, communes couvertes, formule)
       ↓
-Formulaire rempli → devis PDF généré → signature électronique (Yousign)
+Devis PDF généré → signature électronique (interne par défaut, Yousign en option) → paiement Stripe
       ↓
-Paiement (lien Stripe) → webhook confirme → contrat actif
+Artisan client actif (leads.status='paye') → éligible au rapprochement round-robin
+      ↓
+Particulier dépose une demande de devis (formulaire public) → confirmation email (24h)
+      ↓
+Rapprochement round-robin (cron horaire) → livraison directe (abonnement) ou proposition payante (à l'unité, 48h pour payer)
 ```
 
 ### 2.4 Ce que le modèle économique n'a pas encore
 
-- **Tarif officiel figé et communiqué** : le prix du service de leads (au contact ou à l'abonnement) n'est pas défini dans le code — chaque échange commercial (ex. SBG Travaux) le négocie au cas par cas. À trancher avant scaling.
-- **Politique de garantie écrite** (remplacement/avoir sur contact invalide) : logique commerciale à formaliser dans des CGV, pas encore un document existant.
+- **Tarifs officiels définitivement figés** : toujours qualifiés de placeholder dans le code (voir §2.1).
+- **Statut légal** : voir §5 — aucune structure immatriculée à ce jour.
+- **Aucun client B2C payant converti à ce jour** (`contracts` vide en base au 02/09/2026) — le tunnel est câblé de bout en bout et validé par un test E2E complet, mais n'a pas encore généré de première vente réelle.
+- **Facturation B2B non persistée en base** — pas de table dédiée, le suivi financier du module Finances (dashboard) ne couvre que le B2C.
 
 ---
 
 ## 3. Architecture technique réelle
 
-### 3.1 Vue d'ensemble des services (Docker Compose)
+### 3.1 Vue d'ensemble des services
 
 ```mermaid
 graph TD
-    subgraph "Conteneurs Docker (docker-compose.yml)"
-        API["ai_api — FastAPI<br/>port 8000<br/>restart: unless-stopped"]
-        OLLAMA["ai_ollama — LLM local<br/>port 11435→11434"]
-        DASH["ai_dashboard — Streamlit<br/>port 8501"]
-        N8N["ai_n8n — Automatisation<br/>port 5678"]
-    end
-    SUPA[("Supabase<br/>Postgres + pgvector")]
+    DASH["Dashboard Streamlit<br/>Streamlit Community Cloud<br/>Admin + Portail Client"]
+    GH["GitHub Actions<br/>11 workflows cron"]
+    SUPA[("Supabase<br/>Postgres — 31 tables, 2 vues")]
+    EDGE["Supabase Edge Function<br/>stripe-webhook"]
     ZOHO["Zoho Mail<br/>SMTP + IMAP"]
     DISCORD["Discord Webhook<br/>alertes"]
-    YOUSIGN["Yousign API<br/>(sandbox)"]
-    STRIPE["Stripe API"]
+    OLLAMA["Ollama (local)<br/>génération des pitchs"]
+    SIGNATURE["Signature électronique<br/>interne (défaut) ou Yousign"]
+    STRIPE["Stripe<br/>Payment Links + Refunds"]
     SIRENE["recherche-entreprises.api.gouv.fr<br/>(officiel, public)"]
 
-    API -->|scraping| SIRENE
-    API -->|lecture/écriture| SUPA
-    API -->|génération pitch/rapport| OLLAMA
-    API -->|envoi/relève e-mails| ZOHO
-    API -->|alertes lead chaud/panne| DISCORD
-    API -->|signature contrat| YOUSIGN
-    API -->|paiement| STRIPE
-    DASH -->|X-API-Key| API
-    N8N -->|POST /tasks/content| API
+    DASH -->|lecture/écriture directe| SUPA
+    DASH -->|lance en subprocess| GH
+    GH -->|scripts métier| SUPA
+    GH -->|scraping| SIRENE
+    GH -->|génération pitch| OLLAMA
+    GH -->|envoi/relève e-mails| ZOHO
+    GH -->|alertes| DISCORD
+    GH -->|signature| SIGNATURE
+    GH -->|paiement| STRIPE
+    STRIPE -->|webhook| EDGE
+    EDGE -->|file d'attente| SUPA
 ```
 
-### 3.2 Planification automatisée (interne à l'API, un seul ordonnanceur)
+Il n'y a **plus de backend API séparé** (l'ancien `api/main.py` FastAPI a été supprimé) : le dashboard Streamlit accède directement à Supabase et lance les scripts de fond en subprocess (`dashboard/process_runner.py`) ; les tâches périodiques (scraping, campagnes, contrôles) sont déclenchées par **GitHub Actions**, seul ordonnanceur du projet — Streamlit Community Cloud n'a ni cron ni garantie de rester éveillé.
 
-| Tâche | Fréquence | Fonction |
+**n8n a été retiré du projet (04/09/2026)**, confirmé inutilisé — il ne servait plus à rien de fonctionnel depuis la suppression du backend API qu'il ciblait.
+
+### 3.2 Automatisations planifiées (GitHub Actions — 11 workflows)
+
+| Tâche | Fréquence | Script |
 |---|---|---|
-| Traitement des réponses e-mail (IMAP Zoho) | toutes les 5 min | `mail_processor.check_for_replies` |
-| Traitement IA des leads (scoring + pitch) | toutes les 1 h | `lead_worker.py` |
-| Campagne CEO (envoi prospection + rapport hebdo) | tous les jours à 20h | `ceo_agent.run_ceo_analysis` |
-| Relances prospects sans réponse | tous les jours à 9h30 | `relance_prospects.relancer_prospects` |
-| Surveillance santé (Supabase/Ollama) | toutes les 15 min | alerte Discord sur changement d'état |
+| Campagne de prospection B2C | quotidien 6h20 UTC | `ceo_agent.py` |
+| Relance des prospects B2C sans réponse | quotidien 6h40 UTC | `relance_prospects.py` |
+| Réattribution des demandes de devis expirées | horaire (:15) | `livraison_devis.py` |
+| Relève des mails (bounces/réponses) | horaire | `mail_processor.py` |
+| Traitement des paiements Stripe (webhook) | toutes les 10 min | `scripts/traiter_paiements_stripe.py` |
+| Sourcing hebdomadaire B2B | lundi 6h30 UTC | `scripts/lancer_pipeline_b2b.py` |
+| Campagne + relances quotidiennes B2B | quotidien 9h30 UTC | `scripts/lancer_pipeline_b2b.py --envoi-seul` |
+| Contrôle de santé de la base | quotidien 4h30 UTC | `scripts/controle_sante_bdd.py` |
+| Enquêtes de satisfaction | quotidien 5h UTC | `scripts/envoyer_enquetes_satisfaction.py` |
+| Contrôle des échéances légales/admin | lundi 8h UTC | `scripts/controle_echeances.py` |
+| Contrôle de délivrabilité e-mail | lundi 9h UTC | `scripts/controle_delivrabilite.py` |
 
-*Un ancien crontab hôte faisait doublon avec ce planificateur et a été retiré ; c'est désormais l'unique source de vérité sur la cadence.*
+Détail complet et à jour, généré automatiquement depuis les workflows réels : `docs/architecture_globale.md`.
 
-### 3.3 Pipeline de données (scripts)
+### 3.3 Pipeline de données (scripts principaux)
 
-1. **`scraper_batiment.py`** — source primaire : API officielle `recherche-entreprises.api.gouv.fr` (SIRENE, gratuite, publique, sans risque de ToS). Repli PagesJaunes (fragile, disjoncteur après 6 échecs) puis, en dernier recours, un jeu de données fictif pour ne jamais bloquer le pipeline.
-2. **`email_enricher.py`** — déduit et **vérifie réellement** domaine/email/téléphone (anti-homonyme : la page doit citer le nom de l'entreprise + la ville), sauvegarde `leads.json.bak` avant écrasement.
-3. **`lead_worker.py`** — génère le pitch commercial par IA (Ollama `qwen2.5:7b`), déduplique par nom d'entreprise, envoie l'e-mail, upsert dans Supabase.
-4. **`ceo_agent.py`** — campagne d'envoi + rapport hebdomadaire ("Market Scout") par secteur, envoyé au dirigeant par e-mail.
-5. **`mail_processor.py`** — scan IMAP des non-lus, détection mots-clés positifs/négatifs, mise à jour statut, alerte Discord, déclenchement automatique de la suite (présentation + intake) sur réponse positive.
-6. **`relance_prospects.py`** — 2 relances max (J+4, J+8), puis passage en `sans_reponse` (arrêt définitif, pas de sur-sollicitation).
-7. **`export_leads_commerciaux.py`** — export commercial CSV (fichier prospects premium avec email vérifié / fichier base brute SIREN).
-8. **`agents/workers/content_writer.py`** — génération d'articles SEO (IA + auto-amélioration si score qualité < 60), avec cache sémantique (pgvector) — alimente un axe de contenu marketing, déclenché via n8n.
+1. **`scraper_batiment.py`** — source primaire : API officielle SIRENE. Repli PagesJaunes (disjoncteur après 6 échecs).
+2. **`email_enricher.py`** / **`phone_enricher.py`** — vérifient réellement domaine/email/téléphone (anti-homonyme).
+3. **`lead_worker.py`** — génère le pitch commercial par IA (Ollama), envoie l'e-mail, upsert Supabase.
+4. **`ceo_agent.py`** — campagne d'envoi quotidienne (pitch régénéré à chaque envoi, jamais un pitch mis en cache).
+5. **`mail_processor.py`** — scan IMAP, détection mots-clés positifs/négatifs, alerte Discord.
+6. **`relance_prospects.py`** — 2 relances max (J+4, J+8), puis `sans_reponse`.
+7. **`livraison_devis.py`** — cœur du tunnel B2C : rapprochement round-robin demandes de devis ↔ artisans clients actifs, quotas, expiration à 48h, garde-fou d'envoi quotidien dédié (30/jour, indépendant du warmup prospection).
+8. **`outbound_chantiers/`** (package B2B) — sourcing acteurs pro, enrichissement, scoring, campagnes/relances par client.
+9. **`generation_contrats.py`** — génération PDF (devis B2C, bons de commande B2B), grilles de prix, CGV.
+10. **`export_leads_commerciaux.py`** — export CSV legacy (voir §2.2).
 
 ### 3.4 Schéma de base de données (Supabase / Postgres)
 
-| Table | Rôle | Statut |
-|---|---|---|
-| `leads` | Cœur du CRM : contact, statut, score, pitch, relances | ✅ Utilisée intensivement |
-| `intake_responses` | Réponses au formulaire de qualification projet | ✅ Utilisée |
-| `contracts` | Cycle de vie signature (Yousign) + paiement (Stripe) | ✅ Utilisée |
-| `agent_memories` | Cache sémantique (pgvector, 768 dim) pour la génération de contenu | ✅ Utilisée |
-| `tasks` | — | ⚠️ Schéma présent, usage à confirmer |
-| `kpis` | MRR, leads totaux, contenus publiés, clients actifs | ❌ Table seedée à zéro, **jamais mise à jour** par le code — indicateurs morts en l'état |
-| `error_log` | — | ❌ Schéma existant, aucune écriture/lecture trouvée dans le code |
+31 tables, 2 vues — schéma complet, à jour, généré automatiquement depuis le endpoint OpenAPI live de PostgREST : voir `docs/architecture_globale.md` section 1 (ne pas maintenir une copie statique ici, ce schéma évolue).
 
-Dédoublonnage des leads : clé unique sur `company` (le dédoublonnage par email a été abandonné, cf. commentaires de migration).
+Tables clés : `leads` (artisans B2C), `leads_professionnels` (acteurs B2B), `demandes_devis_particuliers` (le cœur du tunnel de livraison), `contracts`, `campagnes`, `intake_responses`, `email_events`/`emails_blacklistes` (hygiène e-mail), `sante_base_donnees` (surveillance continue), `journal_audit_admin`.
 
 ### 3.5 Stack technique
 
-| Composant | Techno | Version |
-|---|---|---|
-| API | FastAPI + Uvicorn | 0.115.0 / 0.30.0 |
-| Ordonnanceur | APScheduler | 3.10.4 |
-| Base de données | Supabase (Postgres + pgvector) | client `supabase-py` 2.5.0 |
-| IA locale | Ollama (self-hosted, aucun coût par requête) | modèle actif : `qwen2.5:7b` |
-| Dashboard | Streamlit + pandas | 1.38.0 / 2.2.2 |
-| Scraping | requests + BeautifulSoup4 | 4.14.3 |
-| Signature électronique | Yousign API | **sandbox** |
-| Paiement | Stripe | 10.12.0 |
-| PDF | fpdf2 | 2.7.9 |
-| Orchestration | Docker Compose (4 conteneurs) | — |
-| Automatisation no-code | n8n | déclencheur planifié → contenu |
+| Composant | Techno |
+|---|---|
+| Base de données | Supabase (Postgres), accès serveur via clé `service_role` |
+| Dashboard | Streamlit Community Cloud (cloud managé, pas de conteneur local) |
+| Orchestration cron | GitHub Actions (11 workflows) |
+| IA locale | Ollama (self-hosted, génération des pitchs) |
+| Emails | Zoho Mail (SMTP envoi, IMAP relève) |
+| Paiement | Stripe (Payment Links + Refunds), webhook via Supabase Edge Function |
+| Signature électronique | Interne (défaut, art. 1367 code civil) ou Yousign (option, sandbox) |
+| PDF | fpdf2 (`core_fonts_encoding="cp1252"`, fix encodage validé 13/08/2026) |
+| Scraping | requests + BeautifulSoup4 |
 
 ### 3.6 Sécurité en place
 
-- Tous les endpoints mutants de l'API exigent un header `X-API-Key` vérifié côté serveur.
-- Les webhooks Yousign et Stripe vérifient la signature de la requête (HMAC / signature Stripe) avant traitement.
-- La clé Supabase `service_role` (accès total lecture/écriture) reste strictement côté serveur (API), jamais exposée au dashboard client.
+- Toutes les tables sont en RLS (Row Level Security), accès serveur exclusivement via `service_role` — surveillé quotidiennement par `scripts/controle_sante_bdd.py`.
+- Les webhooks Stripe sont reçus par une Edge Function Supabase dédiée (`supabase/functions/stripe-webhook/`), pas par le dashboard.
+- La clé Supabase `service_role` (accès total lecture/écriture) reste strictement côté serveur/scripts, jamais exposée au navigateur.
+- Chaque action admin sensible (traiter une réclamation, marquer un contrat payé, exécuter un remboursement...) est tracée dans `journal_audit_admin`.
 
 ---
 
 ## 4. État d'avancement — ce qui tourne réellement vs. ce qui reste à finaliser
 
 **✅ Opérationnel et vérifié en conditions réelles :**
-Scraping SIRENE, enrichissement email/téléphone, génération de pitch IA, envoi SMTP réel, veille IMAP des réponses (confirmée active en logs), relances programmées, tunnel devis → signature → paiement (câblé de bout en bout), dashboard de pilotage, génération de contenu SEO.
+Scraping SIRENE (B2C et B2B), enrichissement email/téléphone, génération de pitch IA, envoi SMTP réel avec warmup progressif, veille IMAP des réponses, relances programmées, tunnel devis → signature → paiement câblé de bout en bout et validé par un test E2E complet (fixture `__TEST_E2E_TUNNEL__`, 13/08/2026), rapprochement round-robin des demandes de devis, dashboard de pilotage (17 pages admin + portail client), 11 automatisations GitHub Actions, surveillance continue de la base (sécurité, opérationnel, dérive).
 
-**⚠️ À finaliser avant mise en production complète :**
-- **Yousign fonctionne en environnement sandbox** (`api-sandbox.yousign.app`) — aucune signature réalisée en sandbox n'a de valeur juridique. Bascule vers l'API production à faire avant le premier vrai contrat signé.
-- Variables `DB_*` (Postgres) et `REDIS_*` présentes dans la config mais **aucun service correspondant n'existe** — bloc de configuration obsolète/vestigial, à nettoyer ou ignorer.
-- Modèles Ollama `FAST`, `REASON`, `EMBED` déclarés mais non utilisés (seul `MAIN` sert actuellement) — soit à exploiter, soit à retirer de la config.
-- Tables `kpis` et `error_log` : schéma présent, jamais alimenté — les indicateurs affichés nulle part ne reflètent pas l'activité réelle.
-- Un **lead de test** (`__TEST_E2E_TUNNEL__`) est présent dans les données de production Supabase — à exclure de tout comptage réel et idéalement supprimer.
-- Le statut d'activation réelle du workflow n8n (déclenchement quotidien de génération d'article) n'a pas pu être confirmé depuis le système de fichiers seul — à vérifier dans l'interface n8n.
+**⚠️ À finaliser :**
+- **Statut légal non finalisé** — SIRET en cours d'immatriculation (`siret_statut='en_cours'` en base, confirmé au 04/09/2026), pas encore de numéro. Voir §5.
+- **Aucun client B2C payant à ce jour** — `contracts` vide en base au 02/09/2026 ; le tunnel est prêt mais n'a pas encore converti.
+- **Yousign** (option, non utilisée par défaut) fonctionne en environnement sandbox — sans valeur juridique tant qu'il n'est pas basculé en production ; sans impact tant que le provider par défaut reste la signature interne.
+- **Facturation B2B non persistée en base** — aucune table dédiée à ce jour.
+- **Module 6 (Acquisition)** et **Module 12 (Trafic du site vitrine)** des modules de pilotage KPI restent en attente — décision explicite de l'agence de reporter plutôt que d'instrumenter une donnée non fiable, respectivement bloqué par l'achat d'un nom de domaine.
+- **Assurance décennale** : pas encore souscrite / date non connue.
 
 ---
 
 ## 5. Plan de formalisation légale
 
-**Constat de départ, à traiter en priorité :** aucune donnée d'identité légale (raison sociale, forme juridique, SIRET, adresse de siège) n'existe nulle part dans le code ou la configuration. Le système sollicite déjà des entreprises réelles par e-mail (SBG Travaux notamment demande explicitement ces informations) — la formalisation n'est donc plus une option de confort mais une nécessité immédiate de conformité.
+**Constat de départ :** le SIRET est en cours d'immatriculation (`siret_statut='en_cours'`, confirmé en base le 04/09/2026) mais pas encore obtenu. Le système sollicite déjà des artisans et clients B2B réels par e-mail — la formalisation reste une priorité, pas une option de confort.
 
 ### 5.1 Étapes recommandées
 
-1. **Choisir une forme juridique.** Pour une activité de prestation de services B2B démarrant seul :
-   - **Micro-entreprise (auto-entrepreneur)** : simplicité maximale, mais plafond de chiffre d'affaires (77 700 € en 2026 pour les prestations de services) et pas de récupération de TVA — à évaluer selon le volume de contrats à 990 € visé.
-   - **EURL / SASU** : au-delà du plafond micro, ou si levée de fonds / associés envisagés. La SASU offre un statut assimilé-salarié et plus de souplesse statutaire ; l'EURL est fiscalement plus simple à petite échelle.
-2. **Immatriculation** au Guichet unique des formalités des entreprises (INPI) → obtention SIREN/SIRET, inscription au RCS.
-3. **Ouverture d'un compte bancaire professionnel** dédié aux encaissements Stripe et à la facturation.
-4. **Mentions légales obligatoires** à afficher sur le site et dans toute correspondance commerciale : raison sociale, forme juridique, capital social (si société), adresse du siège, SIRET, RCS, TVA intracommunautaire (si applicable), nom du responsable de publication, hébergeur.
-5. **Conditions Générales de Vente (CGV)** — à rédiger formellement : elles doivent couvrir précisément ce que les prospects demandent déjà spontanément (cf. échange SBG Travaux) : tarification (au contact / abonnement), durée d'engagement, modalités de résiliation, politique de remplacement/remboursement en cas de contact invalide, délais de livraison du site vitrine.
-6. **Passage de Yousign en environnement de production** (contrats juridiquement valides) une fois la structure immatriculée.
-7. **RGPD / prospection commerciale (CNIL)** :
-   - Les données SIRENE utilisées pour le scraping sont publiques et librement réutilisables — pas de souci de licéité sur cette source.
-   - En revanche, la prospection par e-mail B2B est encadrée : le mécanisme de désinscription déjà implémenté dans `mail_processor.py` (détection "stop", "ne plus me contacter", etc. et arrêt immédiat des relances) est une bonne pratique déjà en place et va dans le sens de la conformité — à documenter formellement dans une politique de confidentialité.
-   - Prévoir un registre des traitements et une politique de confidentialité publiée, notamment du fait de la fonctionnalité de revente de fichiers de prospection (`export_leads_commerciaux.py`), qui constitue un traitement de données personnelles à part entière (cession à des tiers) — point de vigilance RGPD spécifique à documenter avant toute vente de fichier.
-8. **Assurance Responsabilité Civile Professionnelle (RC Pro)** — recommandée dès le premier contrat signé, notamment du fait de l'engagement de livraison (site vitrine) et du traitement de paiements clients.
-9. **Facturation conforme** : dès l'immatriculation, toute facture émise (paiement Stripe) devra porter les mentions légales obligatoires (SIRET, TVA le cas échéant, mentions de pénalités de retard, etc.).
+1. **Finaliser l'immatriculation en cours** au Guichet unique des formalités des entreprises (INPI) → obtention SIREN/SIRET définitif, inscription au RCS.
+2. **Ouverture d'un compte bancaire professionnel** dédié aux encaissements Stripe et à la facturation.
+3. **Mentions légales obligatoires** à afficher sur le site et dans toute correspondance commerciale : raison sociale, forme juridique, SIRET, RCS, TVA intracommunautaire (si applicable), nom du responsable de publication, hébergeur.
+4. **Conditions Générales de Vente (CGV)** — déjà rédigées et générées automatiquement par `generation_contrats.py` (B2C et B2B, avec article de renvoi croisé) ; à valider juridiquement une fois le statut définitif obtenu.
+5. **Assurance Responsabilité Civile Professionnelle (RC Pro)** — recommandée dès le premier contrat signé (engagement de livraison + traitement de paiements clients).
+6. **RGPD / prospection commerciale (CNIL)** :
+   - Les données SIRENE utilisées pour le scraping sont publiques et librement réutilisables.
+   - Politique de confidentialité et registre des traitements déjà rédigés (`politique-confidentialite.md`, `registre-traitements-rgpd.md`) — à tenir à jour à mesure que le système évolue.
+   - Le mécanisme de désinscription (`mail_processor.py`, détection "stop"/"ne plus me contacter") et le droit à l'effacement (page dashboard "Suppression RGPD") sont déjà en place.
+7. **Facturation conforme** : dès l'immatriculation, toute facture émise (paiement Stripe) devra porter les mentions légales obligatoires.
 
 ### 5.2 Urgence relative
 
-Le point 1 → 4 (forme juridique, SIRET, mentions légales) est bloquant pour répondre honnêtement à des prospects qui, comme SBG Travaux, les demandent déjà explicitement. Le point 6 (Yousign production) est bloquant pour tout premier contrat réellement opposable. Les points RGPD sont à documenter en parallèle, sans bloquer le lancement, mais avant toute vente de fichiers à un tiers.
+L'immatriculation (étape 1) est bloquante pour toute facturation conforme et pour répondre pleinement à un client qui demanderait les informations légales de l'entreprise. Les points RGPD sont déjà largement couverts en amont (documents rédigés, mécanismes techniques en place) — à tenir à jour, pas à créer de zéro.
 
 ---
 
-*Fin du dossier. Document basé sur l'état du dépôt au 26/07/2026 ; à mettre à jour à mesure que le statut légal se formalise et que les tarifs sont figés.*
+*Fin du dossier. Document basé sur l'état du dépôt et de la base Supabase au 04/09/2026 ; à mettre à jour à mesure que le statut légal se formalise et que les tarifs sont figés.*
