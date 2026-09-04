@@ -524,11 +524,15 @@ def generer_markdown() -> str:
     for ligne in MODULES_PILOTAGE:
         parties.append(f"- {ligne}")
     parties.append(
-        "- **Module 6 — Acquisition** : en attente (27/08/2026) — aucune colonne \"canal "
-        "d'acquisition\" n'est actuellement remplie en base (`leads.source` existe mais n'est "
-        "jamais écrit par le scraper). Nécessiterait d'instrumenter un nouveau point de capture "
-        "(ex. champ dans le formulaire d'intake public) qui n'existe pas encore — décision "
-        "explicite de l'utilisateur de reporter plutôt que d'inventer une source non fiable."
+        "- **Module 6 — Acquisition** : blocage de données levé (04/09/2026) — jusqu'ici "
+        "`leads.source` ne prenait jamais qu'une seule valeur (`scraper_batiment`), rendant "
+        "tout KPI de répartition par canal creux. Un second canal réel existe désormais : "
+        "auto-inscription publique (`dashboard/pages_publiques.py::afficher_devenir_client`, "
+        "`?vue=devenir_client`, `source='auto_inscription'`), qui enchaîne directement sur le "
+        "formulaire de qualification existant. Reste à construire : la page dashboard de "
+        "répartition par canal elle-même (pas encore de table/page dédiée, contrairement aux "
+        "autres modules ci-dessus), une fois qu'il y aura assez de volume sur les deux canaux "
+        "pour que ce soit informatif."
     )
     parties.append(
         "- **Module 12 — Trafic du site vitrine** : en attente (dépendance externe, "
