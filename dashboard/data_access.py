@@ -1082,6 +1082,29 @@ def executer_remboursement(remboursement_id: str) -> dict:
     if remb["statut"] != "valide":
         raise DataAccessError(f"Statut actuel '{remb['statut']}' : seul un remboursement 'valide' peut être exécuté.")
 
+    # Verrou atomique (voir sql/fix_remboursements_statut_en_cours.sql) :
+    # sans lui, lire statut=='valide' puis appeler Stripe plus bas est un
+    # check-then-act classique — un double-clic sur "💸 Exécuter", ou deux
+    # onglets ouverts sur le même remboursement, pouvait déclencher DEUX
+    # remboursements Stripe réels pour le même remboursement_id (trouvé par
+    # audit le 04/09/2026, même famille de bug que
+    # livraison_devis.py::_quota_disponible). Postgres sérialise les UPDATE
+    # concurrents au niveau de la ligne : cet UPDATE conditionnel
+    # (WHERE statut = 'valide') ne peut réussir que pour UN SEUL appelant
+    # même en cas de déclenchement simultané.
+    try:
+        reponse_verrou = (
+            supabase.table("remboursements").update({"statut": "en_cours"})
+            .eq("id", remboursement_id).eq("statut", "valide").execute()
+        )
+    except Exception as e:
+        raise DataAccessError(f"Erreur lors de la réservation du remboursement : {e}") from e
+    if not reponse_verrou.data:
+        raise DataAccessError(
+            "Ce remboursement est déjà en cours de traitement (ou a changé de statut) — "
+            "réessaie après avoir rafraîchi la page."
+        )
+
     try:
         contrats = supabase.table("contracts").select("*").eq("id", remb["contract_id"]).execute().data
     except Exception as e:

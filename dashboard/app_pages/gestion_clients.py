@@ -554,6 +554,11 @@ with tab_remb_stripe:
                                 else:
                                     st.success("Remboursement Stripe exécuté avec succès.")
                                     st.rerun()
+                        elif r["statut"] == "en_cours":
+                            # Verrou (sql/fix_remboursements_statut_en_cours.sql) —
+                            # ne devrait être visible que le temps très bref de
+                            # l'appel Stripe lui-même, jamais durablement.
+                            st.info("Exécution en cours…")
                         elif r["statut"] == "rembourse":
                             st.success("Remboursé ✅")
                         elif r["statut"] == "rejete":
