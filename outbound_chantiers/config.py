@@ -74,9 +74,17 @@ def _charger_campagne() -> dict:
         return _CAMPAGNE_PAR_DEFAUT
     try:
         return json.loads(brut)
-    except json.JSONDecodeError:
-        log.error("OUTBOUND_CAMPAGNE_JSON invalide (JSON malformé) — repli sur la configuration par défaut.")
-        return _CAMPAGNE_PAR_DEFAUT
+    except json.JSONDecodeError as e:
+        # Échoue explicitement plutôt qu'un repli silencieux sur la
+        # configuration par défaut (constat m13, audit/
+        # audit_verification_2026-09-08.md) : OUTBOUND_CAMPAGNE_JSON a été
+        # explicitement défini ICI (contrairement au cas "absent" ci-dessus,
+        # légitime en CLI autonome) — le laisser retomber sur l'identité
+        # S.B.G Travaux ferait tourner un run destiné à un AUTRE client sous
+        # la mauvaise identité (mauvaises communes, mauvais pitch, mauvais
+        # nom), un "faux succès silencieux" bien pire qu'un échec net et
+        # immédiatement visible dans les logs du cron.
+        raise ValueError(f"OUTBOUND_CAMPAGNE_JSON invalide (JSON malformé) : {e}") from e
 
 
 _CAMPAGNE = _charger_campagne()
