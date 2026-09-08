@@ -572,6 +572,41 @@ def controler_fk_non_indexees(fks: list[tuple[str, str]]) -> dict:
     }
 
 
+# --- h) Dérive des migrations SQL (fichiers repo vs migrations_appliquees) -
+
+# migrations_appliquees.nom est du texte libre saisi à la main (voir
+# sql/init_migrations_appliquees.sql) — comparaison best-effort par nom de
+# fichier, pas une garantie absolue (une ligne mal orthographiée à la
+# saisie resterait un faux positif ici). Sans ça, AUCUNE détection
+# n'existait auparavant (voir audit/audit_verification_2026-09-08.md,
+# constat m2) — une amélioration imparfaite reste largement positive.
+def controler_derive_migrations_sql() -> dict:
+    fichiers_repo = sorted(p.name for p in (RACINE / "sql").glob("*.sql"))
+    noms_appliques = {
+        ligne["nom"]
+        for ligne in supabase.table("migrations_appliquees").select("nom").execute().data
+    }
+    jamais_appliques = sorted(f for f in fichiers_repo if f not in noms_appliques)
+    # Lignes historiques sans fichier correspondant (renommé/supprimé) —
+    # informationnel seulement, ne compte jamais comme une dérive à traiter.
+    lignes_orphelines = sorted(noms_appliques - set(fichiers_repo))
+
+    statut = "attention" if jamais_appliques else "ok"
+    return {
+        "type_controle": "derive_migrations_sql",
+        "statut": statut,
+        "detail": {
+            "total_fichiers_repo": len(fichiers_repo),
+            "jamais_appliques_ou_non_journalises": jamais_appliques,
+            "lignes_orphelines_migrations_appliquees": lignes_orphelines,
+            "methode": (
+                "Comparaison par nom de fichier entre sql/*.sql et migrations_appliquees.nom "
+                "(texte libre saisi à la main) — best-effort, pas une garantie absolue."
+            ),
+        },
+    }
+
+
 # --- Actions concrètes par type de contrôle (page dashboard) --------------
 
 ACTIONS_CONCRETES = {
@@ -583,6 +618,7 @@ ACTIONS_CONCRETES = {
     "croissance_table": "Vérifier les lignes récentes de la table concernée (doublon, abus, attaque) avant de considérer que c'est une simple bonne nouvelle commerciale.",
     "donnees_test_residuelles": "Nettoyer manuellement les lignes suspectes listées (hors exclusions_connues), ou les documenter comme fixture volontaire si légitime.",
     "fk_non_indexees": "Ajouter une migration sql/fix_index_<table>_<colonne>.sql (voir sql/fix_index_remboursements_lead_professionnel.sql comme modèle) pour chaque entrée listée dans fk_sans_index.",
+    "derive_migrations_sql": "Pour chaque fichier listé dans jamais_appliques_ou_non_journalises : vérifier s'il a bien été exécuté dans l'éditeur SQL Supabase, puis journaliser après coup (INSERT INTO migrations_appliquees (nom) VALUES ('xxx.sql') — voir sql/init_migrations_appliquees.sql) ou l'appliquer s'il ne l'a pas encore été.",
 }
 
 
@@ -599,6 +635,7 @@ def main() -> None:
         enregistrer(controler_croissance_tables()),
         enregistrer(controler_donnees_test_residuelles()),
         enregistrer(controler_fk_non_indexees(fks)),
+        enregistrer(controler_derive_migrations_sql()),
     ]
 
     print("\n=== Contrôle de santé de la base — résumé ===")
