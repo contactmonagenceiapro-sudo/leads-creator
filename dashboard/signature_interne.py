@@ -25,7 +25,7 @@ import hashlib
 import logging
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -59,6 +59,17 @@ ZOHO_USER = os.getenv("ZOHO_USER", "")
 ZOHO_PASSWORD = os.getenv("ZOHO_PASSWORD", "")
 PUBLIC_DASHBOARD_URL = os.getenv("PUBLIC_DASHBOARD_URL", "http://localhost:8501")
 
+# Voir audit/audit_verification_2026-09-08.md, constat m7 : le token de
+# signature (secrets.token_urlsafe(32), robuste) restait valide
+# indéfiniment, contrairement à token_confirmation (24h, voir
+# livraison_devis.py::DELAI_EXPIRATION_CONFIRMATION_HEURES) — un lien
+# intercepté (boîte mail compromise des mois après l'envoi) restait
+# exploitable sans limite de temps. 30 jours par défaut : largement
+# suffisant pour un usage normal (le devis est envoyé puis signé
+# généralement en quelques jours), sans pénaliser un client qui met du
+# temps à se décider.
+DELAI_EXPIRATION_SIGNATURE_JOURS = int(os.getenv("DELAI_EXPIRATION_SIGNATURE_JOURS", "30"))
+
 
 # ---------------------------------------------------------------------
 # Lecture (utilisée par contrats_signature ET pages_publiques)
@@ -79,6 +90,27 @@ def get_contrat_par_token(token: str | None) -> dict | None:
     except Exception:
         return None
     return rows[0] if rows else None
+
+
+def token_expire(contrat: dict) -> bool:
+    """True si le lien de signature de ce contrat a dépassé
+    DELAI_EXPIRATION_SIGNATURE_JOURS depuis sa création (contracts.created_at)
+    — voir constat m7. Un contrat DÉJÀ signé n'expire jamais (consulter le
+    récapitulatif d'un contrat signé, même ancien, reste légitime — seule la
+    possibilité de SIGNER doit être limitée dans le temps). created_at
+    absent/illisible -> jamais expiré (repli permissif, comme ailleurs dans
+    ce projet pour un garde-fou non critique — ne doit jamais bloquer un
+    vrai client sur une donnée manquante)."""
+    if contrat.get("yousign_status") == "signe":
+        return False
+    cree_le = contrat.get("created_at")
+    if not cree_le:
+        return False
+    try:
+        date_creation = datetime.fromisoformat(cree_le.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc) - date_creation > timedelta(days=DELAI_EXPIRATION_SIGNATURE_JOURS)
 
 
 def _get_lead(lead_id: str) -> dict | None:
@@ -271,6 +303,18 @@ def enregistrer_signature(contrat: dict, nom_saisi: str) -> tuple[bool, str]:
     nom_saisi = (nom_saisi or "").strip()
     if not nom_saisi:
         return False, "Merci de taper votre nom avant de valider."
+
+    # Garde-fou serveur (constat m7) — pas seulement l'affichage de la page
+    # publique (voir pages_publiques.py::afficher_signature) : même doctrine
+    # que le scellement anti-écrasement ajouté juste avant dans cette même
+    # session (constat M6, .neq("yousign_status", "signe")) — une page ne
+    # doit jamais être la SEULE protection d'une action qui touche à la
+    # preuve légale d'un contrat.
+    if token_expire(contrat):
+        return False, (
+            f"Ce lien de signature a expiré ({DELAI_EXPIRATION_SIGNATURE_JOURS} jours) — "
+            f"contactez-nous à {AGENCY_EMAIL or AGENCY_NAME} pour recevoir un nouveau lien."
+        )
 
     lead = _get_lead(contrat["lead_id"])
     if not lead:

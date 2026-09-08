@@ -86,7 +86,7 @@ from generation_contrats import (
     fourchette_prix_unite_eur,
 )
 from scraper_batiment import SECTEURS_NAF, VILLES_CIBLES
-from signature_interne import enregistrer_signature, envoyer_contrat_signature_interne, get_contrat_par_token
+from signature_interne import enregistrer_signature, envoyer_contrat_signature_interne, get_contrat_par_token, token_expire
 from supabase_client import supabase
 from theme_vitrine import bandeau_confiance, carte_tarif, ligne_cordeau, tampon_confiance
 from verification_pro import (
@@ -976,6 +976,13 @@ def afficher_signature(token: str | None) -> None:
     contrat = get_contrat_par_token(token)
     if not contrat:
         st.error("Page introuvable.")
+        return
+
+    if token_expire(contrat):
+        st.error(
+            f"Ce lien de signature a expiré. Contactez-nous à "
+            f"{AGENCY_CONTACT_EMAIL} pour recevoir un nouveau lien."
+        )
         return
 
     cle_signe = f"signature_ok_{token}"
