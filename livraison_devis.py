@@ -89,6 +89,7 @@ from supabase import create_client
 
 from alertes import CompteZohoBloqueError
 from ceo_agent import send_email_prospect
+from constants import LEADS_TEST_A_EXCLURE
 from generation_contrats import (
     TYPE_OFFRE_ABONNEMENT,
     TYPE_OFFRE_UNITE,
@@ -182,7 +183,15 @@ def _artisans_clients_actifs() -> list[dict]:
     formule_abonnement/paid_at) déjà attachés — quelques requêtes groupées
     plutôt qu'une par artisan (le volume reste faible, mais autant éviter
     le pattern N+1 dès le départ)."""
-    leads = supabase.table("leads").select("id,email,company,score").eq("status", "paye").execute().data
+    # Exclut le(s) lead(s) de test/démo (voir constants.py) — sans ce
+    # filtre, __TEST_E2E_TUNNEL__ serait traité comme un artisan client
+    # actif s'il passait un jour à status='paye' (audit/
+    # audit_verification_2026-09-08.md, constat m1 — théorique en usage
+    # normal, mais aucun filtre explicite ne l'empêchait jusqu'ici).
+    leads = (
+        supabase.table("leads").select("id,email,company,score")
+        .eq("status", "paye").not_.in_("id", LEADS_TEST_A_EXCLURE).execute().data
+    )
     if not leads:
         return []
     lead_ids = [l["id"] for l in leads]

@@ -33,6 +33,13 @@ import stripe
 
 from supabase_client import supabase
 
+# Centralisé dans constants.py (racine du dépôt) depuis le 08/09/2026 — voir
+# audit/audit_verification_2026-09-08.md, constat m1 : ce fichier était
+# jusqu'ici l'unique définition de LEADS_TEST_A_EXCLURE, sans tiers-lieu
+# accessible aux scripts racine (scorer_leads.py, livraison_devis.py, qui
+# l'appliquent désormais aussi).
+from constants import LEADS_TEST_A_EXCLURE
+
 # sys.path (voir dashboard/app.py) inclut la racine du dépôt : import direct
 # du module du scraper pour réutiliser sa définition des deux zones (Lyon /
 # Grand Est) sans dupliquer la liste des communes ici — voir
@@ -60,21 +67,6 @@ SEUIL_LEAD_ULTRA_QUALIFIE = float(os.getenv("SEUIL_LEAD_ULTRA_QUALIFIE", "0.85")
 RACINE_REPO = Path(__file__).resolve().parent.parent
 
 CACHE_TTL_SECONDES = 30
-
-# Leads de test/démo créés manuellement dans `leads` (jamais de vrais
-# prospects) : __TEST_E2E_TUNNEL__ (id fixe, réutilisé pour dérouler le
-# tunnel de vente à blanc — voir mémoire e2e_tunnel_test_fixture) boucle ses
-# e-mails vers la boîte de l'agence elle-même, ce qui gonflait artificiellement
-# le taux de réponse artisans. Exclus des KPIs/vues admin pour ne jamais
-# fausser une lecture des vraies statistiques (ex: démo, reporting) — jamais
-# supprimés pour autant, ce lead sert toujours à valider le tunnel.
-LEADS_TEST_A_EXCLURE = (
-    "a51d80c8-8363-42a6-87c8-7481911ecc2b",  # __TEST_E2E_TUNNEL__
-    # "entreprise de test"/"test" (ce66b08a.../b45fc2f7...) supprimées le
-    # 27/08/2026 (nettoyage données de test résiduelles, voir contrôle
-    # santé donnees_test_residuelles) — retirées d'ici plutôt que laissées
-    # en référence à des lignes qui n'existent plus.
-)
 
 
 class DataAccessError(Exception):

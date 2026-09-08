@@ -46,6 +46,7 @@ import os
 import requests
 from dotenv import load_dotenv
 
+from constants import LEADS_TEST_A_EXCLURE
 from outbound_chantiers.signal_activite_chantiers import recuperer_activite_par_commune, score_pour_commune
 
 load_dotenv()
@@ -119,9 +120,15 @@ def rescorer_leads_existants() -> dict:
         return {}
 
     headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}
+    params = {"select": "id,commune,tranche_effectif_salarie,score"}
+    if LEADS_TEST_A_EXCLURE:
+        # Exclut le(s) lead(s) de test/démo (voir constants.py) — sans ce
+        # filtre, __TEST_E2E_TUNNEL__ était rescoré comme un lead réel à
+        # chaque run (audit/audit_verification_2026-09-08.md, constat m1).
+        params["id"] = f"not.in.({','.join(LEADS_TEST_A_EXCLURE)})"
     reponse = requests.get(
         f"{SUPABASE_URL}/rest/v1/leads",
-        params={"select": "id,commune,tranche_effectif_salarie,score"},
+        params=params,
         headers=headers,
         timeout=20,
     )
