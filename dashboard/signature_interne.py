@@ -297,20 +297,61 @@ def enregistrer_signature(contrat: dict, nom_saisi: str) -> tuple[bool, str]:
     signed_at_iso = horodatage.isoformat()
     signed_at_affichage = horodatage.strftime("%d/%m/%Y a %H:%M:%S UTC")
 
+    # Scellement serveur contre la rejouabilité (voir docstring de la
+    # fonction et audit/audit_verification_2026-09-08.md, constat M6) :
+    # sans la clause .neq() ci-dessous, cet UPDATE écrivait
+    # INCONDITIONNELLEMENT la preuve (nom saisi, IP, user-agent, horodatage,
+    # empreinte) — un double-clic, deux onglets ouverts sur le même lien de
+    # signature, ou tout appel de enregistrer_signature() hors du parcours
+    # normal afficher_signature() (dont la garde deja_signe n'empêche que
+    # l'UI de RE-proposer le formulaire, pas un second appel concurrent
+    # côté serveur) pouvait écraser SILENCIEUSEMENT la preuve d'une
+    # signature déjà enregistrée par une preuve différente, sans trace de
+    # l'écrasement ni erreur — affaiblissant la valeur probante en cas de
+    # contestation (art. 1367 du Code civil : la preuve doit rester celle
+    # du signataire réel, pas la dernière écriture reçue).
+    #
+    # Postgres sérialise les UPDATE concurrents au niveau de la ligne : cet
+    # UPDATE conditionnel (WHERE yousign_status != 'signe') ne peut réussir
+    # que pour UN SEUL appelant même en cas de déclenchement simultané —
+    # même pattern que le fix déjà appliqué à data_access.py::
+    # executer_remboursement (double remboursement Stripe, 04/09/2026).
+    # Portée volontairement limitée à ce scellement anti-écrasement : ne
+    # prétend pas apporter le scellement cryptographique/l'horodatage
+    # qualifié qu'un tiers de confiance indépendant fournirait (voir les
+    # limites déjà documentées en tête de module, non changées ici).
     try:
-        supabase.table("contracts").update({
-            "yousign_status": "signe",
-            "signed_at": signed_at_iso,
-            "signature_nom_saisi": nom_saisi,
-            "signature_ip": ip_address,
-            "signature_user_agent": user_agent,
-            "signature_document_hash": document_hash,
-            "signature_document_pdf_base64": base64.b64encode(pdf_devis).decode("ascii"),
-        }).eq("id", contrat["id"]).execute()
-        supabase.table("leads").update({"status": "contrat_signe"}).eq("id", contrat["lead_id"]).execute()
+        reponse_verrou = (
+            supabase.table("contracts").update({
+                "yousign_status": "signe",
+                "signed_at": signed_at_iso,
+                "signature_nom_saisi": nom_saisi,
+                "signature_ip": ip_address,
+                "signature_user_agent": user_agent,
+                "signature_document_hash": document_hash,
+                "signature_document_pdf_base64": base64.b64encode(pdf_devis).decode("ascii"),
+            }).eq("id", contrat["id"]).neq("yousign_status", "signe").execute()
+        )
     except Exception as e:
         log.error(f"Erreur enregistrement signature pour contrat {contrat['id']} : {e}")
         return False, "Erreur technique lors de l'enregistrement — réessayez, ou contactez-nous si ça persiste."
+    if not reponse_verrou.data:
+        # Course perdue : un autre appel a déjà signé ce contrat entre la
+        # lecture du contrat par l'appelant et cet UPDATE — la preuve
+        # d'origine reste seule valable, on ne doit surtout pas envoyer un
+        # second récapitulatif qui sèmerait le doute sur laquelle des deux
+        # preuves fait foi.
+        log.warning(f"Signature déjà enregistrée pour le contrat {contrat['id']} — second appel ignoré (preuve d'origine conservée).")
+        return False, "Ce contrat a déjà été signé — la preuve d'origine reste seule valable."
+
+    try:
+        supabase.table("leads").update({"status": "contrat_signe"}).eq("id", contrat["lead_id"]).execute()
+    except Exception as e:
+        # Best-effort : la preuve de signature (ci-dessus) est déjà
+        # persistée et scellée à ce stade, c'est elle qui fait foi — un
+        # échec de mise à jour du statut lead ne doit jamais annuler une
+        # signature déjà enregistrée.
+        log.error(f"Signature enregistrée mais échec mise à jour du statut lead {contrat['lead_id']} : {e}")
 
     contrat_pour_pdf = {
         **contrat,
