@@ -454,10 +454,11 @@ def traiter_demandes_en_attente() -> dict:
     compteurs = {"livree": 0, "proposee": 0, "en_attente_artisan": 0}
     if not demandes:
         log.info("=== Terminé : aucune demande à traiter ===")
-        return {"livrees": 0, "proposees": 0, "en_attente": 0, "total": 0}
+        return {"livrees": 0, "proposees": 0, "en_attente": 0, "total": 0, "interrompu_bloque_compte": False}
 
     artisans = _artisans_clients_actifs()
     plafond_restant = PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN - _envois_livraison_aujourdhui()
+    interrompu_bloque_compte = False
     for i, demande in enumerate(demandes, start=1):
         if plafond_restant <= 0:
             log.error(
@@ -471,8 +472,14 @@ def traiter_demandes_en_attente() -> dict:
         except CompteZohoBloqueError:
             # Déjà loggé + alerté dans send_email_prospect — inutile de
             # continuer, les envois suivants échoueraient tous pareil tant
-            # que le blocage n'est pas levé côté Zoho.
+            # que le blocage n'est pas levé côté Zoho. Remonté à main() via
+            # interrompu_bloque_compte (jamais pour le garde-fou de plafond
+            # ci-dessus, qui reste un arrêt normal) — même distinction que
+            # ceo_agent.py::run_ceo_analysis()/relance_prospects.py::relancer_prospects()
+            # (fix du 05/09/2026, commit e338806), non répercutée ici avant
+            # ce correctif (audit/audit_verification_2026-09-08.md, constat M1).
             log.error(f"Traitement interrompu après {i - 1}/{len(demandes)} demande(s) (compte Zoho bloqué).")
+            interrompu_bloque_compte = True
             break
         compteurs[issue] += 1
         if issue in ("livree", "proposee"):
@@ -486,6 +493,7 @@ def traiter_demandes_en_attente() -> dict:
     return {
         "livrees": compteurs["livree"], "proposees": compteurs["proposee"],
         "en_attente": compteurs["en_attente_artisan"], "total": len(demandes),
+        "interrompu_bloque_compte": interrompu_bloque_compte,
     }
 
 
@@ -497,11 +505,12 @@ def expirer_propositions_perimees() -> dict:
     )
     if not perimees:
         log.info("=== Terminé : aucune proposition périmée ===")
-        return {"reattribuees": 0, "en_attente": 0, "total": 0}
+        return {"reattribuees": 0, "en_attente": 0, "total": 0, "interrompu_bloque_compte": False}
 
     artisans = _artisans_clients_actifs()
     plafond_restant = PLAFOND_ENVOI_LIVRAISON_QUOTIDIEN - _envois_livraison_aujourdhui()
     reattribuees, en_attente = 0, 0
+    interrompu_bloque_compte = False
     for i, demande in enumerate(perimees, start=1):
         if plafond_restant <= 0:
             log.error(
@@ -546,7 +555,11 @@ def expirer_propositions_perimees() -> dict:
         try:
             issue = traiter_demande(demande_reinitialisee, artisans, exclure_ids=exclure)
         except CompteZohoBloqueError:
+            # Remonté à main() via interrompu_bloque_compte — même correctif
+            # que traiter_demandes_en_attente() ci-dessus (audit/
+            # audit_verification_2026-09-08.md, constat M1).
             log.error(f"Ré-attribution interrompue après {i - 1}/{len(perimees)} proposition(s) périmée(s) (compte Zoho bloqué).")
+            interrompu_bloque_compte = True
             break
 
         if issue in ("livree", "proposee"):
@@ -560,7 +573,10 @@ def expirer_propositions_perimees() -> dict:
         f"=== Terminé : {reattribuees + en_attente}/{len(perimees)} proposition(s) périmée(s) traitée(s) — "
         f"{reattribuees} ré-attribuée(s), {en_attente} en attente d'artisan ==="
     )
-    return {"reattribuees": reattribuees, "en_attente": en_attente, "total": len(perimees)}
+    return {
+        "reattribuees": reattribuees, "en_attente": en_attente, "total": len(perimees),
+        "interrompu_bloque_compte": interrompu_bloque_compte,
+    }
 
 
 def expirer_confirmations_perimees() -> dict:
@@ -614,10 +630,24 @@ def main() -> int:
         return 0
     try:
         expirer_confirmations_perimees()
-        expirer_propositions_perimees()
+        resultat_expiration = expirer_propositions_perimees()
+        # Renvoie 1 (échec du run) UNIQUEMENT si interrompu par un compte
+        # Zoho bloqué (jamais pour le garde-fou de plafond quotidien, qui
+        # reste un arrêt normal) — sans ce contrôle, le cron GitHub Actions
+        # horaire s'affiche "succeeded" même quand aucune
+        # livraison/proposition/ré-attribution n'est réellement partie à des
+        # clients déjà payants sous engagement public "48h maximum". Même
+        # correctif que ceo_agent.py/relance_prospects.py (05/09/2026,
+        # commit e338806), non répercuté ici avant ce correctif — voir
+        # audit/audit_verification_2026-09-08.md, constat M1. N'affecte ni
+        # le round-robin ni l'expiration 48h : rien n'est décompté ou marqué
+        # "livrée" en plus de ce que traiter_demande()/expirer_propositions_perimees()
+        # font déjà normalement, seul le code de sortie du run change.
         if args.expirer_seul:
-            return 0
-        traiter_demandes_en_attente()
+            return 1 if resultat_expiration["interrompu_bloque_compte"] else 0
+        resultat_traitement = traiter_demandes_en_attente()
+        if resultat_expiration["interrompu_bloque_compte"] or resultat_traitement["interrompu_bloque_compte"]:
+            return 1
         return 0
     finally:
         _liberer_verrou()
