@@ -32,7 +32,7 @@ from email.mime.text import MIMEText
 
 import requests
 
-from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, envoyer_smtp, est_blocage_compte_zoho
+from alertes import CompteZohoBloqueError, alerter_blocage_compte_zoho, alerter_discord, envoyer_smtp, est_blocage_compte_zoho
 from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_exploitable
@@ -99,16 +99,42 @@ def supabase_get(params: str) -> list[dict]:
         return []
 
 
+NB_TENTATIVES_MAJ_STATUT = 3  # voir supabase_patch() — même ordre de grandeur que sourcing_acteurs_pro.py::NB_TENTATIVES_MAX
+
+
 def supabase_patch(acteur_id: str, changements: dict) -> None:
-    try:
-        requests.patch(
-            f"{SUPABASE_URL}/rest/v1/{TABLE}?id=eq.{acteur_id}",
-            headers=supabase_headers(),
-            json=changements,
-            timeout=10,
-        )
-    except requests.exceptions.RequestException as e:
-        log.error(f"Erreur mise à jour {acteur_id} : {e}")
+    """Retry avec backoff exponentiel (voir audit/audit_verification_2026-09-08.md,
+    constat M8) : si l'envoi SMTP a réussi mais que CETTE mise à jour de
+    statut échoue (hoquet réseau ponctuel, le cas le plus probable), l'acteur
+    reste 'a_contacter'/relance_count inchangé et sera recontacté — un email
+    de prospection dupliqué vers un vrai prospect. Avant ce correctif,
+    l'échec n'était que loggé, sans nouvelle tentative ni alerte.
+
+    Échec après toutes les tentatives -> alerte Discord dédiée (best-effort,
+    ne lève jamais elle-même) : ne bloque jamais la boucle appelante (l'email
+    est déjà parti, irréversible), mais rend l'incident visible rapidement
+    plutôt que de le découvrir au prochain doublon constaté."""
+    for tentative in range(1, NB_TENTATIVES_MAJ_STATUT + 1):
+        try:
+            requests.patch(
+                f"{SUPABASE_URL}/rest/v1/{TABLE}?id=eq.{acteur_id}",
+                headers=supabase_headers(),
+                json=changements,
+                timeout=10,
+            )
+            return
+        except requests.exceptions.RequestException as e:
+            log.error(f"Erreur mise à jour {acteur_id} (tentative {tentative}/{NB_TENTATIVES_MAJ_STATUT}) : {e}")
+            if tentative < NB_TENTATIVES_MAJ_STATUT:
+                time.sleep(2 ** tentative)
+
+    message = (
+        f"⚠️ Échec définitif de mise à jour du statut B2B pour l'acteur {acteur_id} "
+        f"après {NB_TENTATIVES_MAJ_STATUT} tentatives (changements={changements}) — "
+        "l'e-mail est bien parti, mais l'acteur risque d'être recontacté/relancé en double."
+    )
+    log.error(message)
+    alerter_discord(message)
 
 
 def envoyer_email(destinataire: str, sujet: str, corps: str, lead_id: str | None = None) -> bool:
