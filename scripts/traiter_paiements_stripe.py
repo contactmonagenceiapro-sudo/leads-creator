@@ -166,6 +166,23 @@ def traiter_file_attente() -> None:
 
     log.info(f"{len(evenements)} événement(s) Stripe à traiter.")
     for evenement in evenements:
+        # Verrou par événement (voir sql/fix_stripe_webhook_events_statut_en_cours.sql
+        # et audit/audit_verification_2026-09-08.md, constat M7) : sans lui,
+        # un run manuel local pourrait chevaucher le run cron */10min et
+        # traiter deux fois le même événement (double écriture
+        # journal_audit_admin, double alerte Discord — jamais de double
+        # encaissement Stripe réel, _traiter_contrat/_traiter_demande_devis
+        # restent idempotents au niveau métier). UPDATE conditionnel
+        # (WHERE statut = 'recu') : Postgres sérialise les UPDATE
+        # concurrents au niveau ligne, un seul appelant peut réussir cette
+        # transition même en cas de déclenchement simultané.
+        reponse_verrou = (
+            supabase.table("stripe_webhook_events").update({"statut": "en_cours"})
+            .eq("id", evenement["id"]).eq("statut", "recu").execute()
+        )
+        if not reponse_verrou.data:
+            log.info(f"Événement {evenement['id']} déjà pris en charge par un autre run — ignoré.")
+            continue
         try:
             _traiter_un_evenement(evenement)
             supabase.table("stripe_webhook_events").update({
