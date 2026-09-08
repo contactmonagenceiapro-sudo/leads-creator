@@ -259,6 +259,19 @@ def _url_supabase_plausible(url: str) -> bool:
     return url.startswith("https://") and ".supabase.co" in url
 
 
+def _tronquer_pour_affichage(valeur: str, longueur: int = 15) -> str:
+    """Tronque une valeur avant de la réafficher dans un message d'erreur
+    (constat m12, audit/audit_verification_2026-09-08.md) : SUPABASE_URL
+    n'est pas un secret en soi (visible de toute façon dans le navigateur
+    d'un client Supabase normal), mais une erreur de copier-coller pourrait
+    y faire atterrir tout autre chose (ex. la clé service_role collée au
+    mauvais endroit) — réafficher la valeur BRUTE en entier serait alors
+    une fuite. Tronque toujours, même une valeur légitime mais longue."""
+    if len(valeur) <= longueur:
+        return valeur
+    return f"{valeur[:longueur]}…"
+
+
 def _diagnostiquer_cles_supabase() -> list[str]:
     """Vérifications de CONTENU (pas seulement de présence) sur
     SUPABASE_URL/SUPABASE_KEY — spécifiquement pensées pour deux erreurs de
@@ -272,7 +285,7 @@ def _diagnostiquer_cles_supabase() -> list[str]:
     url = (os.getenv("SUPABASE_URL") or "").strip()
     if url and not _url_supabase_plausible(url):
         erreurs.append(
-            f"`SUPABASE_URL` ne ressemble pas à une URL Supabase valide (obtenu : `{url}`) — "
+            f"`SUPABASE_URL` ne ressemble pas à une URL Supabase valide (obtenu : `{_tronquer_pour_affichage(url)}`) — "
             "attendu un format `https://xxxxxxxx.supabase.co`, sans guillemets ni espace autour. "
             "Vérifie qu'elle a été copiée en entier."
         )
