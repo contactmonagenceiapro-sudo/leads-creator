@@ -482,8 +482,15 @@ def enrichir_un_acteur(nom_entreprise: str, commune: str) -> dict:
 
 def filtrer_et_enrichir() -> list[dict]:
     if not FICHIER_ENTREE.exists():
-        log.error(f"{FICHIER_ENTREE} introuvable — lancer d'abord sourcing_acteurs_pro.py")
-        return []
+        # Lève une erreur explicite plutôt que de renvoyer [] silencieusement :
+        # sinon l'étape suivante (scorer_et_publier.py) et le pipeline
+        # maître (pipeline_outbound_chantiers.py::executer_etape) considèrent
+        # ce cas comme un succès sur zéro donnée — voir
+        # audit/audit_verification_2026-09-08.md, constat C1.
+        raise FileNotFoundError(
+            f"{FICHIER_ENTREE} introuvable — lancer d'abord sourcing_acteurs_pro.py "
+            "(ou vérifier que l'étape de sourcing a bien réussi)"
+        )
 
     acteurs_bruts = json.loads(FICHIER_ENTREE.read_text(encoding="utf-8"))
 
@@ -507,10 +514,16 @@ def filtrer_et_enrichir() -> list[dict]:
 
     log.info(f"Enrichissement terminé : {len(enrichis)} acteurs traités, "
               f"{sum(1 for a in enrichis if a['contact_exploitable'])} avec contact exploitable")
+
+    # Écrit sur disque ICI (dans la fonction elle-même), pas seulement dans
+    # le bloc __main__ — même correctif que sourcing_acteurs_pro.py::
+    # sourcer_acteurs_pro(), pour le même chemin d'appel en fonction par
+    # pipeline_outbound_chantiers.py. Voir audit/audit_verification_2026-09-08.md,
+    # constat C1.
+    FICHIER_SORTIE.write_text(json.dumps(enrichis, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info(f"Résultats enrichis écrits dans {FICHIER_SORTIE}")
     return enrichis
 
 
 if __name__ == "__main__":
-    resultats = filtrer_et_enrichir()
-    FICHIER_SORTIE.write_text(json.dumps(resultats, ensure_ascii=False, indent=2), encoding="utf-8")
-    log.info(f"Résultats enrichis écrits dans {FICHIER_SORTIE}")
+    filtrer_et_enrichir()

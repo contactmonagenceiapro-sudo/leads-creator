@@ -212,8 +212,14 @@ def _alerter_si_ultra_qualifie(acteur: dict) -> None:
 
 def scorer_et_publier() -> None:
     if not FICHIER_ENTREE.exists():
-        log.error(f"{FICHIER_ENTREE} introuvable — lancer d'abord enrichir_acteurs_pro.py")
-        return
+        # Lève une erreur explicite plutôt que de renvoyer silencieusement :
+        # sinon pipeline_outbound_chantiers.py::executer_etape considère ce
+        # cas comme un succès sur zéro donnée — voir
+        # audit/audit_verification_2026-09-08.md, constat C1.
+        raise FileNotFoundError(
+            f"{FICHIER_ENTREE} introuvable — lancer d'abord enrichir_acteurs_pro.py "
+            "(ou vérifier que l'étape d'enrichissement a bien réussi)"
+        )
 
     acteurs = json.loads(FICHIER_ENTREE.read_text(encoding="utf-8"))
     activite_par_commune = recuperer_activite_par_commune()

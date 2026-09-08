@@ -216,10 +216,19 @@ def sourcer_acteurs_pro() -> list[dict]:
         )
 
     log.info(f"Sourcing terminé : {len(acteurs)} acteurs professionnels uniques collectés")
+
+    # Écrit sur disque ICI (dans la fonction elle-même), pas seulement dans
+    # le bloc __main__ : sourcer_acteurs_pro() est aussi appelée directement
+    # comme fonction par pipeline_outbound_chantiers.py (chemin réel de
+    # production, cron + bouton dashboard), qui n'exécute jamais ce bloc.
+    # Avant ce correctif, ce chemin de prod ne produisait aucun fichier —
+    # l'étape suivante (enrichir_acteurs_pro.py) ne trouvait jamais
+    # FICHIER_ENTREE et se terminait "avec succès" sur zéro donnée, en
+    # silence (voir audit/audit_verification_2026-09-08.md, constat C1).
+    FICHIER_SORTIE.write_text(json.dumps(acteurs, ensure_ascii=False, indent=2), encoding="utf-8")
+    log.info(f"Résultats bruts écrits dans {FICHIER_SORTIE}")
     return acteurs
 
 
 if __name__ == "__main__":
-    acteurs = sourcer_acteurs_pro()
-    FICHIER_SORTIE.write_text(json.dumps(acteurs, ensure_ascii=False, indent=2), encoding="utf-8")
-    log.info(f"Résultats bruts écrits dans {FICHIER_SORTIE}")
+    sourcer_acteurs_pro()

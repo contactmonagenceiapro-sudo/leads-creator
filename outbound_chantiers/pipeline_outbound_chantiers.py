@@ -59,14 +59,22 @@ def main() -> int:
         from outbound_chantiers.enrichir_acteurs_pro import filtrer_et_enrichir
         from outbound_chantiers.scorer_et_publier import scorer_et_publier
 
-        # sourcer_acteurs_pro()/filtrer_et_enrichir() écrivent déjà elles-mêmes
-        # leur résultat sur disque (FICHIER_SORTIE, scopé par CLIENT_FINAL
-        # depuis le fix du 04/09/2026) : les anciens wrappers ré-écrivaient en
-        # plus sur un chemin fixe non scopé par client, jamais relu par
-        # personne (filtrer_et_enrichir()/scorer_et_publier() lisent toujours
-        # depuis FICHIER_ENTREE, pas depuis la valeur de retour) — code mort
-        # qui, en plus, aurait pu faire fuiter des acteurs d'une campagne vers
-        # une autre en cas de runs concurrents. Retiré plutôt que corrigé.
+        # sourcer_acteurs_pro()/filtrer_et_enrichir() écrivent elles-mêmes leur
+        # résultat sur disque (FICHIER_SORTIE, scopé par CLIENT_FINAL depuis le
+        # fix du 04/09/2026) AVANT de retourner leur valeur — y compris quand
+        # elles sont appelées ici comme de simples fonctions (pas seulement
+        # depuis leur bloc __main__ CLI). C'est volontaire : filtrer_et_enrichir()/
+        # scorer_et_publier() lisent toujours depuis FICHIER_ENTREE sur disque,
+        # jamais depuis une valeur de retour transmise en mémoire (voir fix du
+        # 08/09/2026 après l'incident du sourcing B2B silencieusement cassé
+        # depuis le 04/09/2026 — audit/audit_verification_2026-09-08.md,
+        # constat C1 : avant ce fix, l'écriture n'avait lieu que dans le bloc
+        # __main__, jamais quand ces fonctions étaient appelées d'ici).
+        # Les anciens wrappers de ce fichier ré-écrivaient en plus sur un
+        # chemin fixe non scopé par client, jamais relu par personne — code
+        # mort qui, en plus, aurait pu faire fuiter des acteurs d'une campagne
+        # vers une autre en cas de runs concurrents. Retiré (pas corrigé) le
+        # 04/09/2026.
         etapes_ok.append(executer_etape("Sourcing des acteurs professionnels", sourcer_acteurs_pro))
         etapes_ok.append(executer_etape("Filtrage + enrichissement", filtrer_et_enrichir))
         etapes_ok.append(executer_etape("Scoring + publication en base", scorer_et_publier))
