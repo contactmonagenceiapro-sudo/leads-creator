@@ -224,6 +224,7 @@ if campagne_selectionnee:
                     _, err = executer_avec_spinner(
                         "Envoi du signalement...", signaler_lead_pro_invalide,
                         options_leads_signalement[choix_lead], motif.strip(), False,  # est_admin=False : montant ignoré, revue humaine requise
+                        0, campagne_selectionnee,  # client_final : vérifié côté serveur (voir data_access.signaler_lead_pro_invalide)
                     )
                     if err:
                         st.error(err)

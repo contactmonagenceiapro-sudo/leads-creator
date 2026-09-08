@@ -453,20 +453,33 @@ def enrichir_lead_pro(lead_pro_id: str, forcer_reecriture: bool = False) -> dict
 
 
 def signaler_lead_pro_invalide(
-    lead_pro_id: str, motif: str, est_admin: bool, montant_credit_centimes: int = 0
+    lead_pro_id: str, motif: str, est_admin: bool, montant_credit_centimes: int = 0,
+    client_final: str | None = None,
 ) -> dict:
     """Signale un lead B2B invalide/non qualifié. `est_admin` remplace la
     distinction de rôle JWT d'origine : un admin fixe librement le montant de
     l'avoir et le valide immédiatement ; un compte client ne fixe jamais son
-    propre crédit (toujours 0, demande en 'en_attente' de revue humaine)."""
+    propre crédit (toujours 0, demande en 'en_attente' de revue humaine).
+
+    Vérification d'appartenance CÔTÉ SERVEUR pour un appel non-admin (même
+    logique que creer_reclamation ci-dessous : le lead doit appartenir à
+    CE client, `client_final`) — avant ce correctif, seul le widget
+    st.selectbox du portail client empêchait un compte de signaler le lead
+    d'une autre campagne (pas une défense en profondeur, voir
+    audit/audit_verification_2026-09-08.md, constat M3). Le message
+    d'erreur est volontairement IDENTIQUE, que le lead n'existe pas ou
+    qu'il appartienne à un autre client — jamais de distinction qui
+    laisserait deviner l'un ou l'autre cas à un compte client."""
     motif = (motif or "signalé invalide").strip()
     try:
         leads_pro = supabase.table("leads_professionnels").select("*").eq("id", lead_pro_id).execute().data
     except Exception as e:
         raise DataAccessError(f"Erreur lecture du lead professionnel : {e}") from e
     if not leads_pro:
-        raise DataAccessError("Lead professionnel introuvable")
+        raise DataAccessError("Lead professionnel introuvable ou non autorisé.")
     lead_pro = leads_pro[0]
+    if not est_admin and lead_pro.get("client_final") != client_final:
+        raise DataAccessError("Lead professionnel introuvable ou non autorisé.")
 
     montant = montant_credit_centimes if est_admin else 0
 
