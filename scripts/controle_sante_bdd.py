@@ -402,6 +402,41 @@ def controler_erreurs_non_resolues() -> dict:
     }
 
 
+# --- e bis) Paiements Stripe en échec non résolus --------------------------
+
+
+def controler_paiements_stripe_en_echec() -> dict:
+    """Sur le modèle de controler_erreurs_non_resolues() ci-dessus — voir
+    audit/audit_verification_2026-09-08.md, constat m4. Filet de sécurité :
+    scripts/traiter_paiements_stripe.py alerte déjà sur Discord AU MOMENT de
+    l'échec (voir sa boucle principale), mais rien ne re-signalait ensuite
+    une ligne stripe_webhook_events.statut='echec' encore non résolue si
+    cette alerte ponctuelle a été manquée/mal configurée — un paiement reçu
+    mais jamais activé (leads pas livrés, abonnement pas ouvert) pouvait
+    alors rester bloqué indéfiniment sans qu'un contrôle quotidien ne le
+    revoie. Seuil à 0 (contrairement à erreurs_non_resolues, seuil 10) :
+    chaque ligne représente un paiement réel potentiellement non honoré,
+    jamais un simple bruit de fond à tolérer en petit nombre."""
+    reponse = (
+        supabase.table("stripe_webhook_events")
+        .select("id,stripe_event_id,erreur,created_at", count="exact")
+        .eq("statut", "echec")
+        .order("created_at")
+        .limit(50)
+        .execute()
+    )
+    nombre = reponse.count or 0
+    statut = "attention" if nombre > 0 else "ok"
+    return {
+        "type_controle": "paiements_stripe_en_echec",
+        "statut": statut,
+        "detail": {
+            "nombre_en_echec": nombre,
+            "evenements": reponse.data,
+        },
+    }
+
+
 # --- f) Croissance anormale d'une table -----------------------------------
 
 
@@ -615,6 +650,7 @@ ACTIONS_CONCRETES = {
     "demandes_devis_bloquees": "Vérifier l'envoi d'e-mail de confirmation (dashboard/pages_publiques.py::_envoyer_email_confirmation_demande) et le cron livraison_devis.yml — relancer/confirmer manuellement les demandes listées si nécessaire.",
     "reclamations_en_retard": "Traiter les réclamations listées depuis la page dashboard/app_pages/reclamations.py — le délai contractuel (7 jours) est engageant vis-à-vis du client.",
     "erreurs_non_resolues": "Consulter et résoudre (ou marquer resolved=true) les lignes de error_log ; si la table n'est toujours pas branchée à un usage réel, envisager de la brancher ou de la documenter comme obsolète.",
+    "paiements_stripe_en_echec": "Consulter chaque événement listé (erreur, stripe_event_id) et le corriger manuellement (boutons de secours du dashboard, voir dashboard/data_access.py::marquer_contrat_paye/marquer_demande_devis_payee_et_livree) — un paiement reçu mais jamais activé est un vrai client en attente.",
     "croissance_table": "Vérifier les lignes récentes de la table concernée (doublon, abus, attaque) avant de considérer que c'est une simple bonne nouvelle commerciale.",
     "donnees_test_residuelles": "Nettoyer manuellement les lignes suspectes listées (hors exclusions_connues), ou les documenter comme fixture volontaire si légitime.",
     "fk_non_indexees": "Ajouter une migration sql/fix_index_<table>_<colonne>.sql (voir sql/fix_index_remboursements_lead_professionnel.sql comme modèle) pour chaque entrée listée dans fk_sans_index.",
@@ -632,6 +668,7 @@ def main() -> None:
         enregistrer(controler_demandes_devis_bloquees()),
         enregistrer(controler_reclamations_en_retard()),
         enregistrer(controler_erreurs_non_resolues()),
+        enregistrer(controler_paiements_stripe_en_echec()),
         enregistrer(controler_croissance_tables()),
         enregistrer(controler_donnees_test_residuelles()),
         enregistrer(controler_fk_non_indexees(fks)),
