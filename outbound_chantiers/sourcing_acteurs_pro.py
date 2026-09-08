@@ -111,22 +111,38 @@ def recuperer_sirens_deja_connus(client_final: str) -> set[str]:
     indéfiniment les mêmes têtes de classement SIRENE (page 1 uniquement,
     déterministe d'un run à l'autre). Échec réseau -> ensemble vide : le run
     continue sans historique plutôt que d'échouer entièrement."""
+    # Paginé explicitement (en-tête Range) : sans ça, une campagne dépassant
+    # la limite par défaut de PostgREST/Supabase (max-rows, souvent 1000
+    # lignes) verrait sa réponse silencieusement tronquée — des SIREN déjà
+    # connus manqueraient à l'appel, provoquant un re-sourcing/republication
+    # de doublons sans aucune erreur visible (voir
+    # audit/audit_verification_2026-09-08.md, constat m8).
+    TAILLE_PAGE = 1000
+    sirens: set[str] = set()
+    debut = 0
     try:
-        reponse = requests.get(
-            f"{SUPABASE_URL}/rest/v1/leads_professionnels",
-            params={"select": "siren", "client_final": f"eq.{client_final}"},
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-            },
-            timeout=10,
-        )
-        if reponse.status_code == 200:
-            return {a["siren"] for a in reponse.json() if a.get("siren")}
-        log.warning(f"Impossible de récupérer l'historique SIREN ({client_final}) : HTTP {reponse.status_code}")
+        while True:
+            reponse = requests.get(
+                f"{SUPABASE_URL}/rest/v1/leads_professionnels",
+                params={"select": "siren", "client_final": f"eq.{client_final}"},
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Range": f"{debut}-{debut + TAILLE_PAGE - 1}",
+                },
+                timeout=10,
+            )
+            if reponse.status_code not in (200, 206):
+                log.warning(f"Impossible de récupérer l'historique SIREN ({client_final}) : HTTP {reponse.status_code}")
+                break
+            page = reponse.json()
+            sirens.update(a["siren"] for a in page if a.get("siren"))
+            if len(page) < TAILLE_PAGE:
+                break
+            debut += TAILLE_PAGE
     except requests.exceptions.RequestException as e:
         log.warning(f"Impossible de récupérer l'historique SIREN ({client_final}) : {e}")
-    return set()
+    return sirens
 
 
 def sourcer_acteurs_pro() -> list[dict]:

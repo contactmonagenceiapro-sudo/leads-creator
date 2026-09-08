@@ -179,21 +179,38 @@ def _noms_deja_en_base(client_final: str) -> set[str]:
     """Récupéré UNE fois par run (pas par acteur) pour savoir quels acteurs
     sont déjà connus — sert uniquement à ne pas ré-alerter sur un acteur
     ultra-qualifié déjà signalé lors d'un run précédent."""
+    # Paginé explicitement (en-tête Range) — même correctif que
+    # sourcing_acteurs_pro.py::recuperer_sirens_deja_connus (constat m8) :
+    # sans ça, une campagne dépassant la limite par défaut de PostgREST/
+    # Supabase (souvent 1000 lignes) verrait sa réponse tronquée en
+    # silence, et un acteur déjà connu pourrait re-déclencher une alerte
+    # "lead ultra-qualifié" à tort.
+    TAILLE_PAGE = 1000
+    noms: set[str] = set()
+    debut = 0
     try:
-        reponse = requests.get(
-            f"{SUPABASE_URL}/rest/v1/leads_professionnels",
-            params={"select": "nom_entreprise", "client_final": f"eq.{client_final}"},
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-            },
-            timeout=10,
-        )
-        if reponse.status_code == 200:
-            return {a["nom_entreprise"] for a in reponse.json()}
+        while True:
+            reponse = requests.get(
+                f"{SUPABASE_URL}/rest/v1/leads_professionnels",
+                params={"select": "nom_entreprise", "client_final": f"eq.{client_final}"},
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Range": f"{debut}-{debut + TAILLE_PAGE - 1}",
+                },
+                timeout=10,
+            )
+            if reponse.status_code not in (200, 206):
+                log.error(f"Impossible de vérifier les acteurs déjà en base : HTTP {reponse.status_code}")
+                break
+            page = reponse.json()
+            noms.update(a["nom_entreprise"] for a in page)
+            if len(page) < TAILLE_PAGE:
+                break
+            debut += TAILLE_PAGE
     except requests.exceptions.RequestException as e:
         log.error(f"Impossible de vérifier les acteurs déjà en base (alerte lead qualifié ignorée) : {e}")
-    return set()
+    return noms
 
 
 def _alerter_si_ultra_qualifie(acteur: dict) -> None:
