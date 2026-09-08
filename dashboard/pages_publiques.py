@@ -196,6 +196,23 @@ def _rate_limit_ou_avertir(formulaire: str) -> bool:
     return False
 
 
+def _email_ok_ou_avertir(email: str) -> bool:
+    """True si l'email est acceptable pour continuer (y compris vide — ce
+    champ est optionnel sur afficher_devis()/afficher_demande_devis(), voir
+    leurs payloads respectifs), False s'il est blacklisté/à risque (auquel
+    cas un avertissement est déjà affiché). Réutilise
+    email_blackliste_ou_a_risque(), déjà utilisée par afficher_devenir_client()
+    — jusqu'ici seul formulaire public à valider le format email avant ce
+    correctif (constat m6, voir audit/audit_verification_2026-09-08.md)."""
+    if not email.strip():
+        return True
+    a_ecarter, raison = email_blackliste_ou_a_risque(email)
+    if not a_ecarter:
+        return True
+    st.warning(f"Cette adresse e-mail ne peut pas être utilisée ({raison}). Vérifiez-la, ou laissez le champ vide.")
+    return False
+
+
 def _champ_corps_metier(cle: str) -> str | None:
     """Selectbox corps de métier partagée par afficher_devis() et
     afficher_demande_devis() — un seul widget à faire évoluer si la liste
@@ -1062,6 +1079,8 @@ def afficher_devis(slug: str | None) -> None:
             st.warning("Merci de sélectionner le corps de métier recherché.")
         elif not consentement:
             st.warning("Merci de cocher la case de consentement pour continuer.")
+        elif not _email_ok_ou_avertir(email):
+            pass  # avertissement déjà affiché par _email_ok_ou_avertir()
         elif not _rate_limit_ou_avertir("devis"):
             pass  # avertissement déjà affiché par _rate_limit_ou_avertir()
         else:
@@ -1180,6 +1199,8 @@ def afficher_demande_devis() -> None:
         return
     if not email.strip() and not telephone.strip():
         st.warning("Merci de renseigner au moins un moyen de vous recontacter (e-mail ou téléphone).")
+        return
+    if not _email_ok_ou_avertir(email):
         return
     if not consentement:
         st.warning("Merci de cocher la case de consentement pour continuer.")
