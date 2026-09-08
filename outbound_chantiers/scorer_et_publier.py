@@ -153,6 +153,21 @@ def publier_en_base(acteur: dict, est_nouveau: bool = True) -> bool:
         # filtrable dans le dashboard pour un contact manuel (téléphone :
         # quasi systématiquement disponible pour ce cas, voir diagnostic).
         payload["statut"] = "necessite_contact_manuel"
+    # LIMITE CONNUE, documentée plutôt que corrigée dans l'immédiat (constat
+    # m9, voir audit/audit_verification_2026-09-08.md) : la clé de
+    # dédoublonnage BDD est (client_final, nom_entreprise) — le SIREN, lui,
+    # sert de clé de filtrage AMONT (sourcing_acteurs_pro.py::
+    # recuperer_sirens_deja_connus), une divergence entre les deux. Deux
+    # entreprises RÉELLEMENT différentes mais partageant le même nom
+    # normalisé (homonymes, franchise, changement de raison sociale) avec
+    # des SIREN différents fusionneraient silencieusement ici
+    # (resolution=merge-duplicates ci-dessous écraserait la première par la
+    # seconde) — voir tests/test_dedoublonnage_siren_vs_nom.py, qui
+    # documente ce cas limite par un test plutôt que de le corriger : migrer
+    # la contrainte UNIQUE vers (client_final, siren) nécessiterait de
+    # vérifier au préalable l'état réel des données en production
+    # (lignes existantes avec siren NULL ou des doublons de nom déjà
+    # fusionnés) — hors de portée d'une correction de code seule.
     try:
         reponse = requests.post(
             f"{SUPABASE_URL}/rest/v1/leads_professionnels",
