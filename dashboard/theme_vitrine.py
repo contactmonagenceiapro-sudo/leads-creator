@@ -256,7 +256,7 @@ def carte_tarif(nom: str, prix_texte: str, sous_texte: str, mise_en_avant: bool 
     tarifaire déjà vue un peu plate"). Purement informationnel, comme
     l'ancien tableau (pas de bouton "Choisir" : aucun parcours self-service
     n'existe depuis cette page à ce jour, le tunnel réel démarre par
-    ?vue=intake&lead_id=... envoyé par e-mail — voir afficher_presentation).
+    ?vue=intake&token=... envoyé par e-mail — voir afficher_presentation).
 
     mise_en_avant : liseré bleu cordeau plus épais, pour une formule à
     mettre en avant si besoin (aucune ne l'est par défaut aujourd'hui, ni

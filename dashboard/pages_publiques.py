@@ -3,9 +3,15 @@ Pages PUBLIQUES du dashboard — accessibles SANS connexion, contrairement à
 toutes les autres pages (voir app.py, qui court-circuite exiger_connexion()
 pour ces vues via un paramètre d'URL ?vue=...). Remplacent les anciennes
 routes HTML de api/main.py :
-- GET/POST /presentation/{lead_id}  -> ?vue=presentation&lead_id=...
-- GET/POST /intake/{lead_id}        -> ?vue=intake&lead_id=...
+- GET/POST /presentation/{lead_id}  -> ?vue=presentation&token=...
+- GET/POST /intake/{lead_id}        -> ?vue=intake&token=...
 - GET/POST /devis/{client_slug}     -> ?vue=devis&slug=...
+
+afficher_presentation/afficher_intake résolvent par token_acces_public
+(leads.token_acces_public, voir _get_lead_par_token) depuis le 08/09/2026,
+jamais par lead_id — voir sql/fix_leads_token_acces_public.sql et
+audit/audit_verification_2026-09-08.md, constat M4 (lead_id, clé primaire,
+apparaissait auparavant en clair dans le lien envoyé par email).
 
 Contenu et logique métier repris tels quels (mêmes champs de formulaire,
 même comportement), seulement traduits en composants Streamlit natifs au
@@ -54,6 +60,7 @@ navigation libre pour un visiteur quelconque.
 
 import logging
 import os
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -209,6 +216,24 @@ def _get_lead(lead_id: str) -> dict | None:
     jamais remonter un traceback brut à un visiteur externe."""
     try:
         leads = supabase.table("leads").select("*").eq("id", lead_id).execute().data
+    except Exception:
+        return None
+    return leads[0] if leads else None
+
+
+def _get_lead_par_token(token: str | None) -> dict | None:
+    """Résout un lead STRICTEMENT par son token_acces_public — jamais par
+    lead_id (clé primaire) : seul contrôle d'accès de afficher_presentation()
+    et afficher_intake() depuis le 08/09/2026 (voir
+    sql/fix_leads_token_acces_public.sql et
+    audit/audit_verification_2026-09-08.md, constat M4 — avant ce correctif,
+    ces deux pages résolvaient directement par lead_id, exposé en clair dans
+    le lien envoyé par email). Même doctrine que _get_lead() : jamais
+    d'exception visible sur une page publique."""
+    if not token:
+        return None
+    try:
+        leads = supabase.table("leads").select("*").eq("token_acces_public", token).execute().data
     except Exception:
         return None
     return leads[0] if leads else None
@@ -667,6 +692,10 @@ def afficher_devenir_client() -> None:
         "telephone": telephone.strip() or None,
         "source": SOURCE_AUTO_INSCRIPTION,
         "notes": "Auto-inscription publique (?vue=devenir_client)",
+        # Généré ici (pas seulement dans mail_processor.py::envoyer_suivi_positif)
+        # car ce tunnel redirige IMMÉDIATEMENT vers afficher_intake, qui résout
+        # désormais strictement par token_acces_public — voir constat M4.
+        "token_acces_public": secrets.token_urlsafe(32),
     }
     try:
         reponse = supabase.table("leads").insert(payload).execute()
@@ -686,28 +715,27 @@ def afficher_devenir_client() -> None:
             st.error("Erreur lors de l'enregistrement, réessayez plus tard.")
         return
 
-    lead_id = reponse.data[0]["id"]
     alerter_discord(f"🆕 Auto-inscription artisan : {nom_entreprise}")
     st.query_params["vue"] = "intake"
-    st.query_params["lead_id"] = lead_id
+    st.query_params["token"] = reponse.data[0]["token_acces_public"]
     st.rerun()
 
 
-def afficher_presentation(lead_id: str | None) -> None:
+def afficher_presentation(token: str | None) -> None:
     """Page publique consultée directement par l'artisan depuis son email —
     présente l'offre réelle : apport de leads qualifiés (demandes de devis
     de particuliers/professionnels dans sa zone d'activité), pas une
     refonte de site vitrine — voir lead_worker.py::generer_pitch(), déjà
     aligné sur ce modèle, et le diagnostic du 2026-08-14 qui a identifié
-    que cette page (et tout le tunnel en aval) ne l'était pas."""
-    if not lead_id:
-        st.error("Lien invalide : identifiant manquant.")
-        return
+    que cette page (et tout le tunnel en aval) ne l'était pas.
 
-    lead = _get_lead(lead_id)
+    Résout par token_acces_public (voir _get_lead_par_token), jamais par
+    lead_id depuis le 08/09/2026 — constat M4."""
+    lead = _get_lead_par_token(token)
     if not lead:
         st.error("Présentation introuvable.")
         return
+    lead_id = lead["id"]
 
     company = lead.get("company") or "votre entreprise"
     pitch = lead.get("pitch_commercial") or lead.get("weakness") or ""
@@ -731,25 +759,25 @@ def afficher_presentation(lead_id: str | None) -> None:
             "✅ Aucun appel, aucune compétence technique requise de votre côté"
         )
 
-    st.link_button("Démarrer (2 minutes) →", f"?vue=intake&lead_id={lead_id}", type="primary")
+    st.link_button("Démarrer (2 minutes) →", f"?vue=intake&token={token}", type="primary")
     st.caption(f"{AGENCY_NAME} — réponse par email uniquement.")
 
 
-def afficher_intake(lead_id: str | None) -> None:
+def afficher_intake(token: str | None) -> None:
     """Formulaire asynchrone de qualification du Client (aucun appel : tout
     est déclaratif, par écrit) — corps de métier, zone d'intervention et
     choix de la formule (à l'unité ou abonnement), pour lancer l'envoi de
     leads qualifiés. Déclenche la génération du devis PDF + l'envoi en
     signature électronique dès la soumission (interne par défaut, Yousign
-    en option — voir SIGNATURE_PROVIDER)."""
-    if not lead_id:
-        st.error("Lien invalide : identifiant manquant.")
-        return
+    en option — voir SIGNATURE_PROVIDER).
 
-    lead = _get_lead(lead_id)
+    Résout par token_acces_public (voir _get_lead_par_token), jamais par
+    lead_id depuis le 08/09/2026 — constat M4."""
+    lead = _get_lead_par_token(token)
     if not lead:
         st.error("Formulaire introuvable.")
         return
+    lead_id = lead["id"]
 
     cle_envoye = f"intake_envoye_{lead_id}"
     deja_recu = lead.get("status") in STATUTS_INTAKE_DEJA_ENVOYE

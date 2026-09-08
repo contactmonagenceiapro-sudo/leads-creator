@@ -134,9 +134,9 @@ if _vue_publique in _VUES_PUBLIQUES:
         injecter_theme_vitrine()
 
     if _vue_publique == "presentation":
-        afficher_presentation(st.query_params.get("lead_id"))
+        afficher_presentation(st.query_params.get("token"))
     elif _vue_publique == "intake":
-        afficher_intake(st.query_params.get("lead_id"))
+        afficher_intake(st.query_params.get("token"))
     elif _vue_publique == "signature":
         afficher_signature(st.query_params.get("token"))
     elif _vue_publique == "confirmer_demande":

@@ -3,6 +3,7 @@ import imaplib
 import logging
 import os
 import re
+import secrets
 import sys
 import unicodedata
 import uuid
@@ -32,7 +33,7 @@ ZOHO_DOSSIER_BOUNCES_TRAITES = os.getenv("ZOHO_DOSSIER_BOUNCES_TRAITES", "")
 # URL publique de l'app Streamlit (ex: https://mon-app.streamlit.app), sous
 # laquelle les pages "présentation"/"intake" (dashboard/pages_publiques.py)
 # sont joignables par un artisan externe, via des liens de la forme
-# "{PUBLIC_DASHBOARD_URL}/?vue=presentation&lead_id=..." (voir
+# "{PUBLIC_DASHBOARD_URL}/?vue=presentation&token=..." (voir
 # envoyer_suivi_positif ci-dessous).
 PUBLIC_DASHBOARD_URL = os.getenv("PUBLIC_DASHBOARD_URL", "http://localhost:8501")
 
@@ -299,7 +300,12 @@ def envoyer_suivi_positif(lead: dict) -> None:
     Les liens pointent vers l'app Streamlit (PUBLIC_DASHBOARD_URL), qui gère
     ces deux vues publiques via un paramètre d'URL (voir
     dashboard/app.py + dashboard/pages_publiques.py) plutôt que des routes
-    HTTP dédiées — il n'y a plus de backend API séparé."""
+    HTTP dédiées — il n'y a plus de backend API séparé.
+
+    Les liens portent un token dédié (leads.token_acces_public), jamais le
+    lead_id (clé primaire) en clair depuis le 08/09/2026 — voir
+    dashboard/pages_publiques.py::_get_lead_par_token et
+    audit/audit_verification_2026-09-08.md, constat M4."""
     from ceo_agent import send_email_prospect  # import différé : évite un cycle au chargement du module
 
     lead_id = lead.get("id")
@@ -310,8 +316,18 @@ def envoyer_suivi_positif(lead: dict) -> None:
         log.warning(f"Impossible d'envoyer le suivi automatique pour {company} : lead_id ou email manquant")
         return
 
-    lien_presentation = f"{PUBLIC_DASHBOARD_URL}/?vue=presentation&lead_id={lead_id}"
-    lien_intake = f"{PUBLIC_DASHBOARD_URL}/?vue=intake&lead_id={lead_id}"
+    # Réutilise un token déjà généré (ex. suivi renvoyé après un nouvel
+    # échange) plutôt que d'en émettre un nouveau à chaque appel — évite de
+    # invalider silencieusement un lien précédent pas encore cliqué.
+    token = lead.get("token_acces_public") or secrets.token_urlsafe(32)
+    try:
+        supabase.table("leads").update({"token_acces_public": token}).eq("id", lead_id).execute()
+    except Exception as e:
+        log.error(f"Impossible de générer le lien public pour {company} : {e}")
+        return
+
+    lien_presentation = f"{PUBLIC_DASHBOARD_URL}/?vue=presentation&token={token}"
+    lien_intake = f"{PUBLIC_DASHBOARD_URL}/?vue=intake&token={token}"
 
     corps = (
         f"Bonjour,\n\n"
