@@ -997,6 +997,33 @@ def marquer_contrat_signe(contract_id: str) -> dict:
     return {"status": "ok"}
 
 
+def _marquer_evenements_stripe_resolus_manuellement(cle_metadata: str, valeur: str) -> None:
+    """Voir audit/audit_verification_2026-09-08.md, constat m5 : le bouton
+    de secours (marquer_contrat_paye/marquer_demande_devis_payee_et_livree
+    ci-dessous) mettait à jour `contracts`/`demandes_devis_particuliers`
+    sans jamais toucher à la ligne stripe_webhook_events correspondante —
+    dette de traçabilité pure (la ligne reste 'echec' en base même après
+    correction manuelle) qui, depuis l'ajout de
+    scripts/controle_sante_bdd.py::controler_paiements_stripe_en_echec()
+    (constat m4, même vague), aurait re-signalé indéfiniment un incident
+    déjà résolu à la main.
+
+    Filtre sur le chemin JSONB exact utilisé par
+    scripts/traiter_paiements_stripe.py::_traiter_un_evenement()
+    (payload.data.object.metadata.{contract_id|demande_id}) — best-effort,
+    ne doit jamais faire échouer l'action métier déjà effectuée avec
+    succès (paiement bien marqué) si cette mise à jour secondaire rate."""
+    try:
+        chemin_metadata = f"payload->data->object->metadata->>{cle_metadata}"
+        supabase.table("stripe_webhook_events").update({
+            "statut": "traite",
+            "erreur": "Résolu manuellement via le bouton de secours du dashboard (pas par le webhook automatique).",
+            "traite_le": datetime.now(timezone.utc).isoformat(),
+        }).eq("statut", "echec").eq(chemin_metadata, valeur).execute()
+    except Exception as e:
+        log.warning(f"Impossible de mettre à jour stripe_webhook_events pour {cle_metadata}={valeur} : {e}")
+
+
 def marquer_contrat_paye(contract_id: str, stripe_payment_intent_id: str) -> dict:
     """Bouton manuel de SECOURS uniquement — le cas nominal est désormais le
     webhook Stripe (scripts/traiter_paiements_stripe.py, alimenté par
@@ -1027,6 +1054,7 @@ def marquer_contrat_paye(contract_id: str, stripe_payment_intent_id: str) -> dic
         supabase.table("leads").update({"status": "paye"}).eq("id", contrat["lead_id"]).execute()
     except Exception as e:
         raise DataAccessError(f"Échec mise à jour contrat : {e}") from e
+    _marquer_evenements_stripe_resolus_manuellement("contract_id", contract_id)
     get_contracts.clear()
     journaliser_action_admin(
         "marquer_contrat_paye", "contract", contract_id,
@@ -1437,6 +1465,7 @@ def marquer_demande_devis_payee_et_livree(demande_id: str, stripe_payment_intent
         supabase.table("demandes_devis_particuliers").update(champs_maj).eq("id", demande_id).execute()
     except Exception as e:
         raise DataAccessError(f"Échec mise à jour de la demande : {e}") from e
+    _marquer_evenements_stripe_resolus_manuellement("demande_id", demande_id)
 
     from ceo_agent import send_email_prospect  # import différé : même raison que contrats_signature.py (cycle au chargement)
 
