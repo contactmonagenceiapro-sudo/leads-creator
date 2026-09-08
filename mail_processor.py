@@ -3,6 +3,7 @@ import imaplib
 import logging
 import os
 import re
+import sys
 import unicodedata
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -831,19 +832,32 @@ def _enregistrer_run(statut: str, compteurs: dict, messages_scannes: int, erreur
         log.warning(f"Impossible d'enregistrer la trace du run mail_check : {e}")
 
 
-def check_for_replies() -> None:
+def check_for_replies() -> bool:
     """Point d'entrée (bouton dashboard ET .github/workflows/mail_check.yml,
     voir MAIL_CHECK_SOURCE) : acquiert le verrou partagé, délègue le scan
     lui-même à _scanner_boite() (logique inchangée), puis journalise le
     résultat dans mail_check_runs — que le scan ait réussi, échoué, ou n'ait
-    même pas démarré (chevauchement détecté)."""
+    même pas démarré (chevauchement détecté).
+
+    Renvoie False UNIQUEMENT si _scanner_boite() remonte une erreur
+    systémique (identifiants Zoho manquants, échec de connexion/login IMAP,
+    ou toute autre exception au niveau du scan lui-même — voir son
+    `except Exception` englobant) — jamais pour une erreur isolée sur UN
+    message (déjà absorbée message par message dans _scanner_boite, voir son
+    commentaire), ni pour un chevauchement avec un scan déjà en cours
+    (verrou, arrêt normal). Sans ce retour, le cron horaire mail_check.yml
+    s'affichait "succeeded" même quand le scan n'avait jamais pu démarrer
+    (ex. identifiants Zoho expirés) — même défaut que celui déjà corrigé sur
+    ceo_agent.py/relance_prospects.py/livraison_devis.py, voir
+    audit/audit_verification_2026-09-08.md, constat M2."""
     if not _acquerir_verrou():
         log.warning("Une relève des mails est déjà en cours (bouton manuel ou run automatique) — scan ignoré.")
         _enregistrer_run("ignore_chevauchement", {}, 0)
-        return
+        return True
     try:
         compteurs, messages_scannes, erreur = _scanner_boite()
         _enregistrer_run("erreur" if erreur else "ok", compteurs, messages_scannes, erreur)
+        return erreur is None
     finally:
         _liberer_verrou()
 
@@ -1025,4 +1039,4 @@ def _scanner_boite() -> tuple[dict, int, str | None]:
 
 
 if __name__ == "__main__":
-    check_for_replies()
+    sys.exit(0 if check_for_replies() else 1)
