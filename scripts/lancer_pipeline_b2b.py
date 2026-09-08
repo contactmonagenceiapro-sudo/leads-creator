@@ -42,6 +42,15 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
+# Même valeur que outbound_chantiers.pipeline_outbound_chantiers::
+# CODE_SORTIE_ZOHO_BLOQUE — code de sortie du sous-processus distinct de
+# 0/1 pour signaler spécifiquement un blocage du compte Zoho (constat m10,
+# audit/audit_verification_2026-09-08.md). Dupliqué en littéral plutôt
+# qu'importé : ce script est un wrapper cron qui lance l'autre module en
+# SOUS-PROCESSUS séparé (pas un import Python), pas de dépendance directe à
+# créer pour une seule constante.
+CODE_SORTIE_ZOHO_BLOQUE = 2
+
 
 def campagnes_actives() -> list[dict]:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -68,6 +77,15 @@ def main() -> int:
         if args.envoi_seul:
             commande.append("--envoi-seul")
         resultat = subprocess.run(commande, cwd=str(RACINE), env=env)
+        if resultat.returncode == CODE_SORTIE_ZOHO_BLOQUE:
+            # Compte Zoho PARTAGÉ par toutes les campagnes — un blocage sur
+            # celle-ci échouera de façon certaine sur toutes les suivantes.
+            # Interrompt la boucle plutôt que de gaspiller du temps CI en
+            # tentatives de connexion vouées à l'échec (le signal d'échec
+            # final n'en est pas moins fiable : code_sortie reste 1).
+            print(f"ARRÊT : compte Zoho bloqué pendant la campagne {nom} — campagnes restantes non tentées.")
+            code_sortie = 1
+            break
         if resultat.returncode != 0:
             print(f"ÉCHEC pour la campagne {nom} (code {resultat.returncode})")
             code_sortie = 1
