@@ -452,6 +452,62 @@ def enrichir_lead_pro(lead_pro_id: str, forcer_reecriture: bool = False) -> dict
     return {"status": "success", "resultat": resultat}
 
 
+# ---------------------------------------------------------------------
+# Rate-limit des formulaires publics (dashboard/pages_publiques.py)
+# ---------------------------------------------------------------------
+
+def verifier_rate_limit_public(formulaire: str, max_appels: int = 5, fenetre_minutes: int = 10) -> bool:
+    """True si l'appel est autorisé (sous le seuil pour cette IP sur la
+    fenêtre courante), False si le quota est déjà atteint — voir
+    sql/init_rate_limit_formulaires_publics.sql pour le détail du choix
+    d'une table Supabase plutôt qu'un compteur en mémoire (Streamlit
+    Community Cloud non fiable pour tenir un état entre redémarrages), et
+    audit/audit_verification_2026-09-08.md, constat M5, pour le contexte.
+
+    Fenêtre FIXE (pas glissante, voir le fichier SQL) — approximation
+    volontaire, un anti-abus best-effort suffit ici. Check-then-act non
+    verrouillé (léger, comme ailleurs dans ce projet pour des compteurs
+    non-critiques, ex. _quota_disponible côté livraison_devis.py) : une
+    course entre deux requêtes quasi simultanées de la même IP peut
+    laisser passer UN appel de plus que max_appels, jamais un problème pour
+    un anti-spam.
+
+    st.context.ip_address absente (hors contexte Streamlit réel, ou proxy
+    qui ne la transmet pas) -> toujours autorisé : mieux vaut ne pas
+    limiter que bloquer tous les visiteurs derrière une IP non résolue.
+    Idem si la table est indisponible (ex. migration SQL pas encore
+    appliquée) : repli permissif, jamais bloquant pour un vrai visiteur."""
+    ip = (getattr(st.context, "ip_address", None) or "").strip()
+    if not ip:
+        return True
+
+    fenetre_s = fenetre_minutes * 60
+    epoch = int(datetime.now(timezone.utc).timestamp())
+    debut_fenetre = datetime.fromtimestamp((epoch // fenetre_s) * fenetre_s, tz=timezone.utc).isoformat()
+
+    try:
+        lignes = (
+            supabase.table("rate_limit_formulaires_publics").select("nb_appels")
+            .eq("ip", ip).eq("formulaire", formulaire).eq("fenetre_debut", debut_fenetre)
+            .execute().data
+        )
+        nb_appels_actuel = lignes[0]["nb_appels"] if lignes else 0
+        if nb_appels_actuel >= max_appels:
+            log.warning(
+                f"Rate-limit atteint pour « {formulaire} » (IP {ip}, "
+                f"{nb_appels_actuel}/{max_appels} sur {fenetre_minutes} min)."
+            )
+            return False
+        supabase.table("rate_limit_formulaires_publics").upsert(
+            {"ip": ip, "formulaire": formulaire, "fenetre_debut": debut_fenetre, "nb_appels": nb_appels_actuel + 1},
+            on_conflict="ip,formulaire,fenetre_debut",
+        ).execute()
+    except Exception as e:
+        log.warning(f"Rate-limit indisponible pour « {formulaire} », appel autorisé par repli : {e}")
+        return True
+    return True
+
+
 def signaler_lead_pro_invalide(
     lead_pro_id: str, motif: str, est_admin: bool, montant_credit_centimes: int = 0,
     client_final: str | None = None,

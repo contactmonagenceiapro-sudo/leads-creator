@@ -62,6 +62,7 @@ import streamlit as st
 
 from contrats_signature import envoyer_contrat_signature, generer_pdf_devis, libelle_prestation, normaliser_type_offre
 from alertes import alerter_discord
+from data_access import verifier_rate_limit_public
 from email_validator import email_blackliste_ou_a_risque
 from generation_contrats import (
     FORMULES_ABONNEMENT,
@@ -169,6 +170,23 @@ SECTEURS_METIER = [libelle for _, libelle in SECTEURS_NAF]
 # première position plutôt que de risquer une pré-sélection silencieuse du
 # premier VRAI corps de métier de la liste.
 _PLACEHOLDER_CORPS_METIER = "— Sélectionnez un corps de métier —"
+
+
+def _rate_limit_ou_avertir(formulaire: str) -> bool:
+    """True si la soumission est autorisée, False si le quota de la fenêtre
+    courante est déjà atteint pour cette IP (auquel cas un avertissement
+    générique est déjà affiché — jamais le seuil exact, pour ne pas
+    faciliter son contournement). Partagé par les 3 formulaires publics
+    d'écriture (afficher_devis, afficher_demande_devis,
+    afficher_devenir_client) — voir data_access.verifier_rate_limit_public
+    et audit/audit_verification_2026-09-08.md, constat M5."""
+    if verifier_rate_limit_public(formulaire):
+        return True
+    st.warning(
+        "Trop de demandes envoyées récemment depuis votre connexion. "
+        "Merci de réessayer un peu plus tard."
+    )
+    return False
 
 
 def _champ_corps_metier(cle: str) -> str | None:
@@ -640,6 +658,8 @@ def afficher_devenir_client() -> None:
             f"Vérifiez-la, ou contactez-nous directement à {AGENCY_CONTACT_EMAIL}."
         )
         return
+    if not _rate_limit_ou_avertir("devenir_client"):
+        return
 
     payload = {
         "company": nom_entreprise.strip(),
@@ -1014,6 +1034,8 @@ def afficher_devis(slug: str | None) -> None:
             st.warning("Merci de sélectionner le corps de métier recherché.")
         elif not consentement:
             st.warning("Merci de cocher la case de consentement pour continuer.")
+        elif not _rate_limit_ou_avertir("devis"):
+            pass  # avertissement déjà affiché par _rate_limit_ou_avertir()
         else:
             payload = {
                 "client_final": client_final,
@@ -1133,6 +1155,8 @@ def afficher_demande_devis() -> None:
         return
     if not consentement:
         st.warning("Merci de cocher la case de consentement pour continuer.")
+        return
+    if not _rate_limit_ou_avertir("demande_devis"):
         return
 
     payload = {
