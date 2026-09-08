@@ -27,11 +27,18 @@ statut_verification_pro à 'verifie'.
 """
 
 import re
+import time
 
 import requests
 
 SIRENE_API_URL = "https://recherche-entreprises.api.gouv.fr/search"
 TIMEOUT_SECONDES = 10
+# Retry avec backoff exponentiel — même pattern que le sourcing B2B (voir
+# outbound_chantiers/sourcing_acteurs_pro.py::interroger_sirene), absent
+# jusqu'ici de ce module : un hoquet réseau ponctuel faisait échouer en
+# direct la vérification SIRET depuis une page publique, sans deuxième
+# chance (constat m11, audit/audit_verification_2026-09-08.md).
+NB_TENTATIVES_MAX = 3
 
 STATUT_NON_VERIFIE = "non_verifie"
 STATUT_EN_ATTENTE = "en_attente"
@@ -86,17 +93,32 @@ def verifier_siret_sirene(siret: str | None) -> dict:
     if not siret_format_valide(siret):
         return {**resultat_vide, "erreur": "Format SIRET invalide (14 chiffres attendus)."}
 
-    try:
-        reponse = requests.get(
-            SIRENE_API_URL, params={"q": siret, "per_page": 1}, timeout=TIMEOUT_SECONDES,
-        )
-        if reponse.status_code != 200:
-            return {**resultat_vide, "erreur": f"API SIRENE : code HTTP {reponse.status_code}."}
-        donnees = reponse.json()
-    except requests.exceptions.RequestException as e:
-        return {**resultat_vide, "erreur": f"API SIRENE injoignable : {e}"}
-    except ValueError:
-        return {**resultat_vide, "erreur": "API SIRENE : réponse non-JSON."}
+    donnees = None
+    erreur = None
+    for tentative in range(1, NB_TENTATIVES_MAX + 1):
+        try:
+            reponse = requests.get(
+                SIRENE_API_URL, params={"q": siret, "per_page": 1}, timeout=TIMEOUT_SECONDES,
+            )
+            if reponse.status_code == 429 and tentative < NB_TENTATIVES_MAX:
+                time.sleep(2 ** tentative)
+                continue
+            if reponse.status_code != 200:
+                erreur = f"API SIRENE : code HTTP {reponse.status_code}."
+                break
+            donnees = reponse.json()
+            erreur = None
+            break
+        except requests.exceptions.RequestException as e:
+            erreur = f"API SIRENE injoignable : {e}"
+            if tentative < NB_TENTATIVES_MAX:
+                time.sleep(2 ** tentative)
+                continue
+        except ValueError:
+            erreur = "API SIRENE : réponse non-JSON."
+            break
+    if erreur is not None or donnees is None:
+        return {**resultat_vide, "erreur": erreur or "API SIRENE : échec après plusieurs tentatives."}
 
     resultats = donnees.get("results") or []
     if not resultats:
