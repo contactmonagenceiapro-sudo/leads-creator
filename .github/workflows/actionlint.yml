@@ -1,0 +1,36 @@
+name: Validation des workflows (actionlint)
+
+# Valide la syntaxe et le comportement de TOUS les fichiers
+# .github/workflows/*.yml avant merge (expressions invalides, contextes
+# mal utilisés, shellcheck des blocs `run:`...) — jusqu'ici, une erreur
+# dans un workflow n'était détectée qu'au moment où GitHub Actions tentait
+# de l'exécuter (le déclencheur schedule/workflow_dispatch réel), jamais
+# avant. Voir audit/audit_verification_2026-09-08.md, constat a2.
+#
+# Se déclenche uniquement quand un fichier de workflow change — inutile de
+# tourner sur chaque push/PR qui ne touche pas .github/workflows/.
+
+on:
+  push:
+    paths:
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+  workflow_dispatch: {} # déclenchement manuel depuis l'onglet Actions, pour tester
+
+concurrency:
+  group: actionlint-${{ github.ref }}
+  cancel-in-progress: true # un nouveau push sur la même branche rend le run précédent obsolète
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Télécharger et exécuter actionlint
+        run: |
+          bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
