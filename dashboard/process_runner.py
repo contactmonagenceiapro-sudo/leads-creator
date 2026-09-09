@@ -30,6 +30,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from auth import est_admin
 from supabase_client import supabase
 
 RACINE_REPO = Path(__file__).resolve().parent.parent
@@ -173,7 +174,16 @@ def lancer(action: str, campagne: str | None, commande: list[str], env: dict | N
     Refuse de relancer si un run est déjà `en_cours` pour la même
     action/campagne : filet de sécurité en plus de la désactivation des
     boutons côté page (celle-ci peut être court-circuitée par un double-clic
-    juste avant le rerun qui la déclenche)."""
+    juste avant le rerun qui la déclenche).
+
+    Assertion défensive est_admin() (constat a4, audit/
+    audit_verification_2026-09-08.md) : jusqu'ici, la seule protection
+    contre un lancement non-admin était le routage des pages elles-mêmes
+    (toutes les pages qui appellent lancer_*() sont déjà admin-only) — pas
+    une défense en profondeur au niveau de la fonction qui lance réellement
+    le subprocess (scraping, campagne d'emails réels, etc.)."""
+    if not est_admin():
+        raise PermissionError("Seul un compte admin peut lancer une action de fond.")
     if est_en_cours(action, campagne):
         raise RuntimeError(
             f"Une tâche « {action} » est déjà en cours{f' pour {campagne}' if campagne else ''} "
