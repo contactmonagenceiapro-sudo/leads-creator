@@ -2,11 +2,11 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-09-04 22:13 UTC
+Généré le : 2026-09-09 19:48 UTC
 
 ## 1. Schéma de la base de données
 
-32 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
+33 tables, 2 vue(s) — extraites en direct via l'endpoint OpenAPI de PostgREST.
 
 ```mermaid
 erDiagram
@@ -301,6 +301,12 @@ erDiagram
         timestamp_with_time_zone proposee_le
         timestamp_with_time_zone expire_le
     }
+    rate_limit_formulaires_publics {
+        text ip PK
+        text formulaire PK
+        timestamp_with_time_zone fenetre_debut PK
+        integer nb_appels
+    }
     reclamations {
         uuid id PK
         text type_lead
@@ -412,6 +418,7 @@ erDiagram
 ```mermaid
 flowchart LR
     subgraph CRON["GitHub Actions (cron)"]
+        actionlint_yml["Validation des workflows (actionlint)<br/>(workflow_dispatch seul)"] --> actionlint_yml_script(["?"])
         ceo_agent_yml["Campagne de prospection B2C (ceo_agent)<br/>(20 6 * * *)"] --> ceo_agent_yml_script(["ceo_agent.py"])
         controle_delivrabilite_yml["Contrôle hebdomadaire de la délivrabilité e-mail<br/>(0 9 * * 1)"] --> controle_delivrabilite_yml_script(["scripts/controle_delivrabilite.py"])
         controle_echeances_yml["Contrôle hebdomadaire des échéances<br/>(0 8 * * 1)"] --> controle_echeances_yml_script(["scripts/controle_echeances.py"])
@@ -433,6 +440,7 @@ flowchart LR
 
 | Workflow | Fréquence | Script | Rôle |
 |---|---|---|---|
+| `actionlint.yml` | manuel uniquement (workflow_dispatch) | `?` | Valide la syntaxe et le comportement de TOUS les fichiers .github/workflows/*.yml avant merge (expressions invalides, contextes mal utilisés, shellcheck des blocs `run:`...) — jusqu'ici, une erreur dans un workflow n'était détectée qu'au moment où GitHub Actions tentait de l'exécuter (le déclencheur schedule/workflow_dispatch réel), jamais avant. Voir audit/audit_verification_2026-09-08.md, constat a2. |
 | `ceo_agent.yml` | `20 6 * * *` | `ceo_agent.py` | Exécute ceo_agent.py quotidiennement — envoie un pitch RÉGÉNÉRÉ (voir lead_worker.py::generer_pitch(), jamais le pitch_commercial mis en cache au scraping) à chaque lead B2C non contacté dont l'email a été réellement vérifié (voir ceo_agent.py::get_leads_from_supabase). Journalise le résultat de la campagne dans la table ceo_reports. |
 | `controle_delivrabilite.yml` | `0 9 * * 1` | `scripts/controle_delivrabilite.py` | Exécute scripts/controle_delivrabilite.py une fois par semaine — alerte (Discord ou e-mail en repli) si le taux de hard bounce dépasse 5 % sur les 30 derniers jours, sur les artisans ou le B2B (voir dashboard/data_access.py::get_taux_bounce). |
 | `controle_echeances.yml` | `0 8 * * 1` | `scripts/controle_echeances.py` | Exécute scripts/controle_echeances.py une fois par semaine — alerte (Discord ou e-mail en repli) sur toute échéance légale/administrative encore 'a_traiter' à moins de 30 jours (voir sql/init_echeances.sql). |
@@ -507,14 +515,14 @@ Détectées par recherche des imports/appels réels dans le code (pas une liste 
 | Supabase (Postgres + Auth) | Base de données applicative (toutes les tables métier) et authentification native pour l'espace Artisans (landing/). Accès serveur exclusivement via la clé service_role (bypass RLS). | `ceo_agent.py`, `dashboard/supabase_client.py`, `livraison_devis.py`, `mail_processor.py`, `relance_prospects.py`, … (+3) |
 | Stripe | Lien de paiement (Payment Links) généré à la signature du contrat B2C, et remboursements (Refunds API). Confirmation de paiement 100% manuelle côté admin (pas de webhook). | `dashboard/contrats_signature.py`, `dashboard/data_access.py`, `livraison_devis.py` |
 | Zoho Mail (SMTP/IMAP) | Envoi des campagnes/relances/e-mails transactionnels (SMTP) et relève des bounces/réponses (IMAP). | `alertes.py`, `mail_processor.py`, `outbound_chantiers/outbound_pro_btp.py` |
-| Signature électronique interne | Provider de signature par défaut (art. 1367 code civil, lien token + preuve IP/user-agent). | `alertes.py`, `dashboard/app_pages/gestion_clients.py`, `dashboard/contrats_signature.py`, `dashboard/pages_publiques.py`, `dashboard/signature_interne.py`, … (+1) |
-| Yousign | Provider de signature électronique alternatif (sandbox), activable via SIGNATURE_PROVIDER_PAR_DEFAUT. | `dashboard/app_pages/gestion_clients.py`, `dashboard/contrats_signature.py`, `dashboard/data_access.py`, `dashboard/finances_calc.py`, `dashboard/pages_publiques.py`, … (+1) |
+| Signature électronique interne | Provider de signature par défaut (art. 1367 code civil, lien token + preuve IP/user-agent). | `alertes.py`, `dashboard/app_pages/gestion_clients.py`, `dashboard/contrats_signature.py`, `dashboard/pages_publiques.py`, `dashboard/signature_interne.py`, … (+3) |
+| Yousign | Provider de signature électronique alternatif (sandbox), activable via SIGNATURE_PROVIDER_PAR_DEFAUT. | `dashboard/app_pages/gestion_clients.py`, `dashboard/contrats_signature.py`, `dashboard/data_access.py`, `dashboard/finances_calc.py`, `dashboard/pages_publiques.py`, … (+3) |
 | API SIRENE (recherche-entreprises.api.gouv.fr) | Recherche/enrichissement d'entreprises (SIREN, adresse) — données publiques, sans clé. | `outbound_chantiers/config.py`, `outbound_chantiers/sourcing_acteurs_pro.py`, `phone_enricher.py`, `scraper_batiment.py`, `verification_pro.py` |
 | Google Places API | Dernier recours pour trouver un téléphone d'entreprise (payant) — voir phone_enricher.py. | `outbound_chantiers/enrichir_acteurs_pro.py`, `phone_enricher.py` |
 | DNS-over-HTTPS (dns.google) | Vérification live des enregistrements SPF/DKIM/DMARC (app_pages/deliverabilite.py), gratuit. | `dashboard/app_pages/deliverabilite.py` |
 | Discord (webhook) | Alertes temps réel (lead ultra-qualifié, erreurs) — voir alertes.py. | `alertes.py`, `dashboard/data_access.py`, `mail_processor.py`, `scraper_batiment.py`, `scripts/controle_delivrabilite.py`, … (+2) |
 | Ollama | Génération des pitchs de prospection (LLM local, avec repli générique si injoignable). | `dashboard/data_access.py`, `lead_worker.py`, `llm_config.py`, `outbound_chantiers/config.py` |
-| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `ceo_agent.yml`, `controle_delivrabilite.yml`, `controle_echeances.yml`, `controle_sante_bdd.yml`, `envoyer_enquetes_satisfaction.yml`, `livraison_devis.yml`, `mail_check.yml`, `outbound_chantiers_campagne.yml`, `outbound_chantiers_sourcing.yml`, `relance_prospects.yml`, `traiter_paiements_stripe.yml` |
+| GitHub Actions | Seul déclencheur cron du projet (Streamlit Community Cloud n'a pas de cron) — voir section 2 | `actionlint.yml`, `ceo_agent.yml`, `controle_delivrabilite.yml`, `controle_echeances.yml`, `controle_sante_bdd.yml`, `envoyer_enquetes_satisfaction.yml`, `livraison_devis.yml`, `mail_check.yml`, `outbound_chantiers_campagne.yml`, `outbound_chantiers_sourcing.yml`, `relance_prospects.yml`, `traiter_paiements_stripe.yml` |
 
 ## 5. Surveillance continue de la base
 
