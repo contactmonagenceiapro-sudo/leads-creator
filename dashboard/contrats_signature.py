@@ -41,6 +41,22 @@ from supabase_client import supabase
 
 log = logging.getLogger(__name__)
 
+# ⚠️ Constat a6 (audit/audit_verification_2026-09-08.md) : le différentiel de
+# garantie annoncé par signature_interne.py ("repasser sur Yousign dès que
+# le montant ou le risque de contestation augmente sensiblement") N'EST PAS
+# ENCORE matérialisé dans la configuration RÉELLE ci-dessous :
+# - YOUSIGN_API_URL pointe par défaut sur l'environnement SANDBOX
+#   (api-sandbox.yousign.app) — un contrat signé dans cet environnement n'a
+#   PAS la valeur légale d'une signature électronique Yousign de production
+#   (voir signers ci-dessous, signature_authentication_mode="no_otp").
+# - "no_otp" (voir la création du signataire ci-dessous) désactive toute
+#   vérification supplémentaire (SMS/code) — c'est le niveau "signature
+#   électronique simple" de Yousign, pas un niveau "avancé" à deux facteurs.
+# Basculer réellement vers Yousign pour un contrat à enjeu plus élevé
+# nécessite donc, au minimum : une clé API et une URL de PRODUCTION
+# (YOUSIGN_API_URL), et vérifier si "no_otp" doit être remplacé par un mode
+# avec vérification pour ce niveau d'enjeu — pas seulement de changer
+# SIGNATURE_PROVIDER_PAR_DEFAUT.
 YOUSIGN_API_KEY = os.getenv("YOUSIGN_API_KEY", "")
 YOUSIGN_API_URL = os.getenv("YOUSIGN_API_URL", "https://api-sandbox.yousign.app/v3")
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY", "")

@@ -10,8 +10,13 @@ suffisant pour un contrat de faible valeur/faible risque de litige (le
 client corrobore ensuite l'accord par email/échange), mais ne fournit ni
 attestation d'un tiers de confiance indépendant, ni vérification d'identité,
 ni scellement cryptographique du document, ni horodatage qualifié — contrairement
-à Yousign. Repasser sur Yousign dès que le montant ou le risque de contestation
-augmente sensiblement.
+à Yousign EN PRODUCTION, correctement configuré. Repasser sur Yousign dès
+que le montant ou le risque de contestation augmente sensiblement — mais
+voir dashboard/contrats_signature.py::YOUSIGN_API_URL (constat a6, audit/
+audit_verification_2026-09-08.md) : ce différentiel de garantie n'est PAS
+encore réel avec la configuration actuelle (sandbox + no_otp), à corriger
+AVANT de compter sur Yousign pour un enjeu plus élevé, pas seulement en
+basculant SIGNATURE_PROVIDER_PAR_DEFAUT.
 
 Flux :
     envoyer_contrat_signature_interne(lead, intake)  -> crée le contrat, envoie le lien
