@@ -141,10 +141,7 @@ BONUS_MAX_PRESENCE_WEB = 0.05
 
 # Seuil (score_final, 0 à 1) au-delà duquel un acteur nouvellement publié
 # déclenche une alerte temps réel (Discord + e-mail, voir scorer_et_publier.py
-# et alertes.py). MÊME variable d'environnement que api/main.py (qui l'utilise
-# pour le KPI "leads_ultra_qualifies" de /campagnes/{x}/stats) — les deux
-# doivent rester synchronisés, d'où le nom partagé plutôt que deux réglages
-# indépendants qui pourraient diverger.
+# et alertes.py).
 SEUIL_LEAD_ULTRA_QUALIFIE = float(os.getenv("SEUIL_LEAD_ULTRA_QUALIFIE", "0.85"))
 
 # === Cadence de relance (module 4) — J+3 puis J+7 par défaut ===

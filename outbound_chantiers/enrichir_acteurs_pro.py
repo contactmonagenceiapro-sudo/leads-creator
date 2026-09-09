@@ -432,7 +432,9 @@ def enrichir_un_acteur(nom_entreprise: str, commune: str) -> dict:
     un site injoignable, un nom générant une URL invalide, ou toute autre
     erreur imprévue se traduit par enrichissement_statut='echec', pas par un
     crash qui ferait perdre le reste du lot (pipeline) ou planterait la
-    requête (bouton "Ré-enrichir" du dashboard, voir api/main.py)."""
+    requête (bouton "Ré-enrichir" du dashboard, voir
+    dashboard/app_pages/gestion_clients.py — plus de backend API séparé
+    depuis la migration vers Streamlit Community Cloud)."""
     site, email, telephone, reseaux = None, None, None, {}
     ddg_bloque_avant_appel = _ddg_definitivement_bloque
     try:

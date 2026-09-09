@@ -9,9 +9,11 @@ Combine :
   nominatif).
 
 Publie ensuite chaque acteur ayant un contact exploitable dans la table
-Supabase `leads_professionnels`, via l'endpoint générique /sb_insert déjà
-exposé par l'API (api/main.py) — dédoublonnage sur (client_final,
-nom_entreprise), cohérent avec le reste du projet.
+Supabase `leads_professionnels`, via un appel REST direct à PostgREST
+(requests.post, voir publier_en_base ci-dessous) — plus de backend API
+séparé depuis la migration vers Streamlit Community Cloud (l'ancien
+endpoint /sb_insert de api/main.py a disparu avec lui). Dédoublonnage sur
+(client_final, nom_entreprise), cohérent avec le reste du projet.
 
 Alerte temps réel (Discord + e-mail) dès qu'un acteur NOUVELLEMENT publié
 dépasse SEUIL_LEAD_ULTRA_QUALIFIE (voir outbound_chantiers/config.py) — la
