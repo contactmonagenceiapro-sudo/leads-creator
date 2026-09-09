@@ -409,7 +409,19 @@ def lancer_relances() -> None:
         )
         return
 
-    acteurs = supabase_get(f"select=*&client_final=eq.{CLIENT_FINAL}&statut=eq.contacte_attente_reponse")
+    # Trié par urgence (le plus en retard d'abord), même principe que
+    # lancer_campagne_initiale::order=score_final.desc — sans ça, si le
+    # budget quotidien s'épuise en cours de boucle, l'ordre de traitement
+    # ne priorise pas les relances les plus en retard (constat m14, voir
+    # audit/audit_verification_2026-09-08.md). nullsfirst : un acteur
+    # jamais encore relancé (last_relance_at NULL) est au moins aussi
+    # urgent qu'un acteur déjà relancé il y a longtemps — passe avant.
+    # contacted_at.asc en second critère : départage à date de premier
+    # contact la plus ancienne d'abord.
+    acteurs = supabase_get(
+        f"select=*&client_final=eq.{CLIENT_FINAL}&statut=eq.contacte_attente_reponse"
+        "&order=last_relance_at.asc.nullsfirst,contacted_at.asc"
+    )
     blacklist = emails_blacklistes()
     maintenant = datetime.now(timezone.utc)
     budget_restant = ramp["budget_restant"]
