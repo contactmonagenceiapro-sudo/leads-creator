@@ -43,6 +43,7 @@ from email_blacklist import emails_blacklistes
 from email_tracking import demarrer_tracking, verifier_budget_quotidien
 from email_validator import email_blackliste_ou_a_risque, email_status
 from llm_config import LLM_API_URL, LLM_MODEL_MAIN, LLM_TIMEOUT, generer_texte
+from logging_utils import FormatteurPrefixe
 from scorer_leads import SEUIL_LEAD_PRIORITAIRE_B2C, activite_pour_communes, calculer_score
 
 load_dotenv()
@@ -75,19 +76,8 @@ PAUSE_MAX_SEC = int(os.getenv("PAUSE_ENVOI_MAX_SEC", "120"))
 # ---------------------------------------------------------------------------
 # LOGGING
 # ---------------------------------------------------------------------------
-
-class FormatteurPrefixe(logging.Formatter):
-    PREFIXES = {
-        logging.DEBUG: "[*]",
-        logging.INFO: "[+]",
-        logging.WARNING: "[!]",
-        logging.ERROR: "[x]",
-        logging.CRITICAL: "[x]",
-    }
-
-    def format(self, record):
-        prefixe = self.PREFIXES.get(record.levelno, "[*]")
-        return f"{prefixe} {record.getMessage()}"
+# FormatteurPrefixe est importée depuis logging_utils.py (voir en tête de
+# fichier) — mutualisée depuis le 09/09/2026, constat m15.
 
 
 def configurer_logging() -> None:

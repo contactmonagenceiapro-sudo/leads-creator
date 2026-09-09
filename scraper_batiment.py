@@ -37,6 +37,8 @@ from dotenv import load_dotenv
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from logging_utils import FormatteurPrefixe
+
 load_dotenv()
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
@@ -226,21 +228,8 @@ def alerter_degradation(message: str) -> None:
 # ---------------------------------------------------------------------------
 # LOGGING & TRAÇABILITÉ (préfixes visuels [*] [+] [!] [x])
 # ---------------------------------------------------------------------------
-
-class FormatteurPrefixe(logging.Formatter):
-    """Formate chaque ligne de log avec un préfixe visuel selon sa gravité."""
-
-    PREFIXES = {
-        logging.DEBUG: "[*]",
-        logging.INFO: "[+]",
-        logging.WARNING: "[!]",
-        logging.ERROR: "[x]",
-        logging.CRITICAL: "[x]",
-    }
-
-    def format(self, record):
-        prefixe = self.PREFIXES.get(record.levelno, "[*]")
-        return f"{prefixe} {record.getMessage()}"
+# FormatteurPrefixe est importée depuis logging_utils.py (voir en tête de
+# fichier) — mutualisée depuis le 09/09/2026, constat m15.
 
 
 def configurer_logging():

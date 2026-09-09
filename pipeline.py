@@ -29,19 +29,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 
-
-class FormatteurPrefixe(logging.Formatter):
-    PREFIXES = {
-        logging.DEBUG: "[*]",
-        logging.INFO: "[+]",
-        logging.WARNING: "[!]",
-        logging.ERROR: "[x]",
-        logging.CRITICAL: "[x]",
-    }
-
-    def format(self, record):
-        prefixe = self.PREFIXES.get(record.levelno, "[*]")
-        return f"{prefixe} {record.getMessage()}"
+from logging_utils import FormatteurPrefixe
 
 
 def configurer_logging() -> None:
