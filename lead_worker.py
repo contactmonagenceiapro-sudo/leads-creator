@@ -372,9 +372,43 @@ def _conflit_email_deja_existant(reponse: requests.Response) -> bool:
     return corps.get("code") == "23505" and "email" in (corps.get("message") or "").lower()
 
 
+def _lead_existant_par_siren(siren: str | None) -> dict | None:
+    """Recherche un lead déjà en base par SIREN — voir inserer_lead()
+    ci-dessous, constat m16 (audit/audit_verification_2026-09-08.md) :
+    l'upsert principal se fait sur `company` (nom d'entreprise), qui peut
+    varier légèrement d'un scrape à l'autre pour la MÊME entreprise réelle
+    (ex. "Dupont SARL" vs "SARL Dupont") — sans ce contrôle complémentaire,
+    une simple variation de formulation crée une seconde fiche distincte
+    (double sollicitation commerciale de la même entreprise réelle). Le
+    SIREN, identifiant officiel stable, permet de détecter ce cas avant
+    l'upsert. Best-effort : une erreur réseau ne doit jamais bloquer
+    l'insertion elle-même, seulement désactiver ce contrôle complémentaire
+    pour ce lead précis."""
+    if not siren:
+        return None
+    try:
+        reponse = requests.get(
+            f"{SUPABASE_URL}/rest/v1/leads",
+            params={"select": "id,company", "siren": f"eq.{siren}", "limit": 1},
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+            timeout=10,
+        )
+        if reponse.status_code == 200:
+            lignes = reponse.json()
+            return lignes[0] if lignes else None
+    except requests.exceptions.RequestException as e:
+        log.warning(f"Impossible de vérifier les doublons par SIREN ({siren}) : {e}")
+    return None
+
+
 def inserer_lead(lead: dict, pitch: str | None, envoi_reussi: bool, marquer_invalide: bool = False) -> bool | None:
     """Upsert le lead dans Supabase directement, avec anti-doublon sur
-    l'entreprise (on_conflict=company + resolution=merge-duplicates).
+    l'entreprise (on_conflict=company + resolution=merge-duplicates), et un
+    contrôle complémentaire par SIREN (_lead_existant_par_siren(), constat
+    m16) : le nom d'entreprise seul ne protège pas contre une variation de
+    formulation entre deux scrapes de la MÊME entreprise réelle — quand le
+    SIREN déjà connu en base pointe vers un nom différent, l'upsert est
+    redirigé vers la fiche existante plutôt que d'en créer une seconde.
 
     Anciennement dédupliqué par email : depuis que scraper_batiment.py et
     email_enricher.py peuvent légitimement laisser email=None (aucun domaine
@@ -448,6 +482,20 @@ def inserer_lead(lead: dict, pitch: str | None, envoi_reussi: bool, marquer_inva
         db_payload["status"] = "invalide"
     else:
         db_payload["status"] = "a_contacter"
+
+    # Contrôle complémentaire par SIREN (constat m16) — voir
+    # _lead_existant_par_siren(). Redirige l'upsert vers la fiche déjà
+    # connue plutôt que d'en créer une seconde sous un nom légèrement
+    # différent ; ne s'applique QUE si le nom diffère réellement (sinon
+    # l'upsert normal sur `company` suffit déjà).
+    lead_existant = _lead_existant_par_siren(lead.get("siren"))
+    if lead_existant and lead_existant.get("company") != lead["company_name"]:
+        log.info(
+            f"Lead '{lead['company_name']}' déjà connu en base sous le nom "
+            f"'{lead_existant['company']}' (même SIREN {lead.get('siren')}) — "
+            "upsert redirigé vers la fiche existante plutôt que d'en créer une nouvelle."
+        )
+        db_payload["company"] = lead_existant["company"]
 
     try:
         reponse = requests.post(
