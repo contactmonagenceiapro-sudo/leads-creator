@@ -1739,18 +1739,26 @@ def creer_reclamation(
     if motif not in MOTIFS_RECLAMATION:
         raise DataAccessError("Motif invalide.")
 
+    # Messages d'erreur "introuvable" et "n'appartient pas à ce client"
+    # volontairement IDENTIQUES ci-dessous (cas particulier signalé lors de
+    # l'audit du 08/09/2026, même traitement que signaler_lead_pro_invalide,
+    # commit 2a68a84) : jamais de distinction qui laisserait un compte
+    # client deviner si un lead_id existe mais appartient à un autre
+    # client, vs s'il n'existe pas du tout. Le message intermédiaire ("pas
+    # encore livrée", un état légitime et non lié à l'appartenance) reste
+    # distinct — hors périmètre de ce correctif précis.
     if type_lead == "b2c":
         try:
             demandes = supabase.table("demandes_devis_particuliers").select("*").eq("id", lead_id).execute().data
         except Exception as e:
             raise DataAccessError(f"Erreur lecture de la demande de devis : {e}") from e
         if not demandes:
-            raise DataAccessError("Demande de devis introuvable.")
+            raise DataAccessError("Demande de devis introuvable ou non autorisée.")
         demande = demandes[0]
         if demande.get("statut") != "livree" or not demande.get("lead_id_livraison"):
             raise DataAccessError("Cette demande de devis n'a pas encore été livrée.")
         if not est_admin and demande["lead_id_livraison"] != client_lead_id:
-            raise DataAccessError("Cette demande de devis ne vous a pas été livrée.")
+            raise DataAccessError("Demande de devis introuvable ou non autorisée.")
         client_lead_id_final = demande["lead_id_livraison"]
         client_final_final = None
         date_livraison = demande.get("livree_le")
@@ -1760,10 +1768,10 @@ def creer_reclamation(
         except Exception as e:
             raise DataAccessError(f"Erreur lecture du lead professionnel : {e}") from e
         if not leads_pro:
-            raise DataAccessError("Lead professionnel introuvable.")
+            raise DataAccessError("Lead professionnel introuvable ou non autorisé.")
         lead_pro = leads_pro[0]
         if not est_admin and lead_pro.get("client_final") != client_final:
-            raise DataAccessError("Ce lead ne vous a pas été livré.")
+            raise DataAccessError("Lead professionnel introuvable ou non autorisé.")
         client_lead_id_final = None
         client_final_final = lead_pro.get("client_final")
         date_livraison = lead_pro.get("created_at")
