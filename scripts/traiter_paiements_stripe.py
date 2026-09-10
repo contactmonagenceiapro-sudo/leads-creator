@@ -206,7 +206,19 @@ def main() -> None:
     if not SUPABASE_URL or not SUPABASE_KEY:
         log.error("Identifiants Supabase manquants — arrêt.")
         raise SystemExit(1)
-    traiter_file_attente()
+    # Filet englobant, DISTINCT de l'alerte par-événement dans la boucle de
+    # traiter_file_attente() : un crash avant ou en dehors de cette boucle
+    # (ex: le SELECT sur stripe_webhook_events lui-même qui échoue) sortait
+    # jusqu'ici en erreur Python bruyante côté CI sans jamais déclencher
+    # alerter_discord — précisément le cas le plus grave (aucun événement
+    # Stripe n'est traité du tout) passait inaperçu. Ne remplace pas l'alerte
+    # par-événement existante, s'ajoute en plus d'elle.
+    try:
+        traiter_file_attente()
+    except Exception as e:
+        log.error(f"Échec avant traitement des événements Stripe : {e}")
+        alerter_discord(f"🚨 Échec avant traitement des événements Stripe (script interrompu) : {e}")
+        raise
 
 
 if __name__ == "__main__":
