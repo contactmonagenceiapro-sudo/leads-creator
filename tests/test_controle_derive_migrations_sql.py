@@ -73,8 +73,13 @@ class TestControlerDeriveMigrationsSql(unittest.TestCase):
         self.assertIn("derive_migrations_sql", csb.ACTIONS_CONCRETES)
 
     def test_cable_dans_main(self):
+        """La logique métier vit dans _executer_controles() depuis le
+        filet englobant ajouté dans main() (même correctif que le commit
+        d231638 sur scripts/traiter_paiements_stripe.py) — le câblage réel
+        se vérifie donc là, main() ne faisant plus qu'appeler cette
+        fonction dans un try/except."""
         import inspect
-        source = inspect.getsource(csb.main)
+        source = inspect.getsource(csb._executer_controles)
         self.assertIn("controler_derive_migrations_sql", source)
 
 

@@ -27,7 +27,7 @@ import alertes  # noqa: E402
 from data_access import get_echeances_a_relancer  # noqa: E402
 
 
-def main() -> None:
+def _controler_echeances() -> None:
     resultat = get_echeances_a_relancer()
     echeances = resultat["echeances"]
 
@@ -53,6 +53,22 @@ def main() -> None:
         )
         alertes.envoyer_alerte_email(f"📅 {len(echeances)} échéance(s) à traiter sous {resultat['seuil_jours']} jours", message)
         log.info(f"{len(echeances)} échéance(s) — alerte e-mail envoyée (repli).")
+
+
+def main() -> None:
+    # Filet englobant, DISTINCT de l'alerte existante dans
+    # _controler_echeances() : un crash avant ou en dehors de cette logique
+    # (ex: get_echeances_a_relancer() qui échoue) sortait jusqu'ici en
+    # erreur Python bruyante côté CI sans jamais déclencher d'alerte
+    # Discord/e-mail — voir commit d231638 (même correctif sur
+    # scripts/traiter_paiements_stripe.py). Ne remplace pas le mécanisme
+    # d'alerte existant, s'ajoute en plus de lui.
+    try:
+        _controler_echeances()
+    except Exception as e:
+        log.error(f"Échec avant le contrôle des échéances : {e}")
+        alertes.alerter_discord(f"🚨 Échec avant le contrôle des échéances (script interrompu) : {e}")
+        raise
 
 
 if __name__ == "__main__":

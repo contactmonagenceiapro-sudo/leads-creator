@@ -658,7 +658,7 @@ ACTIONS_CONCRETES = {
 }
 
 
-def main() -> None:
+def _executer_controles() -> None:
     spec = _schema_openapi()
     tables_pk, fks, rpc = _tables_et_fks(spec)
 
@@ -700,6 +700,22 @@ def main() -> None:
             log.error(f"{len(critiques)} contrôle(s) critique(s) — alerte e-mail envoyée (repli).")
     else:
         log.info("Aucun contrôle critique.")
+
+
+def main() -> None:
+    # Filet englobant, DISTINCT de l'alerte existante dans
+    # _executer_controles() : un crash avant ou en dehors de cette logique
+    # (ex: _schema_openapi()/_tables_et_fks() qui échouent, avant le premier
+    # enregistrer(...)) sortait jusqu'ici en erreur Python bruyante côté CI
+    # sans jamais déclencher d'alerte Discord/e-mail — voir commit d231638
+    # (même correctif sur scripts/traiter_paiements_stripe.py). Ne remplace
+    # pas le mécanisme d'alerte existant, s'ajoute en plus de lui.
+    try:
+        _executer_controles()
+    except Exception as e:
+        log.error(f"Échec avant le contrôle de santé BDD : {e}")
+        alertes.alerter_discord(f"🚨 Échec avant le contrôle de santé BDD (script interrompu) : {e}")
+        raise
 
 
 if __name__ == "__main__":

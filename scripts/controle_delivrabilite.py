@@ -28,7 +28,7 @@ from data_access import SEUIL_ALERTE_TAUX_BOUNCE, get_taux_bounce  # noqa: E402
 NOMS_SEGMENTS = {"lead_artisan": "Artisans", "lead_professionnel": "B2B"}
 
 
-def main() -> None:
+def _controler_delivrabilite() -> None:
     stats = get_taux_bounce(jours=30)
 
     depassements = []
@@ -62,6 +62,22 @@ def main() -> None:
         )
         alertes.envoyer_alerte_email("📉 Taux de bounce anormal — délivrabilité e-mail", message)
         log.info("Alerte e-mail envoyée (repli).")
+
+
+def main() -> None:
+    # Filet englobant, DISTINCT de l'alerte existante dans
+    # _controler_delivrabilite() : un crash avant ou en dehors de cette
+    # logique (ex: get_taux_bounce() qui échoue) sortait jusqu'ici en erreur
+    # Python bruyante côté CI sans jamais déclencher d'alerte Discord/e-mail
+    # — voir commit d231638 (même correctif sur
+    # scripts/traiter_paiements_stripe.py). Ne remplace pas le mécanisme
+    # d'alerte existant, s'ajoute en plus de lui.
+    try:
+        _controler_delivrabilite()
+    except Exception as e:
+        log.error(f"Échec avant le contrôle de délivrabilité : {e}")
+        alertes.alerter_discord(f"🚨 Échec avant le contrôle de délivrabilité (script interrompu) : {e}")
+        raise
 
 
 if __name__ == "__main__":
