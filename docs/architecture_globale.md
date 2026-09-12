@@ -2,7 +2,7 @@
 
 > Document généré automatiquement par `scripts/generer_architecture.py` à partir des sources de vérité réelles du projet (schéma Supabase live, `.github/workflows/*.yml`, docstrings de `dashboard/app_pages/*.py`, imports du code) — **ne pas éditer à la main**, il serait écrasé au prochain run (voir `.github/workflows/generer_architecture.yml`).
 
-Généré le : 2026-09-09 19:48 UTC
+Généré le : 2026-09-12 11:59 UTC
 
 ## 1. Schéma de la base de données
 
@@ -463,6 +463,7 @@ flowchart LR
 flowchart TD
     subgraph ADMIN["Espace Admin"]
         administration_contrats_py["administration_contrats.py"]
+        apercu_site_public_py["apercu_site_public.py"]
         couts_infrastructure_py["couts_infrastructure.py"]
         deliverabilite_py["deliverabilite.py"]
         demandes_devis_py["demandes_devis.py"]
@@ -488,6 +489,7 @@ flowchart TD
 | Page | Espace | Rôle |
 |---|---|---|
 | `administration_contrats.py` | Admin | Interface "Administration & Contrats" — génération d'un document contractuel (bon de commande / contrat de prestation) pré-rempli avec les informations d'un client de l'agence, quel qu'il soit, prêt à copier ou télécharger en PDF. Le PDF intègre directement le corps des Conditions Générales de Prestation (CGV) de l'agence : le document généré est prêt à être envoyé tel quel à un client (ex. S.B.G Travaux) avec le devis ou le bon de commande. |
+| `apercu_site_public.py` | Admin | Aperçu du site public (dashboard/pages_publiques.py — accueil/comment_ca_marche/ tarifs/a_propos/devenir_client) directement depuis le dashboard admin, sans avoir à ouvrir un onglet séparé ni à se déconnecter pour vérifier ce qu'un visiteur voit réellement (grilles tarifaires notamment). |
 | `couts_infrastructure.py` | Admin | Interface admin "Coûts d'infrastructure" — module 3 de pilotage. Coûts remplis manuellement (pas d'API de facturation branchée dans un premier temps, voir sql/init_couts_infrastructure.sql) : Supabase, Streamlit Cloud, Zoho, futur nom de domaine, frais Stripe (en pourcentage du CA réel, pas un montant fixe). |
 | `deliverabilite.py` | Admin | Interface "Délivrabilité" — suivi de la montée en charge progressive (warmup) du domaine d'envoi B2B, taux de réponse, taux de hard bounce (module 7 de pilotage — alerte hebdomadaire automatique, voir scripts/controle_delivrabilite.py) et vérification live des enregistrements DNS (SPF/DKIM/DMARC) indispensables à la délivrabilité. |
 | `demandes_devis.py` | Admin | Interface "Demandes de devis" — suivi du mécanisme de livraison qui rapproche les demandes publiques (formulaire générique /demande-devis, voir dashboard/pages_publiques.py::afficher_demande_devis) avec les artisans clients actifs (leads.status='paye'), voir livraison_devis.py pour la logique complète (round-robin, quota abonnement, proposition/paiement à l'unité, expiration à 48h). Conception validée le 18/08/2026. |
