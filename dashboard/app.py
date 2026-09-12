@@ -42,6 +42,9 @@ Structure (multi-pages) :
     app_pages/suppression_rgpd.py   -> [Admin] Suppression RGPD (droit à l'effacement)
     app_pages/portail_client.py     -> [Client] Vue restreinte à ses propres campagnes
                                         (également accessible à l'admin, en aperçu/test)
+    app_pages/apercu_site_public.py -> [Admin] Aperçu en direct (iframe) des pages publiques
+                                        (accueil/tarifs/comment_ca_marche/a_propos/devenir_client,
+                                        voir dashboard/pages_publiques.py)
 
 Le dossier s'appelle "app_pages/" et NON "pages/" : Streamlit détecte
 automatiquement tout dossier littéralement nommé "pages/" à côté du script
@@ -272,13 +275,16 @@ if est_admin():
     # prévisualiser géré dans portail_client.py) — pour pouvoir tester
     # directement depuis l'interface ce que voit un compte client.
     page_portail_client = st.Page("app_pages/portail_client.py", title="Portail Client (aperçu)", icon="📊")
+    page_apercu_site_public = st.Page(
+        "app_pages/apercu_site_public.py", title="Aperçu site public", icon="👁️"
+    )
     pg = st.navigation(
         [
             page_sourcing, page_gestion, page_administration, page_deliverabilite,
             page_demandes_devis, page_reclamations, page_suivi, page_sante_bdd,
             page_journal_audit, page_couts_infrastructure, page_qualite_leads, page_echeances,
             page_finances, page_pipeline_conversion, page_performance_artisans, page_satisfaction,
-            page_suppression_rgpd, page_portail_client,
+            page_suppression_rgpd, page_portail_client, page_apercu_site_public,
         ]
     )
 else:
